@@ -1,0 +1,96 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SUPER_ADMIN
+  TEAM_MEMBER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(TEAM_MEMBER)
+  teamId       String?
+  team         Team?    @relation(fields: [teamId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  members   User[]
+  cases     Case[]
+  createdAt DateTime @default(now())
+}
+
+model ChecklistCategory {
+  id           String                  @id @default(cuid())
+  name         String
+  product      String                  // e.g. "Home Loan"
+  customerType String                  // e.g. "Salaried"
+  items        ChecklistItemTemplate[]
+  createdAt    DateTime                @default(now())
+}
+
+enum RequirementType {
+  YES
+  IF_APPLICABLE
+  NA
+  ONLY_IF_SELLER_BT
+  ONLY_MAHARASHTRA
+}
+
+model ChecklistItemTemplate {
+  id                     String            @id @default(cuid())
+  categoryId             String
+  category               ChecklistCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  label                  String
+  applicantRequirement   RequirementType   @default(YES)
+  coApplicantRequirement RequirementType   @default(IF_APPLICABLE)
+  propertyTypeScope      String?           // null or "RESALE" | "TAKEOVER_SELLER_BT" | "DIRECT_ALLOTMENT"
+  stage                  Int               @default(1)
+  createdAt              DateTime          @default(now())
+}
+
+model Case {
+  id               String              @id @default(cuid())
+  clientName       String
+  mobile           String
+  email            String?
+  product          String
+  customerType     String
+  propertyType     String
+  coApplicantCount Int                 @default(0)
+  stage            Int                 @default(1)
+  status           String              @default("Pending Documents")
+  createdById      String
+  assignedTeamId   String?
+  assignedTeam     Team?               @relation(fields: [assignedTeamId], references: [id])
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  checklistItems   CaseChecklistItem[]
+}
+
+model CaseChecklistItem {
+  id          String   @id @default(cuid())
+  caseId      String
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  category    String
+  label       String
+  appliesTo   String   // "Applicant" | "Co-Applicant 1" | "Co-Applicant 2" ...
+  status      String   @default("Pending")
+  remark      String?  @db.Text
+  documentUrl String?  @db.Text
+  stage       Int      @default(1)
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
