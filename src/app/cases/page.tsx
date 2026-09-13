@@ -49,10 +49,10 @@ export default async function CasesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
         <div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight">Case Directory & Tracking</h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">Case Directory & Tracking</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             Search, filter, and track all client loan files and document completion statuses
           </p>
         </div>

@@ -13,7 +13,8 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>('dark');
+  // Light Mode is now Primary/Default as requested in requirement #12
+  const [theme, setThemeState] = useState<Theme>('light');
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('nestguru-theme') as Theme | null;
@@ -22,7 +23,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       document.documentElement.classList.remove('dark', 'light');
       document.documentElement.classList.add(savedTheme);
     } else {
-      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light');
     }
   }, []);
 

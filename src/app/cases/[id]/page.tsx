@@ -13,6 +13,7 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
   }
 
   const userRole = (session.user as any).role;
+  const userAccessPermission = (session.user as any).accessPermission || 'EDIT';
 
   const caseData = await prisma.case.findUnique({
     where: { id: params.id },
@@ -28,15 +29,27 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
     notFound();
   }
 
+  const banks = await prisma.bankConfig.findMany({ orderBy: { bankName: 'asc' } });
+  const states = await prisma.stateConfig.findMany({ orderBy: { name: 'asc' } });
+
   const formattedCase = {
     id: caseData.id,
     clientName: caseData.clientName,
     mobile: caseData.mobile,
     email: caseData.email,
+    clientState: caseData.clientState,
     product: caseData.product,
     customerType: caseData.customerType,
     propertyType: caseData.propertyType,
     coApplicantCount: caseData.coApplicantCount,
+    coApplicantsData: caseData.coApplicantsData ? JSON.parse(caseData.coApplicantsData) : [],
+    motherName: caseData.motherName || '',
+    spouseName: caseData.spouseName || '',
+    dojCompany: caseData.dojCompany ? caseData.dojCompany.toISOString().slice(0, 10) : '',
+    totalExperienceYears: caseData.totalExperienceYears || '',
+    residenceYears: caseData.residenceYears || '',
+    educationQualification: caseData.residenceYears || '',
+    referencesData: caseData.referencesData ? JSON.parse(caseData.referencesData) : [],
     stage: caseData.stage,
     status: caseData.status,
     assignedTeamName: caseData.assignedTeam?.name,
@@ -46,11 +59,27 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
       label: item.label,
       appliesTo: item.appliesTo,
       status: item.status,
-      remark: item.remark,
-      documentUrl: item.documentUrl,
+      remark: item.remark || '',
+      documentUrl: item.documentUrl || '',
       stage: item.stage,
+      bankName: item.bankName || '',
+      monthName: item.monthName || '',
+      financialYear: item.financialYear || '',
+      documentDate: item.documentDate ? item.documentDate.toISOString().slice(0, 10) : '',
+      periodDetails: item.periodDetails || '',
+      startDate: item.startDate ? item.startDate.toISOString().slice(0, 10) : '',
+      endDate: item.endDate ? item.endDate.toISOString().slice(0, 10) : '',
+      extraDetails: item.extraDetails || '',
     })),
   };
 
-  return <CaseDetailTracker caseData={formattedCase} userRole={userRole} />;
+  return (
+    <CaseDetailTracker
+      caseData={formattedCase}
+      userRole={userRole}
+      userAccessPermission={userAccessPermission}
+      banks={banks}
+      states={states}
+    />
+  );
 }

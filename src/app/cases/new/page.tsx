@@ -11,17 +11,28 @@ export default async function NewCasePage() {
   }
 
   const teams = await prisma.team.findMany();
+  const states = await prisma.stateConfig.findMany({ orderBy: { name: 'asc' } });
+  // Exclude SUPER_ADMIN from assignable users — Super Admin automatically oversees everything
+  const users = await prisma.user.findMany({
+    where: {
+      role: { not: 'SUPER_ADMIN' },
+    },
+    select: { id: true, name: true, role: true, email: true },
+    orderBy: { name: 'asc' },
+  });
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <div className="pb-4 border-b border-slate-800">
-        <h1 className="text-2xl font-extrabold text-white tracking-tight">New Case Intake Form</h1>
-        <p className="text-xs text-slate-400 mt-1">
-          Select product parameters to auto-generate a dynamic document checklist for this client file
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="pb-4 border-b border-slate-200 dark:border-slate-800">
+        <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+          New Case Intake Form
+        </h1>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          Specify Client, Co-applicant details (Income Required Yes/No), States, and Source user assignments
         </p>
       </div>
 
-      <CaseIntakeForm teams={teams} />
+      <CaseIntakeForm teams={teams} states={states} users={users} />
     </div>
   );
 }

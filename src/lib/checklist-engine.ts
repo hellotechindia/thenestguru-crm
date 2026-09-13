@@ -6,9 +6,9 @@ export async function generateChecklistForCase(
   customerType: string,
   propertyType: string,
   coApplicantCount: number,
+  coApplicantsData: any[] | null | undefined,
   userId: string
 ) {
-  // Normalize property type scope string
   let normalizedPropScope: string | null = null;
   if (propertyType.toLowerCase().includes('resale')) {
     normalizedPropScope = 'RESALE';
@@ -18,24 +18,15 @@ export async function generateChecklistForCase(
     normalizedPropScope = 'DIRECT_ALLOTMENT';
   }
 
-  // 1. Fetch relevant categories matching product & customerType (or fallback matching product)
   const categories = await prisma.checklistCategory.findMany({
-    where: {
-      product: product,
-      customerType: customerType,
-    },
-    include: {
-      items: true,
-    },
+    where: { product, customerType },
+    include: { items: true },
   });
 
-  // If no specific category found, fallback to fetching all default template items
   let categoriesToUse = categories;
   if (categoriesToUse.length === 0) {
     categoriesToUse = await prisma.checklistCategory.findMany({
-      include: {
-        items: true,
-      },
+      include: { items: true },
     });
   }
 
@@ -50,8 +41,9 @@ export async function generateChecklistForCase(
   }[] = [];
 
   for (const cat of categoriesToUse) {
+    const isIncomeCat = cat.name.toLowerCase().includes('income');
+
     for (const templateItem of cat.items) {
-      // Filter by propertyTypeScope if specified on template
       if (templateItem.propertyTypeScope && templateItem.propertyTypeScope !== normalizedPropScope) {
         continue;
       }
@@ -69,9 +61,17 @@ export async function generateChecklistForCase(
         });
       }
 
-      // Add for Co-Applicants
+      // Add for Co-Applicants based on individual incomeRequired toggle
       if (templateItem.coApplicantRequirement !== 'NA' && coApplicantCount > 0) {
         for (let i = 1; i <= coApplicantCount; i++) {
+          const coAppData = coApplicantsData && coApplicantsData[i - 1];
+          const incomeRequired = coAppData ? coAppData.incomeRequired !== false : true;
+
+          // If this is income category and co-applicant does NOT require income details, skip!
+          if (isIncomeCat && !incomeRequired) {
+            continue;
+          }
+
           itemsToCreate.push({
             caseId,
             category: cat.name,

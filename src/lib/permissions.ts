@@ -1,41 +1,42 @@
-export type Role = 'SUPER_ADMIN' | 'TEAM_MEMBER';
+export type Role = 'SUPER_ADMIN' | 'TEAM_MEMBER' | 'CHANNEL' | 'SALES' | 'OPERATION';
+export type AccessPermission = 'EDIT' | 'VIEW';
 
-export type Action = 'create' | 'read' | 'update' | 'delete' | 'manage_users' | 'manage_templates';
-export type Resource = 'case' | 'checklist_item' | 'user' | 'team' | 'template';
+export type Action = 'create' | 'read' | 'update' | 'delete' | 'manage_users' | 'manage_templates' | 'manage_functionality';
+export type Resource = 'case' | 'checklist_item' | 'user' | 'team' | 'template' | 'functionality';
 
 export interface UserContext {
   id: string;
   role: Role;
+  accessPermission?: AccessPermission;
   teamId?: string | null;
 }
 
 export function can(user: UserContext | null | undefined, action: Action, resource: Resource): boolean {
   if (!user) return false;
 
-  // Super Admin can do everything
+  // Super Admin has full permissions
   if (user.role === 'SUPER_ADMIN') {
     return true;
   }
 
-  // Team Member restrictions
-  if (user.role === 'TEAM_MEMBER') {
-    // Cannot delete anything
-    if (action === 'delete') {
-      return false;
-    }
+  // View permission restriction
+  if (user.accessPermission === 'VIEW' && (action === 'create' || action === 'update' || action === 'delete')) {
+    return false;
+  }
 
-    // Cannot manage users or templates
-    if (action === 'manage_users' || action === 'manage_templates') {
-      return false;
-    }
+  // Non-super admin restrictions
+  if (action === 'delete') {
+    return false;
+  }
 
-    if (resource === 'user' || resource === 'team' || resource === 'template') {
-      return action === 'read';
-    }
+  if (action === 'manage_users' || action === 'manage_templates' || action === 'manage_functionality') {
+    return false;
+  }
 
-    // Can create, read, update cases and checklist items
-    if (resource === 'case' || resource === 'checklist_item') {
-      return action === 'create' || action === 'read' || action === 'update';
+  if (resource === 'case' || resource === 'checklist_item') {
+    if (action === 'read') return true;
+    if (action === 'create' || action === 'update') {
+      return user.accessPermission !== 'VIEW';
     }
   }
 

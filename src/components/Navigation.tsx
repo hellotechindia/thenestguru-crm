@@ -15,7 +15,8 @@ import {
   UserCheck,
   Sun,
   Moon,
-  UserCog
+  UserCog,
+  Sliders
 } from 'lucide-react';
 
 export default function Navigation() {
@@ -36,13 +37,14 @@ export default function Navigation() {
 
   if (userRole === 'SUPER_ADMIN') {
     navItems.push(
+      { label: 'Add Functionality', href: '/admin/functionality', icon: Sliders },
       { label: 'User & Teams', href: '/admin/users', icon: Users },
       { label: 'Checklist Matrix', href: '/admin/checklist-templates', icon: FileCheck2 }
     );
   }
 
   return (
-    <header className="sticky top-0 z-50 glass-panel border-b border-slate-700/50 backdrop-blur-md">
+    <header className="sticky top-0 z-50 glass-panel border-b border-slate-200 dark:border-slate-700/50 backdrop-blur-md">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-wrap md:flex-nowrap items-center justify-between h-auto py-2.5 md:h-16 gap-2">
           {/* Brand Logo */}
@@ -55,16 +57,16 @@ export default function Navigation() {
               />
             </div>
             <div className="leading-none">
-              <span className="font-bold text-base tracking-tight text-white group-hover:text-sky-400 transition-colors flex items-center gap-1">
-                NestGuru <span className="text-sky-400 font-light">Loan Desk</span>
+              <span className="font-bold text-base tracking-tight text-slate-900 dark:text-white group-hover:text-sky-600 transition-colors flex items-center gap-1">
+                NestGuru <span className="text-sky-600 dark:text-sky-400 font-light">Loan Desk</span>
               </span>
-              <span className="block text-[9px] text-slate-400 font-medium uppercase tracking-widest mt-0.5">
+              <span className="block text-[9px] text-slate-500 dark:text-slate-400 font-medium uppercase tracking-widest mt-0.5">
                 Multi-Tenant Processing Hub
               </span>
             </div>
           </Link>
 
-          {/* Navigation Links - Always visible across screen sizes */}
+          {/* Navigation Links */}
           <nav className="flex items-center gap-1 overflow-x-auto shrink py-1">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -75,8 +77,8 @@ export default function Navigation() {
                   href={item.href}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
                     isActive
-                      ? 'bg-sky-600/20 text-sky-400 border border-sky-500/30 shadow-inner'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+                      ? 'bg-sky-600/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 shadow-inner'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -86,43 +88,42 @@ export default function Navigation() {
             })}
           </nav>
 
-          {/* Right Section: Theme Toggle & User Profile Controls */}
+          {/* Right Section: Theme Switcher & Profile Badge */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Light / Dark Mode Switcher */}
             <button
               onClick={toggleTheme}
               title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
-              className="p-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60 text-amber-400 hover:text-amber-300 hover:bg-slate-700/80 transition-all shadow-sm shrink-0"
+              className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 text-amber-500 hover:text-amber-600 transition-all shadow-sm shrink-0"
             >
               {theme === 'dark' ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-sky-600" />}
             </button>
 
             {session?.user && (
-              <div className="flex items-center gap-2 glass-panel px-2.5 py-1 rounded-lg border border-slate-700/50 shrink-0">
+              <div className="flex items-center gap-2 glass-panel px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700/50 shrink-0">
                 <Link
                   href="/profile"
                   title="Edit Profile Settings"
-                  className="flex items-center gap-1.5 hover:text-sky-400 transition-colors"
+                  className="flex items-center gap-1.5 hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
                 >
-                  <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center justify-center shrink-0">
                     {userRole === 'SUPER_ADMIN' ? (
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                     ) : (
-                      <UserCheck className="w-3.5 h-3.5 text-sky-400" />
+                      <UserCheck className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                     )}
                   </div>
                   <div className="text-left">
-                    <div className="text-[11px] font-semibold text-white leading-tight truncate max-w-[110px]">
+                    <div className="text-[11px] font-semibold text-slate-900 dark:text-white leading-tight truncate max-w-[110px]">
                       {userName}
                     </div>
                     <div className="flex items-center gap-1">
                       <span
                         className={`inline-block w-1.5 h-1.5 rounded-full ${
-                          userRole === 'SUPER_ADMIN' ? 'bg-emerald-400 animate-pulse' : 'bg-sky-400'
+                          userRole === 'SUPER_ADMIN' ? 'bg-emerald-500 animate-pulse' : 'bg-sky-500'
                         }`}
                       />
-                      <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400">
-                        {userRole === 'SUPER_ADMIN' ? 'Super Admin' : 'Team Member'}
+                      <span className="text-[9px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400">
+                        {userRole === 'SUPER_ADMIN' ? 'Super Admin' : userRole}
                       </span>
                     </div>
                   </div>
@@ -131,7 +132,7 @@ export default function Navigation() {
                 <Link
                   href="/profile"
                   title="Profile Settings"
-                  className="p-1.5 text-slate-400 hover:text-sky-400 hover:bg-sky-500/10 rounded transition-colors ml-0.5 shrink-0"
+                  className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-500/10 rounded transition-colors ml-0.5 shrink-0"
                 >
                   <UserCog className="w-3.5 h-3.5" />
                 </Link>
@@ -139,7 +140,7 @@ export default function Navigation() {
                 <button
                   onClick={() => signOut({ callbackUrl: '/login' })}
                   title="Sign Out"
-                  className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors shrink-0"
+                  className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded transition-colors shrink-0"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                 </button>

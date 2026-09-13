@@ -23,9 +23,9 @@ export default async function ChecklistTemplatesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="pb-4 border-b border-slate-800">
-        <h1 className="text-2xl font-extrabold text-white tracking-tight">Dynamic Checklist Template Engine</h1>
-        <p className="text-xs text-slate-400 mt-1">
+      <div className="pb-4 border-b border-slate-200 dark:border-slate-800">
+        <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">Dynamic Checklist Template Engine</h1>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
           Data-driven checklist matrix: Manage rules, property scopes, and processing stages (1 to 4) without code changes
         </p>
       </div>

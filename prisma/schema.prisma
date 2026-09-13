@@ -10,18 +10,27 @@ generator client {
 enum Role {
   SUPER_ADMIN
   TEAM_MEMBER
+  CHANNEL
+  SALES
+  OPERATION
+}
+
+enum AccessPermission {
+  EDIT
+  VIEW
 }
 
 model User {
-  id           String   @id @default(cuid())
-  name         String
-  email        String   @unique
-  passwordHash String
-  role         Role     @default(TEAM_MEMBER)
-  teamId       String?
-  team         Team?    @relation(fields: [teamId], references: [id])
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id               String           @id @default(cuid())
+  name             String
+  email            String           @unique
+  passwordHash     String
+  role             Role             @default(TEAM_MEMBER)
+  accessPermission AccessPermission @default(EDIT)
+  teamId           String?
+  team             Team?            @relation(fields: [teamId], references: [id])
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 }
 
 model Team {
@@ -29,6 +38,36 @@ model Team {
   name      String
   members   User[]
   cases     Case[]
+  createdAt DateTime @default(now())
+}
+
+model BankConfig {
+  id                   String   @id @default(cuid())
+  bankName             String   @unique
+  requiredSalaryMonths Int      @default(6)
+  createdAt            DateTime @default(now())
+}
+
+model StateConfig {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+}
+
+model RevenueRecord {
+  id        String   @id @default(cuid())
+  amount    Float
+  month     String   // e.g. "September 2026" or "September"
+  state     String
+  caseId    String?
+  case      Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+}
+
+model ExpenseRecord {
+  id        String   @id @default(cuid())
+  amount    Float
+  month     String   // e.g. "September 2026"
   createdAt DateTime @default(now())
 }
 
@@ -62,35 +101,59 @@ model ChecklistItemTemplate {
 }
 
 model Case {
-  id               String              @id @default(cuid())
-  clientName       String
-  mobile           String
-  email            String?
-  product          String
-  customerType     String
-  propertyType     String
-  coApplicantCount Int                 @default(0)
-  stage            Int                 @default(1)
-  status           String              @default("Pending Documents")
-  createdById      String
-  assignedTeamId   String?
-  assignedTeam     Team?               @relation(fields: [assignedTeamId], references: [id])
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  checklistItems   CaseChecklistItem[]
+  id                   String              @id @default(cuid())
+  clientName           String
+  mobile               String
+  email                String?
+  clientState          String?
+  product              String
+  customerType         String
+  propertyType         String
+  coApplicantCount     Int                 @default(0)
+  coApplicantsData     String?             @db.Text // JSON: array of { name, mobile, email, state, incomeRequired }
+  channelUserId        String?
+  salesUserId          String?
+  operationUserId      String?
+  motherName           String?
+  spouseName           String?
+  dojCompany           DateTime?
+  totalExperienceYears String?
+  residenceYears       String?
+  referencesData       String?             @db.Text // JSON: array of { name, address, phone, email }
+  stage                Int                 @default(1)
+  status               String              @default("Pending Documents")
+  createdById          String
+  assignedTeamId       String?
+  assignedTeam         Team?               @relation(fields: [assignedTeamId], references: [id])
+  stage1CompletedAt    DateTime?
+  stage2CompletedAt    DateTime?
+  stage3CompletedAt    DateTime?
+  stage4CompletedAt    DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  checklistItems       CaseChecklistItem[]
+  revenues             RevenueRecord[]
 }
 
 model CaseChecklistItem {
-  id          String   @id @default(cuid())
-  caseId      String
-  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  category    String
-  label       String
-  appliesTo   String   // "Applicant" | "Co-Applicant 1" | "Co-Applicant 2" ...
-  status      String   @default("Pending")
-  remark      String?  @db.Text
-  documentUrl String?  @db.Text
-  stage       Int      @default(1)
-  updatedById String?
-  updatedAt   DateTime @updatedAt
+  id            String    @id @default(cuid())
+  caseId        String
+  case          Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  category      String
+  label         String
+  appliesTo     String    // "Applicant" | "Co-Applicant 1" | "Co-Applicant 2" ...
+  status        String    @default("Pending")
+  remark        String?   @db.Text
+  documentUrl   String?   @db.Text
+  stage         Int       @default(1)
+  bankName      String?
+  monthName     String?
+  financialYear String?
+  documentDate  DateTime?
+  periodDetails String?
+  startDate     DateTime?
+  endDate       DateTime?
+  extraDetails  String?   @db.Text // JSON for additional realistic fields
+  updatedById   String?
+  updatedAt     DateTime  @updatedAt
 }
