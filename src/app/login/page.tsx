@@ -36,10 +36,10 @@ export default function LoginPage() {
 
   const setDemoUser = (userType: 'admin' | 'agent') => {
     if (userType === 'admin') {
-      setEmail('admin@hellotechindia.com');
+      setEmail('admin@nestguru.com');
       setPassword('admin123');
     } else {
-      setEmail('agent@hellotechindia.com');
+      setEmail('channel@nestguru.com');
       setPassword('agent123');
     }
   };
@@ -123,7 +123,7 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="e.g. admin@hellotechindia.com"
+                placeholder="e.g. admin@nestguru.com"
                 className="w-full glass-input pl-9 pr-4 py-2.5 rounded-lg text-sm transition-all focus:ring-2 focus:ring-sky-500"
               />
             </div>

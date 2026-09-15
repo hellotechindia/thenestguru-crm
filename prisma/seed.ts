@@ -55,19 +55,6 @@ async function main() {
     },
   });
 
-  await prisma.user.upsert({
-    where: { email: 'admin@hellotechindia.com' },
-    update: { passwordHash: adminPasswordHash, role: Role.SUPER_ADMIN, accessPermission: AccessPermission.EDIT },
-    create: {
-      name: 'Super Admin (HelloTech)',
-      email: 'admin@hellotechindia.com',
-      passwordHash: adminPasswordHash,
-      role: Role.SUPER_ADMIN,
-      accessPermission: AccessPermission.EDIT,
-      teamId: teamOps.id,
-    },
-  });
-
   const channelUser = await prisma.user.upsert({
     where: { email: 'channel@nestguru.com' },
     update: { passwordHash: agentPasswordHash, role: Role.CHANNEL, accessPermission: AccessPermission.EDIT },

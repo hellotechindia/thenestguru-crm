@@ -16,13 +16,21 @@ export default async function CasesPage() {
 
   const userRole = (session.user as any).role;
 
-  const cases = await prisma.case.findMany({
-    include: {
-      checklistItems: true,
-      assignedTeam: true,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  const [teams, states, users, cases] = await Promise.all([
+    prisma.team.findMany({ orderBy: { name: 'asc' } }),
+    prisma.stateConfig.findMany({ orderBy: { name: 'asc' } }),
+    prisma.user.findMany({
+      select: { id: true, name: true, role: true, email: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.case.findMany({
+      include: {
+        checklistItems: true,
+        assignedTeam: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
 
   const formattedCases = cases.map((c) => {
     const receivedCount = c.checklistItems.filter(
@@ -34,12 +42,18 @@ export default async function CasesPage() {
       clientName: c.clientName,
       mobile: c.mobile,
       email: c.email,
+      clientState: c.clientState || '',
       product: c.product,
       customerType: c.customerType,
       propertyType: c.propertyType,
       coApplicantCount: c.coApplicantCount,
       stage: c.stage,
       status: c.status,
+      channelUserId: c.channelUserId || '',
+      salesUserId: c.salesUserId || '',
+      operationUserId: c.operationUserId || '',
+      assignedTeamId: c.assignedTeamId || '',
+      coApplicantsData: c.coApplicantsData || '',
       createdAt: c.createdAt.toISOString(),
       checklistCount: c.checklistItems.length,
       receivedCount,
@@ -66,7 +80,13 @@ export default async function CasesPage() {
         </Link>
       </div>
 
-      <CaseListTable cases={formattedCases} userRole={userRole} />
+      <CaseListTable
+        cases={formattedCases}
+        userRole={userRole}
+        teams={teams}
+        states={states}
+        users={users}
+      />
     </div>
   );
 }

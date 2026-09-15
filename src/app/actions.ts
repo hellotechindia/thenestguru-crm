@@ -75,6 +75,141 @@ export async function createCaseAction(formData: {
   return { success: true, caseId: newCase.id };
 }
 
+export async function updateCaseIntakeDetailsAction(
+  caseId: string,
+  data: {
+    clientName: string;
+    mobile: string;
+    email?: string | null;
+    clientState?: string | null;
+    product?: string;
+    customerType?: string;
+    propertyType?: string;
+    coApplicantCount?: number;
+    coApplicantsData?: any[] | null;
+    stage?: number;
+    status?: string;
+    assignedTeamId?: string | null;
+    channelUserId?: string | null;
+    salesUserId?: string | null;
+    operationUserId?: string | null;
+  }
+) {
+  const user = await getAuthUser();
+  if (!user || !can(user, 'update', 'case')) {
+    return { success: false, error: 'Permission denied: Cannot edit case details.' };
+  }
+
+  const existingCase = await prisma.case.findUnique({
+    where: { id: caseId },
+    include: { checklistItems: true },
+  });
+  if (!existingCase) {
+    return { success: false, error: 'Case not found.' };
+  }
+
+  const now = new Date();
+  const timestampUpdates: any = {};
+  if (data.stage !== undefined && data.stage !== existingCase.stage) {
+    if (data.stage === 1 && !existingCase.stage1CompletedAt) timestampUpdates.stage1CompletedAt = now;
+    if (data.stage === 2 && !existingCase.stage2CompletedAt) timestampUpdates.stage2CompletedAt = now;
+    if (data.stage === 3 && !existingCase.stage3CompletedAt) timestampUpdates.stage3CompletedAt = now;
+    if (data.stage === 4 && !existingCase.stage4CompletedAt) timestampUpdates.stage4CompletedAt = now;
+  }
+
+  const newCoAppCount = data.coApplicantCount !== undefined ? data.coApplicantCount : existingCase.coApplicantCount;
+  const newProduct = data.product || existingCase.product;
+  const newCustomerType = data.customerType || existingCase.customerType;
+  const newPropertyType = data.propertyType || existingCase.propertyType;
+
+  // Handle co-applicant checklist items sync
+  if (data.coApplicantCount !== undefined && data.coApplicantCount < existingCase.coApplicantCount) {
+    // If reduced, delete extra co-applicant checklist items
+    const appsToRemove: string[] = [];
+    for (let i = data.coApplicantCount + 1; i <= existingCase.coApplicantCount; i++) {
+      appsToRemove.push(`Co-Applicant ${i}`);
+    }
+    if (appsToRemove.length > 0) {
+      await prisma.caseChecklistItem.deleteMany({
+        where: {
+          caseId,
+          appliesTo: { in: appsToRemove },
+        },
+      });
+    }
+  } else if (data.coApplicantCount !== undefined && data.coApplicantCount > existingCase.coApplicantCount) {
+    // If increased, generate checklist items for newly added co-applicants
+    const categories = await prisma.checklistCategory.findMany({
+      where: { product: newProduct, customerType: newCustomerType },
+      include: { items: true },
+    });
+    const categoriesToUse = categories.length > 0 ? categories : await prisma.checklistCategory.findMany({ include: { items: true } });
+
+    let normalizedPropScope: string | null = null;
+    if (newPropertyType.toLowerCase().includes('resale')) normalizedPropScope = 'RESALE';
+    else if (newPropertyType.toLowerCase().includes('takeover') || newPropertyType.toLowerCase().includes('seller bt')) normalizedPropScope = 'TAKEOVER_SELLER_BT';
+    else if (newPropertyType.toLowerCase().includes('direct allotment') || newPropertyType.toLowerCase().includes('under construction')) normalizedPropScope = 'DIRECT_ALLOTMENT';
+
+    const newItemsToCreate: any[] = [];
+    for (let i = existingCase.coApplicantCount + 1; i <= data.coApplicantCount; i++) {
+      const coAppData = data.coApplicantsData && data.coApplicantsData[i - 1];
+      const incomeRequired = coAppData ? coAppData.incomeRequired !== false : true;
+
+      for (const cat of categoriesToUse) {
+        const isIncomeCat = cat.name.toLowerCase().includes('income');
+        if (isIncomeCat && !incomeRequired) continue;
+
+        for (const item of cat.items) {
+          if (item.propertyTypeScope && item.propertyTypeScope !== normalizedPropScope) continue;
+          if (item.coApplicantRequirement !== 'NA') {
+            newItemsToCreate.push({
+              caseId,
+              category: cat.name,
+              label: item.label,
+              appliesTo: `Co-Applicant ${i}`,
+              status: 'Pending',
+              stage: item.stage,
+              updatedById: user.id,
+            });
+          }
+        }
+      }
+    }
+    if (newItemsToCreate.length > 0) {
+      await prisma.caseChecklistItem.createMany({ data: newItemsToCreate });
+    }
+  }
+
+  await prisma.case.update({
+    where: { id: caseId },
+    data: {
+      clientName: data.clientName.trim(),
+      mobile: data.mobile.trim(),
+      email: data.email?.trim() || null,
+      clientState: data.clientState || null,
+      ...(data.product && { product: data.product }),
+      ...(data.customerType && { customerType: data.customerType }),
+      ...(data.propertyType && { propertyType: data.propertyType }),
+      ...(data.coApplicantCount !== undefined && { coApplicantCount: data.coApplicantCount }),
+      ...(data.coApplicantsData !== undefined && {
+        coApplicantsData: data.coApplicantsData ? JSON.stringify(data.coApplicantsData) : null,
+      }),
+      ...(data.stage !== undefined && { stage: data.stage }),
+      ...(data.status && { status: data.status }),
+      ...(data.assignedTeamId !== undefined && { assignedTeamId: data.assignedTeamId || null }),
+      ...(data.channelUserId !== undefined && { channelUserId: data.channelUserId || null }),
+      ...(data.salesUserId !== undefined && { salesUserId: data.salesUserId || null }),
+      ...(data.operationUserId !== undefined && { operationUserId: data.operationUserId || null }),
+      ...timestampUpdates,
+    },
+  });
+
+  revalidatePath('/cases');
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath('/dashboard');
+  return { success: true };
+}
+
 export async function updateChecklistItemAction(
   itemId: string,
   caseId: string,
@@ -421,6 +556,31 @@ export async function deleteBankConfigAction(id: string) {
   return { success: true };
 }
 
+export async function updateBankConfigAction(id: string, bankName: string, requiredSalaryMonths: number) {
+  const user = await getAuthUser();
+  if (!user || !can(user, 'manage_functionality', 'functionality')) {
+    return { success: false, error: 'Permission denied' };
+  }
+
+  const existing = await prisma.bankConfig.findFirst({
+    where: {
+      bankName,
+      NOT: { id },
+    },
+  });
+  if (existing) {
+    return { success: false, error: 'Another bank with this name already exists.' };
+  }
+
+  await prisma.bankConfig.update({
+    where: { id },
+    data: { bankName, requiredSalaryMonths },
+  });
+
+  revalidatePath('/admin/functionality');
+  return { success: true };
+}
+
 export async function createStateConfigAction(name: string) {
   const user = await getAuthUser();
   if (!user || !can(user, 'manage_functionality', 'functionality')) {
@@ -444,6 +604,31 @@ export async function deleteStateConfigAction(id: string) {
   }
 
   await prisma.stateConfig.delete({ where: { id } });
+  revalidatePath('/admin/functionality');
+  return { success: true };
+}
+
+export async function updateStateConfigAction(id: string, name: string) {
+  const user = await getAuthUser();
+  if (!user || !can(user, 'manage_functionality', 'functionality')) {
+    return { success: false, error: 'Permission denied' };
+  }
+
+  const existing = await prisma.stateConfig.findFirst({
+    where: {
+      name,
+      NOT: { id },
+    },
+  });
+  if (existing) {
+    return { success: false, error: 'Another state with this name already exists.' };
+  }
+
+  await prisma.stateConfig.update({
+    where: { id },
+    data: { name },
+  });
+
   revalidatePath('/admin/functionality');
   return { success: true };
 }
@@ -480,6 +665,27 @@ export async function deleteRevenueAction(id: string) {
   return { success: true };
 }
 
+export async function updateRevenueAction(id: string, amount: number, month: string, state: string, caseId?: string) {
+  const user = await getAuthUser();
+  if (!user || !can(user, 'manage_functionality', 'functionality')) {
+    return { success: false, error: 'Permission denied' };
+  }
+
+  await prisma.revenueRecord.update({
+    where: { id },
+    data: {
+      amount,
+      month,
+      state,
+      caseId: caseId || null,
+    },
+  });
+
+  revalidatePath('/admin/functionality');
+  revalidatePath('/dashboard');
+  return { success: true };
+}
+
 export async function createExpenseAction(amount: number, month: string) {
   const user = await getAuthUser();
   if (!user || !can(user, 'manage_functionality', 'functionality')) {
@@ -505,6 +711,25 @@ export async function deleteExpenseAction(id: string) {
   }
 
   await prisma.expenseRecord.delete({ where: { id } });
+  revalidatePath('/admin/functionality');
+  revalidatePath('/dashboard');
+  return { success: true };
+}
+
+export async function updateExpenseAction(id: string, amount: number, month: string) {
+  const user = await getAuthUser();
+  if (!user || !can(user, 'manage_functionality', 'functionality')) {
+    return { success: false, error: 'Permission denied' };
+  }
+
+  await prisma.expenseRecord.update({
+    where: { id },
+    data: {
+      amount,
+      month,
+    },
+  });
+
   revalidatePath('/admin/functionality');
   revalidatePath('/dashboard');
   return { success: true };
