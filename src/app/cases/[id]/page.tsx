@@ -30,7 +30,10 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
   }
 
   const banks = await prisma.bankConfig.findMany({ orderBy: { bankName: 'asc' } });
-  const states = await prisma.stateConfig.findMany({ orderBy: { name: 'asc' } });
+  const states = await prisma.stateConfig.findMany({
+    include: { cities: { orderBy: { name: 'asc' } } },
+    orderBy: { name: 'asc' },
+  });
 
   const formattedCase = {
     id: caseData.id,
@@ -38,6 +41,8 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
     mobile: caseData.mobile,
     email: caseData.email,
     clientState: caseData.clientState,
+    clientCity: caseData.clientCity,
+    clientDob: caseData.clientDob ? caseData.clientDob.toISOString().slice(0, 10) : '',
     product: caseData.product,
     customerType: caseData.customerType,
     propertyType: caseData.propertyType,
@@ -62,6 +67,9 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
       remark: item.remark || '',
       documentUrl: item.documentUrl || '',
       stage: item.stage,
+      requireOnedrive: item.requireOnedrive !== false,
+      requireRemark: item.requireRemark === true,
+      remarkPlaceholder: item.remarkPlaceholder || '',
       bankName: item.bankName || '',
       monthName: item.monthName || '',
       financialYear: item.financialYear || '',

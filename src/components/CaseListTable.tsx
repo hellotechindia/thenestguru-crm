@@ -25,12 +25,14 @@ import {
 import { deleteCaseAction, updateCaseIntakeDetailsAction } from '@/app/actions';
 import { useRouter } from 'next/navigation';
 import { exportToCSV } from '@/lib/excel-export';
+import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 
 export interface CoApplicantInfo {
   name: string;
   mobile: string;
   email: string;
   state: string;
+  dob?: string;
   incomeRequired: boolean;
 }
 
@@ -40,6 +42,8 @@ export interface CaseItem {
   mobile: string;
   email: string | null;
   clientState?: string | null;
+  clientCity?: string | null;
+  clientDob?: string | null;
   product: string;
   customerType: string;
   propertyType: string;
@@ -61,8 +65,10 @@ interface CaseListTableProps {
   cases: CaseItem[];
   userRole: string;
   teams?: Array<{ id: string; name: string }>;
-  states?: Array<{ id: string; name: string }>;
-  users?: Array<{ id: string; name: string; role: string; email: string }>;
+  states?: Array<{ id: string; name: string; cities?: Array<{ id: string; name: string }> }>;
+  users?: Array<{ id: string; name: string; role: string; email?: string | null; username?: string | null }>;
+  products?: Array<{ id: string; name: string }>;
+  profiles?: Array<{ id: string; name: string }>;
 }
 
 export default function CaseListTable({
@@ -71,6 +77,8 @@ export default function CaseListTable({
   teams = [],
   states = [],
   users = [],
+  products = [],
+  profiles = [],
 }: CaseListTableProps) {
   const router = useRouter();
   const [searchTerm, setSearchTerm] = useState('');
@@ -82,13 +90,16 @@ export default function CaseListTable({
 
   // Edit Modal State
   const [editingCase, setEditingCase] = useState<CaseItem | null>(null);
+  const [isCustomCityEdit, setIsCustomCityEdit] = useState(false);
   const [editFormData, setEditFormData] = useState({
     clientName: '',
     mobile: '',
     email: '',
     clientState: '',
-    product: 'Home Loan',
-    customerType: 'Salaried',
+    clientCity: '',
+    clientDob: '',
+    product: products[0]?.name || 'Home Loan',
+    customerType: profiles[0]?.name || 'Salaried',
     propertyType: 'Resale',
     coApplicantCount: 0,
     stage: 1,
@@ -125,6 +136,8 @@ export default function CaseListTable({
       'Mobile Number': c.mobile,
       'Email': c.email || 'N/A',
       'Client State': c.clientState || 'N/A',
+      'Client City': c.clientCity || 'N/A',
+      'Client DOB': c.clientDob || 'N/A',
       'Loan Product': c.product,
       'Customer Profile': c.customerType,
       'Property Scope': c.propertyType,
@@ -136,7 +149,7 @@ export default function CaseListTable({
       'Checklist Progress (%)': c.checklistCount > 0 ? `${Math.round((c.receivedCount / c.checklistCount) * 100)}%` : '0%',
       'Created Date': c.createdAt.slice(0, 10),
     }));
-    exportToCSV(`NestGuru_Filtered_Cases_${new Date().toISOString().slice(0, 10)}`, rows);
+    exportToCSV(`TheNestGuru_Filtered_Cases_${new Date().toISOString().slice(0, 10)}`, rows);
   };
 
   const handleDelete = async (id: string, name: string) => {
@@ -189,11 +202,14 @@ export default function CaseListTable({
     }
     setEditCoApplicants(fullCoApps);
 
+    setIsCustomCityEdit(false);
     setEditFormData({
       clientName: c.clientName,
       mobile: c.mobile,
       email: c.email || '',
       clientState: c.clientState || (states[0]?.name || ''),
+      clientCity: c.clientCity || '',
+      clientDob: c.clientDob || '',
       product: c.product,
       customerType: c.customerType,
       propertyType: c.propertyType,
@@ -217,6 +233,7 @@ export default function CaseListTable({
           mobile: '',
           email: '',
           state: states[0]?.name || '',
+          dob: '',
           incomeRequired: true,
         });
       }
@@ -242,6 +259,37 @@ export default function CaseListTable({
       return;
     }
 
+    if (!isValidName(editFormData.clientName)) {
+      setEditError('Client Full Name must contain only alphabets and spaces (no numbers or special characters).');
+      return;
+    }
+
+    if (!isValid10DigitPhone(editFormData.mobile)) {
+      setEditError('Client Mobile Number must be exactly 10 digits.');
+      return;
+    }
+
+    if (editFormData.email && !isValidEmail(editFormData.email)) {
+      setEditError('Please enter a valid Client Email Address.');
+      return;
+    }
+
+    for (let i = 0; i < editCoApplicants.length; i++) {
+      const coApp = editCoApplicants[i];
+      if (coApp.name && !isValidName(coApp.name)) {
+        setEditError(`Co-Applicant ${i + 1} Name must contain only alphabets and spaces (no numbers or special characters).`);
+        return;
+      }
+      if (coApp.mobile && !isValid10DigitPhone(coApp.mobile)) {
+        setEditError(`Co-Applicant ${i + 1} (${coApp.name || 'Co-Applicant'}) mobile number must be exactly 10 digits.`);
+        return;
+      }
+      if (coApp.email && !isValidEmail(coApp.email)) {
+        setEditError(`Co-Applicant ${i + 1} (${coApp.name || 'Co-Applicant'}) email address is invalid.`);
+        return;
+      }
+    }
+
     setEditLoading(true);
     setEditError('');
 
@@ -250,6 +298,8 @@ export default function CaseListTable({
       mobile: editFormData.mobile,
       email: editFormData.email || null,
       clientState: editFormData.clientState || null,
+      clientCity: editFormData.clientCity || null,
+      clientDob: editFormData.clientDob || null,
       product: editFormData.product,
       customerType: editFormData.customerType,
       propertyType: editFormData.propertyType,
@@ -390,14 +440,14 @@ export default function CaseListTable({
                   return (
                     <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                       <td className="py-4 px-4">
-                        <Link href={`/cases/${c.id}`} className="font-bold text-slate-900 dark:text-white hover:text-sky-600 text-sm">
+                        <Link href={`/cases/${c.id}`} className="font-bold text-slate-900 dark:text-white hover:text-sky-600 text-xs">
                           {c.clientName}
                         </Link>
                         <div className="text-[11px] text-slate-500 font-mono mt-0.5">{c.mobile}</div>
                         {c.email && <div className="text-[10px] text-slate-400">{c.email}</div>}
-                        {c.clientState && (
+                        {(c.clientCity || c.clientState) && (
                           <div className="text-[10px] text-indigo-500 dark:text-indigo-400 font-medium mt-0.5">
-                            📍 {c.clientState}
+                            📍 {c.clientCity ? `${c.clientCity}, ${c.clientState || ''}` : c.clientState}
                           </div>
                         )}
                       </td>
@@ -534,21 +584,27 @@ export default function CaseListTable({
                       type="text"
                       required
                       value={editFormData.clientName}
-                      onChange={(e) => setEditFormData({ ...editFormData, clientName: e.target.value })}
+                      onChange={(e) => setEditFormData({ ...editFormData, clientName: sanitizeToAlphabetsOnly(e.target.value) })}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Mobile Number *
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                        Mobile Number * (10 Digits)
+                      </label>
+                      <span className={`text-[10px] font-mono font-bold ${editFormData.mobile.length === 10 ? 'text-emerald-500' : 'text-slate-400'}`}>
+                        {editFormData.mobile.length}/10
+                      </span>
+                    </div>
                     <input
                       type="tel"
                       required
+                      maxLength={10}
                       value={editFormData.mobile}
-                      onChange={(e) => setEditFormData({ ...editFormData, mobile: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-mono"
+                      onChange={(e) => setEditFormData({ ...editFormData, mobile: sanitizeTo10Digits(e.target.value) })}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-mono tracking-wider"
                     />
                   </div>
 
@@ -559,7 +615,19 @@ export default function CaseListTable({
                     <input
                       type="email"
                       value={editFormData.email}
-                      onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                      onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value.trim() })}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Date of Birth (DOB)
+                    </label>
+                    <input
+                      type="date"
+                      value={editFormData.clientDob}
+                      onChange={(e) => setEditFormData({ ...editFormData, clientDob: e.target.value })}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs"
                     />
                   </div>
@@ -570,7 +638,14 @@ export default function CaseListTable({
                     </label>
                     <select
                       value={editFormData.clientState}
-                      onChange={(e) => setEditFormData({ ...editFormData, clientState: e.target.value })}
+                      onChange={(e) => {
+                        setIsCustomCityEdit(false);
+                        setEditFormData({
+                          ...editFormData,
+                          clientState: e.target.value,
+                          clientCity: '',
+                        });
+                      }}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
                     >
                       <option value="">-- Select State --</option>
@@ -580,6 +655,70 @@ export default function CaseListTable({
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Client City
+                    </label>
+                    {(() => {
+                      const editStateObj = states.find((s) => s.name === editFormData.clientState);
+                      const editCities = editStateObj?.cities || [];
+                      if (editCities.length > 0) {
+                        return (
+                          <div className="space-y-1">
+                            <select
+                              value={
+                                isCustomCityEdit
+                                  ? '__other__'
+                                  : editCities.some((c) => c.name === editFormData.clientCity)
+                                  ? editFormData.clientCity
+                                  : editFormData.clientCity
+                                  ? '__other__'
+                                  : ''
+                              }
+                              onChange={(e) => {
+                                if (e.target.value === '__other__') {
+                                  setIsCustomCityEdit(true);
+                                  setEditFormData({ ...editFormData, clientCity: '' });
+                                } else {
+                                  setIsCustomCityEdit(false);
+                                  setEditFormData({ ...editFormData, clientCity: e.target.value });
+                                }
+                              }}
+                              className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                            >
+                              <option value="">-- Select City --</option>
+                              {editCities.map((c) => (
+                                <option key={c.id} value={c.name}>
+                                  {c.name}
+                                </option>
+                              ))}
+                              <option value="__other__">+ Other / Enter Manually</option>
+                            </select>
+                            {isCustomCityEdit && (
+                              <input
+                                type="text"
+                                placeholder="Enter city name..."
+                                value={editFormData.clientCity}
+                                onChange={(e) => setEditFormData({ ...editFormData, clientCity: e.target.value })}
+                                className="w-full glass-input px-3 py-1.5 rounded-xl text-xs"
+                                autoFocus
+                              />
+                            )}
+                          </div>
+                        );
+                      }
+                      return (
+                        <input
+                          type="text"
+                          placeholder="e.g. Mumbai"
+                          value={editFormData.clientCity}
+                          onChange={(e) => setEditFormData({ ...editFormData, clientCity: e.target.value })}
+                          className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                        />
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -599,9 +738,19 @@ export default function CaseListTable({
                       onChange={(e) => setEditFormData({ ...editFormData, product: e.target.value })}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold text-sky-600 dark:text-sky-400"
                     >
-                      <option value="Home Loan">Home Loan</option>
-                      <option value="Loan Against Property">Loan Against Property</option>
-                      <option value="MSME Business Loan">MSME Business Loan</option>
+                      {products.length > 0 ? (
+                        products.map((p) => (
+                          <option key={p.id} value={p.name}>
+                            {p.name}
+                          </option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="Home Loan">Home Loan</option>
+                          <option value="Loan Against Property">Loan Against Property</option>
+                          <option value="MSME Business Loan">MSME Business Loan</option>
+                        </>
+                      )}
                     </select>
                   </div>
 
@@ -614,9 +763,19 @@ export default function CaseListTable({
                       onChange={(e) => setEditFormData({ ...editFormData, customerType: e.target.value })}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
                     >
-                      <option value="Salaried">Salaried</option>
-                      <option value="Professional">Professional</option>
-                      <option value="Business">Business</option>
+                      {profiles.length > 0 ? (
+                        profiles.map((pr) => (
+                          <option key={pr.id} value={pr.name}>
+                            {pr.name}
+                          </option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="Salaried">Salaried</option>
+                          <option value="Professional">Professional</option>
+                          <option value="Business">Business</option>
+                        </>
+                      )}
                     </select>
                   </div>
 
@@ -723,20 +882,26 @@ export default function CaseListTable({
                               type="text"
                               placeholder={`Co-Applicant ${idx + 1} Name`}
                               value={coApp.name}
-                              onChange={(e) => handleCoApplicantFieldChange(idx, 'name', e.target.value)}
+                              onChange={(e) => handleCoApplicantFieldChange(idx, 'name', sanitizeToAlphabetsOnly(e.target.value))}
                               className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs"
                             />
                           </div>
 
                           <div>
-                            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                              Mobile Number
-                            </label>
+                            <div className="flex items-center justify-between mb-0.5">
+                              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                                Mobile Number (10 Digits)
+                              </label>
+                              <span className={`text-[10px] font-mono ${coApp.mobile?.length === 10 ? 'text-emerald-500 font-bold' : 'text-slate-400'}`}>
+                                {coApp.mobile?.length || 0}/10
+                              </span>
+                            </div>
                             <input
                               type="tel"
-                              placeholder="Mobile Number"
+                              maxLength={10}
+                              placeholder="10-digit mobile"
                               value={coApp.mobile}
-                              onChange={(e) => handleCoApplicantFieldChange(idx, 'mobile', e.target.value)}
+                              onChange={(e) => handleCoApplicantFieldChange(idx, 'mobile', sanitizeTo10Digits(e.target.value))}
                               className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs font-mono"
                             />
                           </div>
@@ -749,7 +914,7 @@ export default function CaseListTable({
                               type="email"
                               placeholder="Email Address"
                               value={coApp.email}
-                              onChange={(e) => handleCoApplicantFieldChange(idx, 'email', e.target.value)}
+                              onChange={(e) => handleCoApplicantFieldChange(idx, 'email', e.target.value.trim())}
                               className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs"
                             />
                           </div>
@@ -770,6 +935,18 @@ export default function CaseListTable({
                                 </option>
                               ))}
                             </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
+                              Date of Birth (DOB)
+                            </label>
+                            <input
+                              type="date"
+                              value={coApp.dob || ''}
+                              onChange={(e) => handleCoApplicantFieldChange(idx, 'dob', e.target.value)}
+                              className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs"
+                            />
                           </div>
                         </div>
                       </div>
@@ -848,7 +1025,7 @@ export default function CaseListTable({
                       <option value="">-- Unassigned Channel --</option>
                       {channelUsers.map((u) => (
                         <option key={u.id} value={u.id}>
-                          {u.name} ({u.email})
+                          {u.name.replace(/\s*\([^)]*\)/g, '').trim()}
                         </option>
                       ))}
                     </select>
@@ -866,7 +1043,7 @@ export default function CaseListTable({
                       <option value="">-- Unassigned Sales --</option>
                       {salesUsers.map((u) => (
                         <option key={u.id} value={u.id}>
-                          {u.name} ({u.email})
+                          {u.name.replace(/\s*\([^)]*\)/g, '').trim()}
                         </option>
                       ))}
                     </select>
@@ -884,7 +1061,7 @@ export default function CaseListTable({
                       <option value="">-- Unassigned Operation --</option>
                       {operationUsers.map((u) => (
                         <option key={u.id} value={u.id}>
-                          {u.name} ({u.email})
+                          {u.name.replace(/\s*\([^)]*\)/g, '').trim()}
                         </option>
                       ))}
                     </select>

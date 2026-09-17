@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import DashboardAnalytics from '@/components/DashboardAnalytics';
+import AttendancePunchTracker from '@/components/AttendancePunchTracker';
 import Link from 'next/link';
 import { PlusCircle, Sliders } from 'lucide-react';
 
@@ -90,6 +91,9 @@ export default async function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* HRMS Daily Attendance Punch Tracker */}
+      <AttendancePunchTracker variant="dashboard" />
 
       <DashboardAnalytics
         cases={formattedCases}

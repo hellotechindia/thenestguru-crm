@@ -24,6 +24,9 @@ module.exports = {
           950: '#090d16',
         }
       },
+      fontFamily: {
+        sans: ['"Plus Jakarta Sans"', 'Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+      },
     },
   },
   plugins: [],

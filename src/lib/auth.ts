@@ -14,31 +14,39 @@ export const authOptions: NextAuthOptions = {
     CredentialsProvider({
       name: 'Credentials',
       credentials: {
-        email: { label: 'Email', type: 'email' },
+        email: { label: 'Username or Email', type: 'text' },
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
-          throw new Error('Please enter your email and password');
+          throw new Error('Please enter your username/email and password');
         }
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email },
+        const identifier = credentials.email.trim();
+
+        // Support login by username or by email
+        const user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { username: identifier },
+              { email: identifier },
+            ],
+          },
         });
 
         if (!user || !user.passwordHash) {
-          throw new Error('Invalid email or password');
+          throw new Error('Invalid username/email or password');
         }
 
         const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
 
         if (!isValid) {
-          throw new Error('Invalid email or password');
+          throw new Error('Invalid username/email or password');
         }
 
         return {
           id: user.id,
-          email: user.email,
+          email: user.email || '',
           name: user.name,
           role: user.role,
           teamId: user.teamId,

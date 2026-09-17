@@ -13,7 +13,14 @@ export default async function AdminFunctionalityPage() {
   }
 
   const banks = await prisma.bankConfig.findMany({ orderBy: { bankName: 'asc' } });
-  const states = await prisma.stateConfig.findMany({ orderBy: { name: 'asc' } });
+  const states = await prisma.stateConfig.findMany({
+    include: {
+      cities: {
+        orderBy: { name: 'asc' },
+      },
+    },
+    orderBy: { name: 'asc' },
+  });
   const cases = await prisma.case.findMany({
     select: { id: true, clientName: true, product: true, status: true },
     orderBy: { createdAt: 'desc' },

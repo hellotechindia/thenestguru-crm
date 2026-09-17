@@ -43,10 +43,11 @@ async function main() {
   const agentPasswordHash = await bcrypt.hash('agent123', 10);
 
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@nestguru.com' },
+    where: { username: 'admin' },
     update: { passwordHash: adminPasswordHash, role: Role.SUPER_ADMIN, accessPermission: AccessPermission.EDIT },
     create: {
       name: 'Super Admin User',
+      username: 'admin',
       email: 'admin@nestguru.com',
       passwordHash: adminPasswordHash,
       role: Role.SUPER_ADMIN,
@@ -56,10 +57,11 @@ async function main() {
   });
 
   const channelUser = await prisma.user.upsert({
-    where: { email: 'channel@nestguru.com' },
-    update: { passwordHash: agentPasswordHash, role: Role.CHANNEL, accessPermission: AccessPermission.EDIT },
+    where: { username: 'channel' },
+    update: { name: 'Anil Sharma', passwordHash: agentPasswordHash, role: Role.CHANNEL, accessPermission: AccessPermission.EDIT },
     create: {
-      name: 'Anil Sharma (Channel Partner)',
+      name: 'Anil Sharma',
+      username: 'channel',
       email: 'channel@nestguru.com',
       passwordHash: agentPasswordHash,
       role: Role.CHANNEL,
@@ -69,10 +71,11 @@ async function main() {
   });
 
   const salesUser = await prisma.user.upsert({
-    where: { email: 'sales@nestguru.com' },
-    update: { passwordHash: agentPasswordHash, role: Role.SALES, accessPermission: AccessPermission.EDIT },
+    where: { username: 'sales' },
+    update: { name: 'Vikram Sethi', passwordHash: agentPasswordHash, role: Role.SALES, accessPermission: AccessPermission.EDIT },
     create: {
-      name: 'Vikram Sethi (Sales Lead)',
+      name: 'Vikram Sethi',
+      username: 'sales',
       email: 'sales@nestguru.com',
       passwordHash: agentPasswordHash,
       role: Role.SALES,
@@ -82,10 +85,11 @@ async function main() {
   });
 
   const opsUser = await prisma.user.upsert({
-    where: { email: 'ops@nestguru.com' },
-    update: { passwordHash: agentPasswordHash, role: Role.OPERATION, accessPermission: AccessPermission.EDIT },
+    where: { username: 'ops' },
+    update: { name: 'Pooja Nair', passwordHash: agentPasswordHash, role: Role.OPERATION, accessPermission: AccessPermission.EDIT },
     create: {
-      name: 'Pooja Nair (Operations Specialist)',
+      name: 'Pooja Nair',
+      username: 'ops',
       email: 'ops@nestguru.com',
       passwordHash: agentPasswordHash,
       role: Role.OPERATION,

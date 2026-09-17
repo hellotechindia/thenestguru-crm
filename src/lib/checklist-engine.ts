@@ -38,6 +38,9 @@ export async function generateChecklistForCase(
     status: string;
     stage: number;
     updatedById: string;
+    requireOnedrive?: boolean;
+    requireRemark?: boolean;
+    remarkPlaceholder?: string | null;
   }[] = [];
 
   for (const cat of categoriesToUse) {
@@ -58,6 +61,9 @@ export async function generateChecklistForCase(
           status: 'Pending',
           stage: templateItem.stage,
           updatedById: userId,
+          requireOnedrive: templateItem.requireOnedrive !== false,
+          requireRemark: templateItem.requireRemark === true,
+          remarkPlaceholder: templateItem.remarkPlaceholder || null,
         });
       }
 
@@ -80,6 +86,9 @@ export async function generateChecklistForCase(
             status: 'Pending',
             stage: templateItem.stage,
             updatedById: userId,
+            requireOnedrive: templateItem.requireOnedrive !== false,
+            requireRemark: templateItem.requireRemark === true,
+            remarkPlaceholder: templateItem.remarkPlaceholder || null,
           });
         }
       }

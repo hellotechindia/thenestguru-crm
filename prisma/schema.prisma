@@ -23,12 +23,20 @@ enum AccessPermission {
 model User {
   id               String           @id @default(cuid())
   name             String
-  email            String           @unique
+  username         String?          @unique
+  email            String?
   passwordHash     String
   role             Role             @default(TEAM_MEMBER)
   accessPermission AccessPermission @default(EDIT)
   teamId           String?
   team             Team?            @relation(fields: [teamId], references: [id])
+  dob              DateTime?
+  avatarUrl        String?          @db.Text
+  attendanceRecords AttendanceRecord[]
+  leaves           LeaveRequest[]
+  assignedTasks    Task[]           @relation("AssignedTasks")
+  createdTasks     Task[]           @relation("CreatedTasks")
+  taskComments     TaskComment[]
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 }
@@ -49,9 +57,20 @@ model BankConfig {
 }
 
 model StateConfig {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
+  id        String       @id @default(cuid())
+  name      String       @unique
+  cities    CityConfig[]
+  createdAt DateTime     @default(now())
+}
+
+model CityConfig {
+  id        String      @id @default(cuid())
+  name      String
+  stateId   String
+  state     StateConfig @relation(fields: [stateId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+
+  @@unique([stateId, name])
 }
 
 model RevenueRecord {
@@ -69,6 +88,20 @@ model ExpenseRecord {
   amount    Float
   month     String   // e.g. "September 2026"
   createdAt DateTime @default(now())
+}
+
+model ProductMaster {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProfileMaster {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model ChecklistCategory {
@@ -97,6 +130,9 @@ model ChecklistItemTemplate {
   coApplicantRequirement RequirementType   @default(IF_APPLICABLE)
   propertyTypeScope      String?           // null or "RESALE" | "TAKEOVER_SELLER_BT" | "DIRECT_ALLOTMENT"
   stage                  Int               @default(1)
+  requireOnedrive        Boolean           @default(true)
+  requireRemark          Boolean           @default(false)
+  remarkPlaceholder      String?
   createdAt              DateTime          @default(now())
 }
 
@@ -106,6 +142,8 @@ model Case {
   mobile               String
   email                String?
   clientState          String?
+  clientCity           String?
+  clientDob            DateTime?
   product              String
   customerType         String
   propertyType         String
@@ -133,6 +171,7 @@ model Case {
   updatedAt            DateTime            @updatedAt
   checklistItems       CaseChecklistItem[]
   revenues             RevenueRecord[]
+  tasks                Task[]
 }
 
 model CaseChecklistItem {
@@ -142,10 +181,13 @@ model CaseChecklistItem {
   category      String
   label         String
   appliesTo     String    // "Applicant" | "Co-Applicant 1" | "Co-Applicant 2" ...
-  status        String    @default("Pending")
-  remark        String?   @db.Text
-  documentUrl   String?   @db.Text
-  stage         Int       @default(1)
+  status            String    @default("Pending")
+  remark            String?   @db.Text
+  documentUrl       String?   @db.Text
+  stage             Int       @default(1)
+  requireOnedrive   Boolean   @default(true)
+  requireRemark     Boolean   @default(false)
+  remarkPlaceholder String?
   bankName      String?
   monthName     String?
   financialYear String?
@@ -157,3 +199,127 @@ model CaseChecklistItem {
   updatedById   String?
   updatedAt     DateTime  @updatedAt
 }
+
+model AttendanceRecord {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date         String    // YYYY-MM-DD in Indian Standard Time (IST)
+  punchIn      DateTime  // First punch-in timestamp (UTC)
+  punchOut     DateTime? // Last punch-out timestamp (UTC)
+  totalMinutes Int       @default(0) // Total accumulated work minutes
+  status       String    @default("PRESENT") // PRESENT, HALF_DAY, LATE
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([userId, date])
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  PAID
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model LeaveRequest {
+  id          String      @id @default(cuid())
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  manualName  String?
+  manualPhone String?
+  isManual    Boolean     @default(false)
+  leaveType   LeaveType   @default(CASUAL)
+  startDate   DateTime
+  endDate     DateTime
+  daysCount   Int         @default(1)
+  reason      String      @db.Text
+  status      LeaveStatus @default(PENDING)
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model HolidayConfig {
+  id        String   @id @default(cuid())
+  name      String
+  date      String   // YYYY-MM-DD
+  dayName   String?  // Monday, Tuesday etc.
+  isOptional Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ManualBirthdayEntry {
+  id          String    @id @default(cuid())
+  name        String
+  phone       String?
+  dob         DateTime
+  remark      String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  IN_REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+model Task {
+  id           String        @id @default(cuid())
+  title        String
+  description  String?       @db.Text
+  priority     TaskPriority  @default(MEDIUM)
+  status       TaskStatus    @default(PENDING)
+  dueDate      DateTime?
+  assignedAt   DateTime      @default(now())
+  completedAt  DateTime?
+  assignedToId String
+  assignedTo   User          @relation("AssignedTasks", fields: [assignedToId], references: [id], onDelete: Cascade)
+  createdById  String
+  createdBy    User          @relation("CreatedTasks", fields: [createdById], references: [id], onDelete: Cascade)
+  caseId       String?
+  case         Case?         @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  comments     TaskComment[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+}
+
+model SystemSetting {
+  id          String   @id @default("default")
+  crmName     String   @default("TheNestGuru")
+  crmTagline  String   @default("Loan Processing Desk")
+  crmLogoUrl  String?  @db.Text
+  updatedAt   DateTime @updatedAt
+}
+
+
+
+

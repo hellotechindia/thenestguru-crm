@@ -29,6 +29,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { exportToCSV } from '@/lib/excel-export';
+import { isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 
 interface ChecklistItem {
   id: string;
@@ -39,6 +40,9 @@ interface ChecklistItem {
   remark: string;
   documentUrl: string;
   stage: number;
+  requireOnedrive?: boolean;
+  requireRemark?: boolean;
+  remarkPlaceholder?: string;
   bankName?: string;
   monthName?: string;
   financialYear?: string;
@@ -56,6 +60,8 @@ interface CaseDetailProps {
     mobile: string;
     email: string | null;
     clientState?: string | null;
+    clientCity?: string | null;
+    clientDob?: string | null;
     product: string;
     customerType: string;
     propertyType: string;
@@ -253,6 +259,25 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
     if (isReadOnly) return;
     setErrorMessage('');
     setSuccessMessage('');
+
+    if (personalInfo.motherName && !isValidName(personalInfo.motherName)) {
+      setErrorMessage("Mother Name must contain only alphabetic characters and spaces.");
+      return;
+    }
+
+    if (personalInfo.spouseName && !isValidName(personalInfo.spouseName)) {
+      setErrorMessage("Spouse Name must contain only alphabetic characters and spaces.");
+      return;
+    }
+
+    for (let rIdx = 0; rIdx < references.length; rIdx++) {
+      const ref = references[rIdx];
+      if (ref.name && !isValidName(ref.name)) {
+        setErrorMessage(`Reference ${rIdx + 1} Name must contain only alphabetic characters and spaces.`);
+        return;
+      }
+    }
+
     const res = await updateCasePersonalInfoAction(caseData.id, {
       ...personalInfo,
       referencesData: references,
@@ -335,12 +360,12 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
               <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center border border-slate-200 shrink-0 overflow-hidden">
                 <img
                   src="https://thenestguru.com/thenestgurulogo.png"
-                  alt="NestGuru Logo"
+                  alt="TheNestGuru Logo"
                   className="w-full h-full max-w-full max-h-full object-contain shrink-0"
                 />
               </div>
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400">NestGuru Loan Desk</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400">TheNestGuru Loan Desk</span>
                 <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">{caseData.clientName}</h1>
               </div>
             </div>
@@ -352,9 +377,9 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
               <span className="px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30 font-bold text-xs">
                 {caseData.customerType}
               </span>
-              {caseData.clientState && (
+              {(caseData.clientCity || caseData.clientState) && (
                 <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-bold text-xs flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> {caseData.clientState}
+                  <MapPin className="w-3 h-3" /> {caseData.clientCity ? `${caseData.clientCity}, ${caseData.clientState || ''}` : caseData.clientState}
                 </span>
               )}
             </div>
@@ -578,13 +603,24 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
 
                         {/* Document Drive URL */}
                         <div className="lg:col-span-3">
-                          <label className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
-                            OneDrive / Drive Share Link
-                          </label>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                              OneDrive / Share Link
+                            </label>
+                            {item.requireOnedrive === false ? (
+                              <span className="text-[9px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                                Optional
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-semibold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800 px-1.5 py-0.5 rounded">
+                                Link Required
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1.5">
                             <input
                               type="url"
-                              placeholder="Paste OneDrive link..."
+                              placeholder={item.requireOnedrive === false ? "Optional: paste drive link if any..." : "Paste OneDrive link..."}
                               value={item.documentUrl || ''}
                               onChange={(e) => handleFieldChange(item.id, 'documentUrl', e.target.value)}
                               className="w-full glass-input px-2.5 py-1 text-xs rounded-lg placeholder:text-slate-400 font-mono"
@@ -606,11 +642,11 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                         {/* Multi-line Remarks Field */}
                         <div className="lg:col-span-3">
                           <label className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
-                            Remarks / Notes (Multi-line)
+                            Remarks / Notes
                           </label>
                           <textarea
                             rows={2}
-                            placeholder="Type detailed remarks..."
+                            placeholder={item.remarkPlaceholder || 'Type detailed remarks...'}
                             value={item.remark || ''}
                             onChange={(e) => handleFieldChange(item.id, 'remark', e.target.value)}
                             className="w-full glass-input px-2.5 py-1 text-xs rounded-lg placeholder:text-slate-400 whitespace-pre-wrap"
@@ -1027,7 +1063,7 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
             <span>Applicant & Co-Applicant Contact Information (From Intake)</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
             <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
               <span className="block text-[10px] font-bold text-slate-400 uppercase">Main Client Name</span>
               <span className="font-bold text-slate-800 dark:text-slate-100">{caseData.clientName}</span>
@@ -1041,8 +1077,18 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
               <span className="font-semibold text-slate-700 dark:text-slate-300">{caseData.email || 'N/A'}</span>
             </div>
             <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase">Client State</span>
-              <span className="font-semibold text-slate-700 dark:text-slate-300">{caseData.clientState || 'N/A'}</span>
+              <span className="block text-[10px] font-bold text-slate-400 uppercase">Date of Birth (DOB)</span>
+              <span className="font-bold text-pink-600 dark:text-pink-400 flex items-center gap-1">
+                🎂 {caseData.clientDob ? new Date(caseData.clientDob).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Not specified'}
+              </span>
+            </div>
+            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+              <span className="block text-[10px] font-bold text-slate-400 uppercase">Location (City, State)</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-300">
+                {caseData.clientCity
+                  ? `${caseData.clientCity}, ${caseData.clientState || 'N/A'}`
+                  : caseData.clientState || 'N/A'}
+              </span>
             </div>
           </div>
 
@@ -1056,7 +1102,7 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                 {caseData.coApplicantsData.map((coApp: any, idx: number) => (
                   <div
                     key={idx}
-                    className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs space-y-1"
+                    className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs space-y-1.5"
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-slate-800 dark:text-white">
@@ -1076,6 +1122,11 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                       <span>📱 {coApp.mobile || 'N/A'}</span>
                       <span>✉️ {coApp.email || 'N/A'}</span>
                     </div>
+                    {coApp.dob && (
+                      <div className="text-[10px] font-semibold text-pink-600 dark:text-pink-400 flex items-center gap-1 pt-0.5 border-t border-slate-100 dark:border-slate-800">
+                        🎂 DOB: {new Date(coApp.dob).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1091,7 +1142,7 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
               type="text"
               placeholder="Mother's Full Name"
               value={personalInfo.motherName}
-              onChange={(e) => setPersonalInfo({ ...personalInfo, motherName: e.target.value })}
+              onChange={(e) => setPersonalInfo({ ...personalInfo, motherName: sanitizeToAlphabetsOnly(e.target.value) })}
               className="w-full glass-input px-3 py-2 rounded-xl"
             />
           </div>
@@ -1102,7 +1153,7 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
               type="text"
               placeholder="Spouse's Full Name"
               value={personalInfo.spouseName}
-              onChange={(e) => setPersonalInfo({ ...personalInfo, spouseName: e.target.value })}
+              onChange={(e) => setPersonalInfo({ ...personalInfo, spouseName: sanitizeToAlphabetsOnly(e.target.value) })}
               className="w-full glass-input px-3 py-2 rounded-xl"
             />
           </div>
@@ -1173,7 +1224,7 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                 value={ref.name}
                 onChange={(e) => {
                   const updated = [...references];
-                  updated[rIdx].name = e.target.value;
+                  updated[rIdx].name = sanitizeToAlphabetsOnly(e.target.value);
                   setReferences(updated);
                 }}
                 className="sm:col-span-3 glass-input px-2.5 py-1.5 rounded-lg"

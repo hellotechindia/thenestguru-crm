@@ -16,9 +16,12 @@ export default async function CasesPage() {
 
   const userRole = (session.user as any).role;
 
-  const [teams, states, users, cases] = await Promise.all([
+  const [teams, states, users, cases, products, profiles] = await Promise.all([
     prisma.team.findMany({ orderBy: { name: 'asc' } }),
-    prisma.stateConfig.findMany({ orderBy: { name: 'asc' } }),
+    prisma.stateConfig.findMany({
+      include: { cities: { orderBy: { name: 'asc' } } },
+      orderBy: { name: 'asc' },
+    }),
     prisma.user.findMany({
       select: { id: true, name: true, role: true, email: true },
       orderBy: { name: 'asc' },
@@ -30,6 +33,8 @@ export default async function CasesPage() {
       },
       orderBy: { createdAt: 'desc' },
     }),
+    prisma.productMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.profileMaster.findMany({ orderBy: { name: 'asc' } }),
   ]);
 
   const formattedCases = cases.map((c) => {
@@ -43,6 +48,8 @@ export default async function CasesPage() {
       mobile: c.mobile,
       email: c.email,
       clientState: c.clientState || '',
+      clientCity: c.clientCity || '',
+      clientDob: c.clientDob ? c.clientDob.toISOString().slice(0, 10) : '',
       product: c.product,
       customerType: c.customerType,
       propertyType: c.propertyType,
@@ -86,6 +93,8 @@ export default async function CasesPage() {
         teams={teams}
         states={states}
         users={users}
+        products={products}
+        profiles={profiles}
       />
     </div>
   );

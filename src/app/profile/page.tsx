@@ -35,8 +35,9 @@ export default async function ProfilePage() {
         user={{
           id: user.id,
           name: user.name,
-          email: user.email,
+          email: user.email || '',
           role: user.role,
+          avatarUrl: user.avatarUrl || null,
           teamName: user.team?.name || 'Operations',
         }}
       />

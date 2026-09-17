@@ -10,16 +10,22 @@ export default async function NewCasePage() {
     redirect('/login');
   }
 
-  const teams = await prisma.team.findMany();
-  const states = await prisma.stateConfig.findMany({ orderBy: { name: 'asc' } });
-  // Exclude SUPER_ADMIN from assignable users — Super Admin automatically oversees everything
-  const users = await prisma.user.findMany({
-    where: {
-      role: { not: 'SUPER_ADMIN' },
-    },
-    select: { id: true, name: true, role: true, email: true },
-    orderBy: { name: 'asc' },
-  });
+  const [teams, states, users, productsRes, profilesRes] = await Promise.all([
+    prisma.team.findMany(),
+    prisma.stateConfig.findMany({
+      include: { cities: { orderBy: { name: 'asc' } } },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.user.findMany({
+      where: {
+        role: { not: 'SUPER_ADMIN' },
+      },
+      select: { id: true, name: true, role: true, email: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.productMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.profileMaster.findMany({ orderBy: { name: 'asc' } }),
+  ]);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -32,7 +38,13 @@ export default async function NewCasePage() {
         </p>
       </div>
 
-      <CaseIntakeForm teams={teams} states={states} users={users} />
+      <CaseIntakeForm
+        teams={teams}
+        states={states}
+        users={users}
+        products={productsRes}
+        profiles={profilesRes}
+      />
     </div>
   );
 }

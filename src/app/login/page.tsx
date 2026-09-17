@@ -4,13 +4,14 @@ import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
-import { Lock, Mail, ShieldCheck, UserCheck, ArrowRight, CheckCircle2, Sun, Moon } from 'lucide-react';
+import { Lock, Mail, ShieldCheck, UserCheck, ArrowRight, CheckCircle2, Sun, Moon, Eye, EyeOff, AtSign } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
   const { theme, toggleTheme } = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -26,7 +27,7 @@ export default function LoginPage() {
     });
 
     if (res?.error) {
-      setError('Invalid email or password');
+      setError('Invalid username/email or password');
       setLoading(false);
     } else {
       router.push('/dashboard');
@@ -36,10 +37,10 @@ export default function LoginPage() {
 
   const setDemoUser = (userType: 'admin' | 'agent') => {
     if (userType === 'admin') {
-      setEmail('admin@nestguru.com');
+      setEmail('admin');
       setPassword('admin123');
     } else {
-      setEmail('channel@nestguru.com');
+      setEmail('channel');
       setPassword('agent123');
     }
   };
@@ -67,11 +68,11 @@ export default function LoginPage() {
           <div className="inline-flex w-16 h-16 rounded-2xl bg-white p-2 items-center justify-center shadow-md border border-slate-200 mb-4 overflow-hidden shrink-0">
             <img
               src="https://thenestguru.com/thenestgurulogo.png"
-              alt="NestGuru Official Logo"
+              alt="TheNestGuru Official Logo"
               className="w-full h-full max-w-full max-h-full object-contain shrink-0"
             />
           </div>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">NestGuru Loan Desk</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">TheNestGuru Loan Desk</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Multi-Tenant Dynamic Checklist & Case Processing</p>
         </div>
 
@@ -90,7 +91,7 @@ export default function LoginPage() {
               <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-600" />
               <div>
                 <div className="font-semibold leading-tight text-slate-900 dark:text-white">Super Admin</div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">Full CRUD & Admin</div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">Login: admin</div>
               </div>
             </button>
             <button
@@ -101,7 +102,7 @@ export default function LoginPage() {
               <UserCheck className="w-4 h-4 shrink-0 text-sky-600" />
               <div>
                 <div className="font-semibold leading-tight text-slate-900 dark:text-white">Team Member</div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">Processing Staff</div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">Login: channel</div>
               </div>
             </button>
           </div>
@@ -115,15 +116,17 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Username or Email Address
+            </label>
             <div className="relative">
-              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <AtSign className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
               <input
-                type="email"
+                type="text"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="e.g. admin@nestguru.com"
+                placeholder="e.g. admin or admin@thenestguru.com"
                 className="w-full glass-input pl-9 pr-4 py-2.5 rounded-lg text-sm transition-all focus:ring-2 focus:ring-sky-500"
               />
             </div>
@@ -134,13 +137,21 @@ export default function LoginPage() {
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-lg text-sm transition-all focus:ring-2 focus:ring-sky-500"
+                className="w-full glass-input pl-9 pr-10 py-2.5 rounded-lg text-sm transition-all focus:ring-2 focus:ring-sky-500"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors p-1"
+                title={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4 text-sky-500" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 

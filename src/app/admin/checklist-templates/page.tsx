@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import ChecklistTemplateEditor from '@/components/ChecklistTemplateEditor';
 
+import { getProductsAction, getProfilesAction } from '@/app/actions';
+
 export const revalidate = 0;
 
 export default async function ChecklistTemplatesPage() {
@@ -12,14 +14,21 @@ export default async function ChecklistTemplatesPage() {
     redirect('/dashboard');
   }
 
-  const categories = await prisma.checklistCategory.findMany({
-    include: {
-      items: {
-        orderBy: { stage: 'asc' },
+  const [categories, productsRes, profilesRes] = await Promise.all([
+    prisma.checklistCategory.findMany({
+      include: {
+        items: {
+          orderBy: { stage: 'asc' },
+        },
       },
-    },
-    orderBy: { name: 'asc' },
-  });
+      orderBy: { name: 'asc' },
+    }),
+    getProductsAction(),
+    getProfilesAction(),
+  ]);
+
+  const products = productsRes.products || [];
+  const profiles = profilesRes.profiles || [];
 
   return (
     <div className="space-y-6">
@@ -30,7 +39,11 @@ export default async function ChecklistTemplatesPage() {
         </p>
       </div>
 
-      <ChecklistTemplateEditor categories={categories} />
+      <ChecklistTemplateEditor
+        categories={categories}
+        products={products}
+        profiles={profiles}
+      />
     </div>
   );
 }

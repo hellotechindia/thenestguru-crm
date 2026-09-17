@@ -16,8 +16,11 @@ import {
   Sun,
   Moon,
   UserCog,
-  Sliders
+  Sliders,
+  CalendarDays
 } from 'lucide-react';
+import BirthdayTopWidget from '@/components/BirthdayTopWidget';
+import AttendancePunchTracker from '@/components/AttendancePunchTracker';
 
 export default function Navigation() {
   const pathname = usePathname();
@@ -33,6 +36,7 @@ export default function Navigation() {
     { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { label: 'Cases Directory', href: '/cases', icon: FolderCheck },
     { label: 'New Intake', href: '/cases/new', icon: PlusCircle },
+    { label: 'HRMS Desk', href: '/hrms', icon: CalendarDays },
   ];
 
   if (userRole === 'SUPER_ADMIN') {
@@ -52,13 +56,13 @@ export default function Navigation() {
             <div className="w-9 h-9 rounded-xl bg-white p-1 flex items-center justify-center shadow border border-slate-200 group-hover:scale-105 transition-transform overflow-hidden shrink-0">
               <img
                 src="https://thenestguru.com/thenestgurulogo.png"
-                alt="NestGuru Logo"
+                alt="TheNestGuru Logo"
                 className="w-full h-full max-w-full max-h-full object-contain shrink-0"
               />
             </div>
             <div className="leading-none">
               <span className="font-bold text-base tracking-tight text-slate-900 dark:text-white group-hover:text-sky-600 transition-colors flex items-center gap-1">
-                NestGuru <span className="text-sky-600 dark:text-sky-400 font-light">Loan Desk</span>
+                TheNestGuru <span className="text-sky-600 dark:text-sky-400 font-light">Loan Desk</span>
               </span>
               <span className="block text-[9px] text-slate-500 dark:text-slate-400 font-medium uppercase tracking-widest mt-0.5">
                 Multi-Tenant Processing Hub
@@ -88,8 +92,15 @@ export default function Navigation() {
             })}
           </nav>
 
-          {/* Right Section: Theme Switcher & Profile Badge */}
+          {/* Right Section: Attendance Punch, Birthday Hub, Theme Switcher & Profile Badge */}
           <div className="flex items-center gap-2 shrink-0">
+            {session?.user && (
+              <>
+                <AttendancePunchTracker variant="header" />
+                <BirthdayTopWidget />
+              </>
+            )}
+
             <button
               onClick={toggleTheme}
               title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}

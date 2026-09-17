@@ -3,18 +3,28 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createCaseAction } from '@/app/actions';
-import { User, Phone, Mail, MapPin, Layers, Users, ArrowRight, Sparkles, UserCheck } from 'lucide-react';
+import { User, Phone, Mail, MapPin, Layers, Users, ArrowRight, Sparkles, UserCheck, Building2, Calendar } from 'lucide-react';
+import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 
 interface Props {
   teams: Array<{ id: string; name: string }>;
-  states: Array<{ id: string; name: string }>;
-  users: Array<{ id: string; name: string; role: string; email: string }>;
+  states: Array<{ id: string; name: string; cities?: Array<{ id: string; name: string }> }>;
+  users: Array<{ id: string; name: string; role: string; email?: string | null; username?: string | null }>;
+  products?: Array<{ id: string; name: string }>;
+  profiles?: Array<{ id: string; name: string }>;
 }
 
-export default function CaseIntakeForm({ teams, states, users }: Props) {
+export default function CaseIntakeForm({
+  teams,
+  states,
+  users,
+  products = [],
+  profiles = [],
+}: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isCustomCity, setIsCustomCity] = useState(false);
 
   // Exclude SUPER_ADMIN from operational staff assignment lists
   const channelUsers = users.filter((u) => u.role === 'CHANNEL');
@@ -26,8 +36,10 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
     mobile: '',
     email: '',
     clientState: states[0]?.name || '',
-    product: 'Home Loan',
-    customerType: 'Salaried',
+    clientCity: '',
+    clientDob: '',
+    product: products[0]?.name || 'Home Loan',
+    customerType: profiles[0]?.name || 'Salaried',
     propertyType: 'Resale',
     coApplicantCount: 0,
     channelUserId: '',
@@ -36,11 +48,15 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
     assignedTeamId: teams[0]?.id || '',
   });
 
+  const selectedStateObj = states.find((s) => s.name === formData.clientState);
+  const stateCities = selectedStateObj?.cities || [];
+
   const [coApplicants, setCoApplicants] = useState<Array<{
     name: string;
     mobile: string;
     email: string;
     state: string;
+    dob?: string;
     incomeRequired: boolean;
   }>>([]);
 
@@ -58,6 +74,7 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
           mobile: '',
           email: '',
           state: states[0]?.name || '',
+          dob: '',
           incomeRequired: true,
         });
       }
@@ -73,8 +90,38 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError('');
+
+    // Strict Name, Phone & Email Validations
+    if (!isValidName(formData.clientName)) {
+      setError('Client Full Name must contain only alphabetic characters and spaces (numbers and special characters are not allowed).');
+      return;
+    }
+    if (!isValid10DigitPhone(formData.mobile)) {
+      setError('Client Mobile Number must be exactly 10 digits.');
+      return;
+    }
+    if (!isValidEmail(formData.email)) {
+      setError('Please enter a valid Client Email Address (e.g. client@example.com).');
+      return;
+    }
+    for (let i = 0; i < coApplicants.length; i++) {
+      const coApp = coApplicants[i];
+      if (coApp.name && !isValidName(coApp.name)) {
+        setError(`Co-Applicant ${i + 1} Name must contain only alphabetic characters and spaces (numbers and special characters are not allowed).`);
+        return;
+      }
+      if (coApp.mobile && !isValid10DigitPhone(coApp.mobile)) {
+        setError(`Co-Applicant ${i + 1} (${coApp.name || 'Co-Applicant'}) mobile number must be exactly 10 digits.`);
+        return;
+      }
+      if (coApp.email && !isValidEmail(coApp.email)) {
+        setError(`Co-Applicant ${i + 1} (${coApp.name || 'Co-Applicant'}) email address is invalid.`);
+        return;
+      }
+    }
+
+    setLoading(true);
 
     try {
       const res = await createCaseAction({
@@ -98,8 +145,8 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
   return (
     <form onSubmit={handleSubmit} className="glass-panel p-8 rounded-2xl space-y-6 shadow-2xl">
       {error && (
-        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-medium">
-          {error}
+        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-medium flex items-center gap-2">
+          <span>⚠️</span> {error}
         </div>
       )}
 
@@ -121,25 +168,31 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
                 required
                 placeholder="e.g. Ramesh Kumar"
                 value={formData.clientName}
-                onChange={(e) => setFormData({ ...formData, clientName: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, clientName: sanitizeToAlphabetsOnly(e.target.value) })}
                 className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Mobile Number <span className="text-rose-500">* (Mandatory)</span>
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Mobile Number <span className="text-rose-500">* (10 Digits)</span>
+              </label>
+              <span className={`text-[10px] font-mono font-bold ${formData.mobile.length === 10 ? 'text-emerald-500' : 'text-slate-400'}`}>
+                {formData.mobile.length}/10 digits
+              </span>
+            </div>
             <div className="relative">
               <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
               <input
                 type="tel"
                 required
+                maxLength={10}
                 placeholder="e.g. 9876543210"
                 value={formData.mobile}
-                onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
-                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm font-mono"
+                onChange={(e) => setFormData({ ...formData, mobile: sanitizeTo10Digits(e.target.value) })}
+                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm font-mono tracking-wider"
               />
             </div>
           </div>
@@ -148,7 +201,7 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Email Address <span className="text-rose-500">* (Mandatory)</span>
+              Email Address <span className="text-rose-500">* (Valid Email)</span>
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
@@ -157,12 +210,29 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
                 required
                 placeholder="e.g. ramesh@example.com"
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value.trim() })}
                 className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
               />
             </div>
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Client Date of Birth (DOB) <span className="text-slate-400 font-normal">(Optional - For Birthday wishes)</span>
+            </label>
+            <div className="relative">
+              <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <input
+                type="date"
+                value={formData.clientDob}
+                onChange={(e) => setFormData({ ...formData, clientDob: e.target.value })}
+                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Client State
@@ -171,7 +241,15 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
               <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
               <select
                 value={formData.clientState}
-                onChange={(e) => setFormData({ ...formData, clientState: e.target.value })}
+                onChange={(e) => {
+                  const newState = e.target.value;
+                  setIsCustomCity(false);
+                  setFormData({
+                    ...formData,
+                    clientState: newState,
+                    clientCity: '',
+                  });
+                }}
                 className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-900 font-semibold"
               >
                 {states.map((s) => (
@@ -179,6 +257,69 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
                 ))}
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Client City <span className="text-slate-400 font-normal">(Optional)</span>
+            </label>
+            {stateCities.length > 0 ? (
+              <div className="space-y-1.5">
+                <div className="relative">
+                  <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <select
+                    value={
+                      isCustomCity
+                        ? '__other__'
+                        : stateCities.some((c) => c.name === formData.clientCity)
+                        ? formData.clientCity
+                        : formData.clientCity
+                        ? '__other__'
+                        : ''
+                    }
+                    onChange={(e) => {
+                      if (e.target.value === '__other__') {
+                        setIsCustomCity(true);
+                        setFormData({ ...formData, clientCity: '' });
+                      } else {
+                        setIsCustomCity(false);
+                        setFormData({ ...formData, clientCity: e.target.value });
+                      }
+                    }}
+                    className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-900 font-medium"
+                  >
+                    <option value="">-- Select City ({formData.clientState}) --</option>
+                    {stateCities.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                    <option value="__other__">+ Other / Enter Manually</option>
+                  </select>
+                </div>
+                {isCustomCity && (
+                  <input
+                    type="text"
+                    placeholder="Enter city name..."
+                    value={formData.clientCity}
+                    onChange={(e) => setFormData({ ...formData, clientCity: e.target.value })}
+                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-medium"
+                    autoFocus
+                  />
+                )}
+              </div>
+            ) : (
+              <div className="relative">
+                <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  placeholder="e.g. Mumbai, Pune"
+                  value={formData.clientCity}
+                  onChange={(e) => setFormData({ ...formData, clientCity: e.target.value })}
+                  className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -233,18 +374,24 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
                   type="text"
                   placeholder={`Co-Applicant ${idx + 1} Name`}
                   value={coApp.name}
-                  onChange={(e) => handleCoApplicantChange(idx, 'name', e.target.value)}
+                  onChange={(e) => handleCoApplicantChange(idx, 'name', sanitizeToAlphabetsOnly(e.target.value))}
                   className="w-full glass-input px-3 py-2 rounded-xl"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Mobile Number</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300">Mobile Number (10 Digits)</label>
+                  <span className={`text-[10px] font-mono ${coApp.mobile?.length === 10 ? 'text-emerald-500 font-bold' : 'text-slate-400'}`}>
+                    {coApp.mobile?.length || 0}/10
+                  </span>
+                </div>
                 <input
                   type="tel"
-                  placeholder="Mobile"
+                  maxLength={10}
+                  placeholder="10-digit mobile"
                   value={coApp.mobile}
-                  onChange={(e) => handleCoApplicantChange(idx, 'mobile', e.target.value)}
+                  onChange={(e) => handleCoApplicantChange(idx, 'mobile', sanitizeTo10Digits(e.target.value))}
                   className="w-full glass-input px-3 py-2 rounded-xl font-mono"
                 />
               </div>
@@ -253,9 +400,9 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Email ID</label>
                 <input
                   type="email"
-                  placeholder="Email"
+                  placeholder="coapplicant@example.com"
                   value={coApp.email}
-                  onChange={(e) => handleCoApplicantChange(idx, 'email', e.target.value)}
+                  onChange={(e) => handleCoApplicantChange(idx, 'email', e.target.value.trim())}
                   className="w-full glass-input px-3 py-2 rounded-xl"
                 />
               </div>
@@ -271,6 +418,18 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
                     <option key={s.id} value={s.name}>{s.name}</option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Date of Birth (DOB) <span className="text-slate-400 font-normal">(Optional)</span>
+                </label>
+                <input
+                  type="date"
+                  value={coApp.dob || ''}
+                  onChange={(e) => handleCoApplicantChange(idx, 'dob', e.target.value)}
+                  className="w-full glass-input px-3 py-2 rounded-xl"
+                />
               </div>
             </div>
           </div>
@@ -293,9 +452,19 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
               onChange={(e) => setFormData({ ...formData, product: e.target.value })}
               className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 font-semibold"
             >
-              <option value="Home Loan">Home Loan</option>
-              <option value="Loan Against Property">Loan Against Property</option>
-              <option value="MSME Business Loan">MSME Business Loan</option>
+              {products.length > 0 ? (
+                products.map((p) => (
+                  <option key={p.id} value={p.name}>
+                    {p.name}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="Home Loan">Home Loan</option>
+                  <option value="Loan Against Property">Loan Against Property</option>
+                  <option value="MSME Business Loan">MSME Business Loan</option>
+                </>
+              )}
             </select>
           </div>
 
@@ -306,9 +475,19 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
               onChange={(e) => setFormData({ ...formData, customerType: e.target.value })}
               className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
             >
-              <option value="Salaried">Salaried</option>
-              <option value="Professional">Professional</option>
-              <option value="Business">Business / Self-Employed</option>
+              {profiles.length > 0 ? (
+                profiles.map((pr) => (
+                  <option key={pr.id} value={pr.name}>
+                    {pr.name}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="Salaried">Salaried</option>
+                  <option value="Professional">Professional</option>
+                  <option value="Business">Business / Self-Employed</option>
+                </>
+              )}
             </select>
           </div>
 
@@ -341,7 +520,7 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
             >
               <option value="">-- Unassigned Channel --</option>
               {channelUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                <option key={u.id} value={u.id}>{u.name.replace(/\s*\([^)]*\)/g, '').trim()}</option>
               ))}
             </select>
           </div>
@@ -357,7 +536,7 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
             >
               <option value="">-- Unassigned Sales --</option>
               {salesUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                <option key={u.id} value={u.id}>{u.name.replace(/\s*\([^)]*\)/g, '').trim()}</option>
               ))}
             </select>
           </div>
@@ -373,7 +552,7 @@ export default function CaseIntakeForm({ teams, states, users }: Props) {
             >
               <option value="">-- Unassigned Operation --</option>
               {operationUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                <option key={u.id} value={u.id}>{u.name.replace(/\s*\([^)]*\)/g, '').trim()}</option>
               ))}
             </select>
           </div>
