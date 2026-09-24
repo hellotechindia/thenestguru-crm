@@ -40,7 +40,13 @@ interface Props {
   expenses: Array<{ id: string; amount: number; month: string }>;
 }
 
-export default function AddFunctionalityClient({ banks, states, cases, revenues, expenses }: Props) {
+export default function AddFunctionalityClient({
+  banks,
+  states,
+  cases,
+  revenues,
+  expenses,
+}: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'banks' | 'states' | 'revenue' | 'expenses'>('banks');
 

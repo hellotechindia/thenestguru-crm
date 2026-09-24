@@ -7,6 +7,7 @@ export type Resource = 'case' | 'checklist_item' | 'user' | 'team' | 'template' 
 export interface UserContext {
   id: string;
   role: Role;
+  name?: string | null;
   accessPermission?: AccessPermission;
   teamId?: string | null;
 }
@@ -30,6 +31,11 @@ export function can(user: UserContext | null | undefined, action: Action, resour
   }
 
   if (action === 'manage_users' || action === 'manage_templates' || action === 'manage_functionality') {
+    return false;
+  }
+
+  // Channel role cannot edit or update cases (exclusively for staff & admin)
+  if (user.role === 'CHANNEL' && action === 'update' && resource === 'case') {
     return false;
   }
 

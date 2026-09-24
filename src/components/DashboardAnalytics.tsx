@@ -34,8 +34,10 @@ import {
   Calendar,
   ExternalLink,
   FolderCheck,
+  Sliders,
 } from 'lucide-react';
 import { exportToCSV } from '@/lib/excel-export';
+import { updateDashboardConfigAction } from '@/app/actions';
 
 interface CaseData {
   id: string;
@@ -72,17 +74,71 @@ interface ExpenseItem {
   month: string;
 }
 
+export interface DashboardParametersConfig {
+  showKpis: boolean;
+  showRevenueExpense: boolean;
+  showStageSpeed: boolean;
+  showPivotAnalytics: boolean;
+  showTrendChart: boolean;
+  showRecentCases: boolean;
+}
+
+const DEFAULT_CONFIG: DashboardParametersConfig = {
+  showKpis: true,
+  showRevenueExpense: true,
+  showStageSpeed: true,
+  showPivotAnalytics: true,
+  showTrendChart: true,
+  showRecentCases: true,
+};
+
 interface Props {
   cases: CaseData[];
   revenues: RevenueItem[];
   expenses: ExpenseItem[];
   states: Array<{ id: string; name: string }>;
   userRole: string;
+  initialConfig?: string | null;
 }
 
 const COLORS = ['#0284c7', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1'];
 
-export default function DashboardAnalytics({ cases, revenues, expenses, states, userRole }: Props) {
+export default function DashboardAnalytics({ cases, revenues, expenses, states, userRole, initialConfig }: Props) {
+  // Configurable Parameters State
+  const [config, setConfig] = useState<DashboardParametersConfig>(() => {
+    if (initialConfig) {
+      try {
+        return { ...DEFAULT_CONFIG, ...JSON.parse(initialConfig) };
+      } catch (e) {
+        // fallback
+      }
+    }
+    return DEFAULT_CONFIG;
+  });
+  const [tempConfig, setTempConfig] = useState<DashboardParametersConfig>(config);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const handleSaveConfig = async (newConfig: DashboardParametersConfig) => {
+    setIsSavingConfig(true);
+    try {
+      const res = await updateDashboardConfigAction(JSON.stringify(newConfig));
+      if (res.success) {
+        setConfig(newConfig);
+        setSaveSuccess(true);
+        setTimeout(() => {
+          setSaveSuccess(false);
+          setShowConfigModal(false);
+        }, 1000);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSavingConfig(false);
+    }
+  };
+
   // Global Filters
   const [selectedState, setSelectedState] = useState<string>('ALL');
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
@@ -155,13 +211,13 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
   const totalRevenueAmount = revenues
     .filter((r) => {
       const matchesState = selectedState === 'ALL' || r.state === selectedState;
-      const matchesMonth = selectedMonth === 'ALL' || r.month.includes(selectedMonth);
+      const matchesMonth = selectedMonth === 'ALL' || (r.month && r.month.includes(selectedMonth));
       return matchesState && matchesMonth;
     })
     .reduce((sum, r) => sum + r.amount, 0);
 
   const totalExpenseAmount = expenses
-    .filter((e) => selectedMonth === 'ALL' || e.month.includes(selectedMonth))
+    .filter((e) => selectedMonth === 'ALL' || (e.month && e.month.includes(selectedMonth)))
     .reduce((sum, e) => sum + e.amount, 0);
 
   // Pivot Table Grouping Logic with Revenue & Expenses
@@ -306,10 +362,25 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
               Reset Filters
             </button>
           )}
+
+          {userRole === 'SUPER_ADMIN' && (
+            <button
+              onClick={() => {
+                setTempConfig(config);
+                setShowConfigModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-xs font-bold transition-all shadow-sm"
+              title="Configure which parameters are displayed on the dashboard"
+            >
+              <Sliders className="w-3.5 h-3.5 text-sky-600" />
+              <span>Select Parameters</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* 1. Primary Operational KPI Metric Tiles */}
+      {config.showKpis && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Cases */}
         <div className="glass-panel p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 space-y-1">
@@ -383,9 +454,10 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
           </div>
         </div>
       </div>
+      )}
 
       {/* 2. Revenue & Expense Tiles (Super Admin Only) */}
-      {userRole === 'SUPER_ADMIN' && (
+      {config.showRevenueExpense && userRole === 'SUPER_ADMIN' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Total Revenue Tile */}
           <div
@@ -433,7 +505,8 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
         </div>
       )}
 
-      {/* 2. Stage-wise Average Speed Section */}
+      {/* 3. Stage-wise Average Speed Section */}
+      {config.showStageSpeed && (
       <div className="glass-panel p-6 rounded-2xl space-y-4 shadow-xl border border-slate-200 dark:border-slate-800">
         <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
           <div>
@@ -488,8 +561,10 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
           </div>
         </div>
       </div>
+      )}
 
-      {/* 3. Charts Section */}
+      {/* 4. Charts Section */}
+      {config.showTrendChart && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
           <div className="flex items-center justify-between">
@@ -549,8 +624,10 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
           </div>
         </div>
       </div>
+      )}
 
-      {/* 4. Pivot Aggregation Breakdown Table */}
+      {/* 5. Pivot Aggregation Breakdown Table */}
+      {config.showPivotAnalytics && (
       <div className="glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
           <div>
@@ -630,8 +707,10 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
           </table>
         </div>
       </div>
+      )}
 
-      {/* 5. Top Active Cases Table */}
+      {/* 6. Top Active Cases Table */}
+      {config.showRecentCases && (
       <div className="glass-panel p-6 rounded-2xl space-y-4 shadow-sm border border-slate-200 dark:border-slate-800">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
           <div>
@@ -757,6 +836,7 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
           </table>
         </div>
       </div>
+      )}
 
       {/* Revenue Breakdown Modal */}
       {showRevenueModal && (
@@ -807,6 +887,95 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Super Admin Dashboard Parameters Customization Modal */}
+      {showConfigModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden p-6 space-y-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-sky-500/10 text-sky-600 flex items-center justify-center">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Select Dashboard Parameters
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Enable or disable parameter widgets for your organization's dashboard
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowConfigModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {[
+                { id: 'showKpis', label: 'Operational KPI Cards', desc: 'Total Cases, Pending Docs, Ready for Submission, In Review' },
+                { id: 'showRevenueExpense', label: 'Financial Revenue & Expenses', desc: 'Total Revenue & Expenses cards with drill-down modals' },
+                { id: 'showStageSpeed', label: 'Stage Completion Speed', desc: 'Average TAT duration in days for Stage 1, 2, 3, 4' },
+                { id: 'showTrendChart', label: 'Visual Charts & Distribution', desc: 'Weekly trend bar charts and Property Type share pie chart' },
+                { id: 'showPivotAnalytics', label: 'Pivot Matrix Aggregation', desc: 'Multi-dimensional pivot table grouping volume and conversion' },
+                { id: 'showRecentCases', label: 'Top Active Cases Table', desc: 'Recent cases pipeline list with quick Open case action' },
+              ].map((param) => {
+                const isChecked = tempConfig[param.id as keyof DashboardParametersConfig];
+                return (
+                  <label
+                    key={param.id}
+                    className="flex items-start gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 hover:border-sky-500/40 transition-colors cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) =>
+                        setTempConfig({ ...tempConfig, [param.id]: e.target.checked })
+                      }
+                      className="mt-1 w-4 h-4 rounded text-sky-600 focus:ring-sky-500 cursor-pointer"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white">
+                        {param.label}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {param.desc}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            {saveSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs font-bold text-center">
+                Dashboard parameters updated successfully!
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowConfigModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSavingConfig}
+                onClick={() => handleSaveConfig(tempConfig)}
+                className="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow transition-all disabled:opacity-50"
+              >
+                {isSavingConfig ? 'Saving...' : 'Save Parameters'}
+              </button>
             </div>
           </div>
         </div>

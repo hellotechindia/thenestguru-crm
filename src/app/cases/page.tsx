@@ -15,8 +15,32 @@ export default async function CasesPage() {
   }
 
   const userRole = (session.user as any).role;
+  const userId = (session.user as any).id;
 
-  const [teams, states, users, cases, products, profiles] = await Promise.all([
+  // Filter cases strictly for Channel users (only assigned to this channel or its child accounts)
+  let casesWhere: any = {};
+  if (userRole === 'CHANNEL') {
+    const userRecord = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { childChannels: { select: { id: true } } },
+    });
+    const channelIds = [userId];
+    if (userRecord?.parentChannelId) {
+      channelIds.push(userRecord.parentChannelId);
+    }
+    if (userRecord?.childChannels?.length) {
+      channelIds.push(...userRecord.childChannels.map((c) => c.id));
+    }
+
+    casesWhere = {
+      OR: [
+        { channelUserId: { in: channelIds } },
+        { createdById: { in: channelIds } },
+      ],
+    };
+  }
+
+  const [teams, states, users, cases, products, profiles, caseStatuses] = await Promise.all([
     prisma.team.findMany({ orderBy: { name: 'asc' } }),
     prisma.stateConfig.findMany({
       include: { cities: { orderBy: { name: 'asc' } } },
@@ -27,6 +51,7 @@ export default async function CasesPage() {
       orderBy: { name: 'asc' },
     }),
     prisma.case.findMany({
+      where: casesWhere,
       include: {
         checklistItems: true,
         assignedTeam: true,
@@ -35,6 +60,7 @@ export default async function CasesPage() {
     }),
     prisma.productMaster.findMany({ orderBy: { name: 'asc' } }),
     prisma.profileMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.caseStatusMaster.findMany({ orderBy: { displayOrder: 'asc' } }),
   ]);
 
   const formattedCases = cases.map((c) => {
@@ -53,6 +79,8 @@ export default async function CasesPage() {
       product: c.product,
       customerType: c.customerType,
       propertyType: c.propertyType,
+      propertyState: c.propertyState || '',
+      propertyCity: c.propertyCity || '',
       coApplicantCount: c.coApplicantCount,
       stage: c.stage,
       status: c.status,
@@ -62,6 +90,7 @@ export default async function CasesPage() {
       assignedTeamId: c.assignedTeamId || '',
       coApplicantsData: c.coApplicantsData || '',
       createdAt: c.createdAt.toISOString(),
+      updatedAt: c.updatedAt.toISOString(),
       checklistCount: c.checklistItems.length,
       receivedCount,
       assignedTeamName: c.assignedTeam?.name || 'Operations',
@@ -78,13 +107,15 @@ export default async function CasesPage() {
           </p>
         </div>
 
-        <Link
-          href="/cases/new"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-semibold text-xs shadow-lg shadow-sky-500/25 transition-all"
-        >
-          <PlusCircle className="w-4 h-4" />
-          Intake New Case
-        </Link>
+        {userRole !== 'CHANNEL' && (
+          <Link
+            href="/cases/new"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-semibold text-xs shadow-lg shadow-sky-500/25 transition-all"
+          >
+            <PlusCircle className="w-4 h-4" />
+            Intake New Case
+          </Link>
+        )}
       </div>
 
       <CaseListTable
@@ -95,6 +126,7 @@ export default async function CasesPage() {
         users={users}
         products={products}
         profiles={profiles}
+        caseStatuses={caseStatuses}
       />
     </div>
   );

@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node --max-http-header-size=131072 ./node_modules/next/dist/bin/next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node --max-http-header-size=131072 ./node_modules/next/dist/bin/next start",
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:seed": "node --loader ts-node/register prisma/seed.ts",

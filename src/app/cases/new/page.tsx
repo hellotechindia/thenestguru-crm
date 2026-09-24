@@ -10,7 +10,21 @@ export default async function NewCasePage() {
     redirect('/login');
   }
 
-  const [teams, states, users, productsRes, profilesRes] = await Promise.all([
+  // Channel accounts cannot create new intake cases directly
+  if ((session.user as any).role === 'CHANNEL') {
+    redirect('/cases');
+  }
+
+  const [
+    teams,
+    states,
+    users,
+    productsRes,
+    profilesRes,
+    subProductsRes,
+    propertyScopesRes,
+    targetCategoriesRes,
+  ] = await Promise.all([
     prisma.team.findMany(),
     prisma.stateConfig.findMany({
       include: { cities: { orderBy: { name: 'asc' } } },
@@ -23,9 +37,17 @@ export default async function NewCasePage() {
       select: { id: true, name: true, role: true, email: true },
       orderBy: { name: 'asc' },
     }),
-    prisma.productMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.productMaster.findMany({
+      include: { subProducts: true },
+      orderBy: { name: 'asc' },
+    }),
     prisma.profileMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.subProductMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.propertyScopeMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.targetCategoryMaster.findMany({ orderBy: { name: 'asc' } }),
   ]);
+
+  const isSuperAdmin = (session.user as any)?.role === 'SUPER_ADMIN';
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -34,7 +56,7 @@ export default async function NewCasePage() {
           New Case Intake Form
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Specify Client, Co-applicant details (Income Required Yes/No), States, and Source user assignments
+          Specify Loan Product, Sub-Product, Client & Co-applicant details, and assignments
         </p>
       </div>
 
@@ -44,6 +66,10 @@ export default async function NewCasePage() {
         users={users}
         products={productsRes}
         profiles={profilesRes}
+        subProducts={subProductsRes}
+        propertyScopes={propertyScopesRes}
+        targetCategories={targetCategoriesRes}
+        isSuperAdmin={isSuperAdmin}
       />
     </div>
   );

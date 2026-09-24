@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
@@ -17,30 +18,57 @@ import {
   Moon,
   UserCog,
   Sliders,
-  CalendarDays
+  CalendarDays,
+  Contact,
+  ChevronDown
 } from 'lucide-react';
 import BirthdayTopWidget from '@/components/BirthdayTopWidget';
 import AttendancePunchTracker from '@/components/AttendancePunchTracker';
+import NotificationBell from '@/components/NotificationBell';
 
 export default function Navigation() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const { theme, toggleTheme } = useTheme();
 
+  const [isCaseMenuOpen, setIsCaseMenuOpen] = useState(false);
+  const caseMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (caseMenuRef.current && !caseMenuRef.current.contains(e.target as Node)) {
+        setIsCaseMenuOpen(false);
+      }
+    }
+    if (isCaseMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isCaseMenuOpen]);
+
+  // Close dropdown on route change
+  useEffect(() => {
+    setIsCaseMenuOpen(false);
+  }, [pathname]);
+
   if (pathname === '/login') return null;
 
   const userRole = (session?.user as any)?.role;
   const userName = session?.user?.name || 'User';
 
+  const isCaseDirectoryActive =
+    pathname.startsWith('/cases') || pathname === '/clients';
+
   const navItems = [
     { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { label: 'Cases Directory', href: '/cases', icon: FolderCheck },
-    { label: 'New Intake', href: '/cases/new', icon: PlusCircle },
-    { label: 'HRMS Desk', href: '/hrms', icon: CalendarDays },
+  ];
+
+  const trailingNavItems = [
+    { label: 'HRMS Desk', href: '/hrms', icon: CalendarDays }
   ];
 
   if (userRole === 'SUPER_ADMIN') {
-    navItems.push(
+    trailingNavItems.push(
       { label: 'Add Functionality', href: '/admin/functionality', icon: Sliders },
       { label: 'User & Teams', href: '/admin/users', icon: Users },
       { label: 'Checklist Matrix', href: '/admin/checklist-templates', icon: FileCheck2 }
@@ -71,10 +99,122 @@ export default function Navigation() {
           </Link>
 
           {/* Navigation Links */}
-          <nav className="flex items-center gap-1 overflow-x-auto shrink py-1">
+          <nav className="flex items-center gap-1 overflow-x-visible shrink py-1">
+            {/* Dashboard */}
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                    isActive
+                      ? 'bg-sky-600/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 shadow-inner'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+
+            {/* Case Directory Nested Dropdown Menu */}
+            <div className="relative" ref={caseMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsCaseMenuOpen(!isCaseMenuOpen)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  isCaseDirectoryActive
+                    ? 'bg-sky-600/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 shadow-inner'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                }`}
+              >
+                <FolderCheck className="w-3.5 h-3.5 shrink-0 text-sky-500" />
+                <span>Case Directory</span>
+                <ChevronDown
+                  className={`w-3 h-3 transition-transform duration-200 ${
+                    isCaseMenuOpen ? 'rotate-180 text-sky-500' : 'text-slate-400'
+                  }`}
+                />
+              </button>
+
+              {/* Nested Menu Dropdown */}
+              {isCaseMenuOpen && (
+                <div className="absolute left-0 mt-2 w-64 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 p-2 space-y-1 animate-in fade-in slide-in-from-top-2 duration-150">
+                  {/* All Cases */}
+                  <Link
+                    href="/cases"
+                    onClick={() => setIsCaseMenuOpen(false)}
+                    className={`flex items-start gap-2.5 p-2 rounded-xl transition-all ${
+                      pathname === '/cases'
+                        ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800'
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5">
+                      <FolderCheck className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold leading-tight">All Cases Pipeline</div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Active pipeline, stages & case ledger
+                      </div>
+                    </div>
+                  </Link>
+
+                  {/* Client Directory (Nested Item) */}
+                  {userRole !== 'CHANNEL' && (
+                    <Link
+                      href="/clients"
+                      onClick={() => setIsCaseMenuOpen(false)}
+                      className={`flex items-start gap-2.5 p-2 rounded-xl transition-all ${
+                        pathname === '/clients'
+                          ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200'
+                      }`}
+                    >
+                      <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5">
+                        <Contact className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold leading-tight">Client Directory</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          Deduplicated borrowers & co-applicants
+                        </div>
+                      </div>
+                    </Link>
+                  )}
+
+                  {/* New Intake Shortcut */}
+                  {userRole !== 'CHANNEL' && (
+                    <Link
+                      href="/cases/new"
+                      onClick={() => setIsCaseMenuOpen(false)}
+                      className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 transition-all border-t border-slate-100 dark:border-slate-800/80 pt-2"
+                    >
+                      <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
+                        <PlusCircle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold leading-tight text-emerald-600 dark:text-emerald-400">
+                          + New Case Intake
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          Register fresh borrower application
+                        </div>
+                      </div>
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Trailing Items (HRMS, Admin links) */}
+            {trailingNavItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = pathname === item.href || pathname.startsWith(item.href);
               return (
                 <Link
                   key={item.href}
@@ -92,12 +232,13 @@ export default function Navigation() {
             })}
           </nav>
 
-          {/* Right Section: Attendance Punch, Birthday Hub, Theme Switcher & Profile Badge */}
+          {/* Right Section: Attendance Punch, Birthday Hub, Notifications, Theme Switcher & Profile Badge */}
           <div className="flex items-center gap-2 shrink-0">
             {session?.user && (
               <>
                 <AttendancePunchTracker variant="header" />
                 <BirthdayTopWidget />
+                <NotificationBell />
               </>
             )}
 

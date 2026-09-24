@@ -16,6 +16,7 @@ async function getAuthUser(): Promise<UserContext | null> {
   return {
     id: (session.user as any).id,
     role: (session.user as any).role,
+    name: session.user.name || 'Staff User',
     accessPermission: (session.user as any).accessPermission || 'EDIT',
     teamId: (session.user as any).teamId,
   };
@@ -26,12 +27,17 @@ export async function createCaseAction(formData: {
   clientName: string;
   mobile: string;
   email?: string;
+  gender?: string;
   clientState?: string;
   clientCity?: string;
   clientDob?: string | Date | null;
   product: string;
+  subProduct?: string;
   customerType: string;
   propertyType: string;
+  propertyState?: string;
+  propertyCity?: string;
+  incomeTypes?: string[];
   coApplicantCount: number;
   coApplicantsData?: any[];
   channelUserId?: string;
@@ -72,12 +78,17 @@ export async function createCaseAction(formData: {
       clientName: formData.clientName,
       mobile: formData.mobile,
       email: formData.email || null,
+      gender: formData.gender || null,
       clientState: formData.clientState || null,
       clientCity: formData.clientCity || null,
       clientDob: formData.clientDob ? new Date(formData.clientDob) : null,
       product: formData.product,
+      subProduct: formData.subProduct || null,
       customerType: formData.customerType,
       propertyType: formData.propertyType,
+      propertyState: formData.propertyState || null,
+      propertyCity: formData.propertyCity || null,
+      incomeTypes: formData.incomeTypes ? JSON.stringify(formData.incomeTypes) : null,
       coApplicantCount: formData.coApplicantCount,
       coApplicantsData: formData.coApplicantsData ? JSON.stringify(formData.coApplicantsData) : null,
       channelUserId: formData.channelUserId || null,
@@ -90,7 +101,20 @@ export async function createCaseAction(formData: {
     },
   });
 
-  // Auto-generate dynamic checklist items (respecting co-applicant income required rules & bank months)
+  // Initial follow-up entry
+  await prisma.caseFollowUp.create({
+    data: {
+      caseId: newCase.id,
+      stage: 1,
+      stageName: 'Stage 1: Lead Intake & KYC',
+      status: 'Pending Documents',
+      remarks: 'Lead created successfully with initial intake details.',
+      createdById: user.id,
+      createdByName: (await prisma.user.findUnique({ where: { id: user.id }, select: { name: true } }))?.name || 'System',
+    },
+  });
+
+  // Auto-generate dynamic checklist items (respecting person names, co-applicant income, property scopes, etc.)
   await generateChecklistForCase(
     newCase.id,
     formData.product,
@@ -98,7 +122,12 @@ export async function createCaseAction(formData: {
     formData.propertyType,
     formData.coApplicantCount,
     formData.coApplicantsData,
-    user.id
+    user.id,
+    {
+      subProduct: formData.subProduct,
+      clientName: formData.clientName,
+      incomeTypes: formData.incomeTypes,
+    }
   );
 
   revalidatePath('/cases');
@@ -118,6 +147,8 @@ export async function updateCaseIntakeDetailsAction(
     product?: string;
     customerType?: string;
     propertyType?: string;
+    propertyState?: string | null;
+    propertyCity?: string | null;
     coApplicantCount?: number;
     coApplicantsData?: any[] | null;
     stage?: number;
@@ -212,6 +243,8 @@ export async function updateCaseIntakeDetailsAction(
     for (let i = existingCase.coApplicantCount + 1; i <= data.coApplicantCount; i++) {
       const coAppData = data.coApplicantsData && data.coApplicantsData[i - 1];
       const incomeRequired = coAppData ? coAppData.incomeRequired !== false : true;
+      const coAppName = coAppData?.name?.trim() || `Co-Applicant ${i}`;
+      const appliesToLabel = `${coAppName} (Co-Applicant ${i})`;
 
       for (const cat of categoriesToUse) {
         const isIncomeCat = cat.name.toLowerCase().includes('income');
@@ -224,7 +257,8 @@ export async function updateCaseIntakeDetailsAction(
               caseId,
               category: cat.name,
               label: item.label,
-              appliesTo: `Co-Applicant ${i}`,
+              appliesTo: appliesToLabel,
+              personName: coAppName,
               status: 'Pending',
               stage: item.stage,
               updatedById: user.id,
@@ -253,6 +287,8 @@ export async function updateCaseIntakeDetailsAction(
       ...(data.product && { product: data.product }),
       ...(data.customerType && { customerType: data.customerType }),
       ...(data.propertyType && { propertyType: data.propertyType }),
+      ...(data.propertyState !== undefined && { propertyState: data.propertyState || null }),
+      ...(data.propertyCity !== undefined && { propertyCity: data.propertyCity || null }),
       ...(data.coApplicantCount !== undefined && { coApplicantCount: data.coApplicantCount }),
       ...(data.coApplicantsData !== undefined && {
         coApplicantsData: data.coApplicantsData ? JSON.stringify(data.coApplicantsData) : null,
@@ -266,6 +302,60 @@ export async function updateCaseIntakeDetailsAction(
       ...timestampUpdates,
     },
   });
+
+  // Sync Co-Applicant names on existing checklist items if updated
+  if (Array.isArray(data.coApplicantsData)) {
+    for (let i = 0; i < data.coApplicantsData.length; i++) {
+      const coApp = data.coApplicantsData[i];
+      if (coApp && coApp.name) {
+        const coAppName = coApp.name.trim();
+        const targetSuffix = `(Co-Applicant ${i + 1})`;
+        const oldLabel = `Co-Applicant ${i + 1}`;
+
+        const itemsToUpdate = await prisma.caseChecklistItem.findMany({
+          where: {
+            caseId,
+            OR: [
+              { appliesTo: oldLabel },
+              { appliesTo: { contains: targetSuffix } },
+            ],
+          },
+        });
+        for (const it of itemsToUpdate) {
+          await prisma.caseChecklistItem.update({
+            where: { id: it.id },
+            data: {
+              appliesTo: `${coAppName} ${targetSuffix}`,
+              personName: coAppName,
+            },
+          });
+        }
+      }
+    }
+  }
+
+  // Sync client name on applicant items if updated
+  if (data.clientName && data.clientName.trim() !== existingCase.clientName) {
+    const trimmedClientName = data.clientName.trim();
+    const itemsToUpdate = await prisma.caseChecklistItem.findMany({
+      where: {
+        caseId,
+        OR: [
+          { appliesTo: 'Applicant' },
+          { appliesTo: { contains: '(Applicant)' } },
+        ],
+      },
+    });
+    for (const it of itemsToUpdate) {
+      await prisma.caseChecklistItem.update({
+        where: { id: it.id },
+        data: {
+          appliesTo: `${trimmedClientName} (Applicant)`,
+          personName: trimmedClientName,
+        },
+      });
+    }
+  }
 
   revalidatePath('/cases');
   revalidatePath(`/cases/${caseId}`);
@@ -288,12 +378,17 @@ export async function updateChecklistItemAction(
     startDate?: string;
     endDate?: string;
     extraDetails?: string;
+    historyRemark?: string;
   }
 ) {
   const user = await getAuthUser();
   if (!user || !can(user, 'update', 'checklist_item')) {
     throw new Error('Permission denied');
   }
+
+  const existing = await prisma.caseChecklistItem.findUnique({
+    where: { id: itemId },
+  });
 
   await prisma.caseChecklistItem.update({
     where: { id: itemId },
@@ -312,6 +407,41 @@ export async function updateChecklistItemAction(
       updatedById: user.id,
     },
   });
+
+  // Automatically record to Case File Follow-Up / Timeline Log (History Data)
+  if (existing) {
+    const changes: string[] = [];
+    if (data.status && data.status !== existing.status) {
+      changes.push(`Status: ${existing.status} ➔ ${data.status}`);
+    }
+    if (data.remark !== undefined && data.remark !== existing.remark) {
+      changes.push(data.remark ? `Remark: "${data.remark}"` : 'Remark cleared');
+    }
+    if (data.documentUrl !== undefined && data.documentUrl !== existing.documentUrl) {
+      changes.push(data.documentUrl ? 'Drive Link Attached' : 'Drive Link Removed');
+    }
+    if (data.bankName !== undefined && data.bankName !== existing.bankName) {
+      changes.push(`Bank: ${data.bankName}`);
+    }
+    if (data.periodDetails !== undefined && data.periodDetails !== existing.periodDetails) {
+      changes.push(`Period: ${data.periodDetails}`);
+    }
+
+    if (changes.length > 0 || data.historyRemark) {
+      const remarksText = `[${existing.label}] (${existing.appliesTo || 'Applicant'}): ${changes.join(', ')}${data.historyRemark ? ` - Note: ${data.historyRemark}` : ''}`;
+      await prisma.caseFollowUp.create({
+        data: {
+          caseId,
+          stage: existing.stage || 1,
+          stageName: `Stage ${existing.stage || 1}: Document Checklist`,
+          status: data.status || existing.status || 'Updated',
+          remarks: remarksText,
+          createdById: user.id,
+          createdByName: user.name || 'Staff User',
+        },
+      });
+    }
+  }
 
   // Check if all items are received/NA to update case status
   const allItems = await prisma.caseChecklistItem.findMany({
@@ -353,7 +483,8 @@ export async function saveSectionChecklistItemsAction(
     startDate?: string;
     endDate?: string;
     extraDetails?: string;
-  }>
+  }>,
+  sectionHistoryNote?: string
 ) {
   const user = await getAuthUser();
   if (!user || !can(user, 'update', 'checklist_item')) {
@@ -379,6 +510,23 @@ export async function saveSectionChecklistItemsAction(
       },
     });
   }
+
+  // Record section bulk update in CaseFollowUp
+  const firstItem = items[0]
+    ? await prisma.caseChecklistItem.findUnique({ where: { id: items[0].id }, select: { category: true } })
+    : null;
+  const categoryName = firstItem?.category || 'Checklist Section';
+  await prisma.caseFollowUp.create({
+    data: {
+      caseId,
+      stage: 1,
+      stageName: 'Stage 1: Bulk Section Update',
+      status: 'Documents Saved',
+      remarks: `Bulk saved ${items.length} items in category "${categoryName}"${sectionHistoryNote ? ` - Note: ${sectionHistoryNote}` : ''}.`,
+      createdById: user.id,
+      createdByName: user.name || 'Staff User',
+    },
+  });
 
   revalidatePath(`/cases/${caseId}`);
   revalidatePath('/dashboard');
@@ -434,6 +582,19 @@ export async function updateCasePersonalInfoAction(
     },
   });
 
+  // Auto-log to history timeline
+  await prisma.caseFollowUp.create({
+    data: {
+      caseId,
+      stage: 1,
+      stageName: 'Stage 1: Personal Info & References',
+      status: 'Profile Updated',
+      remarks: `Updated Personal Info & Emergency References (Mother: ${data.motherName || 'N/A'}, Spouse: ${data.spouseName || 'N/A'}, Experience: ${data.totalExperienceYears || 'N/A'}).`,
+      createdById: user.id,
+      createdByName: user.name || 'Staff User',
+    },
+  });
+
   revalidatePath(`/cases/${caseId}`);
   return { success: true };
 }
@@ -464,6 +625,28 @@ export async function updateCaseStatusAction(caseId: string, status: string, sta
     where: { id: caseId },
     data: updateData,
   });
+
+  // Auto-log status change to history timeline
+  if (currentCase && (status !== currentCase.status || (stage && stage !== currentCase.stage))) {
+    const stageNames: Record<number, string> = {
+      1: 'Stage 1: Lead Intake & KYC',
+      2: 'Stage 2: Document Verification & Eligibility',
+      3: 'Stage 3: Bank File Login & Underwriting',
+      4: 'Stage 4: Sanction & Disbursement',
+    };
+    const targetStage = stage || currentCase.stage || 1;
+    await prisma.caseFollowUp.create({
+      data: {
+        caseId,
+        stage: targetStage,
+        stageName: stageNames[targetStage] || `Stage ${targetStage}`,
+        status,
+        remarks: `Case status changed from "${currentCase.status}" to "${status}"${stage && stage !== currentCase.stage ? ` (Workflow moved to Stage ${stage})` : ''}`,
+        createdById: user.id,
+        createdByName: user.name || 'Staff User',
+      },
+    });
+  }
 
   revalidatePath(`/cases/${caseId}`);
   revalidatePath('/cases');
@@ -510,6 +693,10 @@ export async function createUserAction(data: {
   accessPermission?: 'EDIT' | 'VIEW';
   teamId?: string;
   dob?: string;
+  monthlySalary?: number;
+  currentCTC?: number;
+  jobRole?: string;
+  department?: string;
 }) {
   const user = await getAuthUser();
   if (!user || !can(user, 'manage_users', 'user')) {
@@ -546,10 +733,15 @@ export async function createUserAction(data: {
       accessPermission: data.accessPermission || 'EDIT',
       teamId: data.teamId || null,
       dob: data.dob && data.dob.trim() !== '' ? new Date(data.dob) : null,
+      monthlySalary: data.monthlySalary ? Number(data.monthlySalary) : (data.currentCTC ? Math.round(Number(data.currentCTC) / 12) : null),
+      currentCTC: data.currentCTC ? Number(data.currentCTC) : (data.monthlySalary ? Math.round(Number(data.monthlySalary) * 12) : null),
+      jobRole: data.jobRole?.trim() || null,
+      department: data.department?.trim() || null,
     },
   });
 
   revalidatePath('/admin/users');
+  revalidatePath('/salary');
   return { success: true };
 }
 
@@ -1005,6 +1197,10 @@ export async function createTemplateItemAction(data: {
   applicantRequirement: any;
   coApplicantRequirement: any;
   propertyTypeScope?: string;
+  subProduct?: string;
+  incomeType?: string;
+  customerType?: string;
+  stages?: string;
   stage: number;
   requireOnedrive?: boolean;
   requireRemark?: boolean;
@@ -1022,6 +1218,10 @@ export async function createTemplateItemAction(data: {
       applicantRequirement: data.applicantRequirement,
       coApplicantRequirement: data.coApplicantRequirement,
       propertyTypeScope: data.propertyTypeScope || null,
+      subProduct: data.subProduct || null,
+      incomeType: data.incomeType || null,
+      customerType: data.customerType || null,
+      stages: data.stages || null,
       stage: data.stage,
       requireOnedrive: data.requireOnedrive !== false,
       requireRemark: data.requireRemark === true,
@@ -1041,6 +1241,10 @@ export async function updateTemplateItemAction(
     applicantRequirement: any;
     coApplicantRequirement: any;
     propertyTypeScope?: string;
+    subProduct?: string;
+    incomeType?: string;
+    customerType?: string;
+    stages?: string;
     stage: number;
     requireOnedrive?: boolean;
     requireRemark?: boolean;
@@ -1060,6 +1264,10 @@ export async function updateTemplateItemAction(
       applicantRequirement: data.applicantRequirement,
       coApplicantRequirement: data.coApplicantRequirement,
       propertyTypeScope: data.propertyTypeScope || null,
+      subProduct: data.subProduct || null,
+      incomeType: data.incomeType || null,
+      customerType: data.customerType || null,
+      stages: data.stages || null,
       stage: data.stage,
       requireOnedrive: data.requireOnedrive !== false,
       requireRemark: data.requireRemark === true,
@@ -1096,7 +1304,25 @@ export async function updateUserProfileAction(data: { name: string; password?: s
     updateData.passwordHash = await bcrypt.hash(data.password, 10);
   }
   if (data.avatarUrl !== undefined) {
-    updateData.avatarUrl = data.avatarUrl ? data.avatarUrl.trim() : null;
+    let finalAvatar = data.avatarUrl ? data.avatarUrl.trim() : null;
+    if (finalAvatar && finalAvatar.startsWith('data:')) {
+      try {
+        const matches = finalAvatar.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        if (matches && matches[2]) {
+          const fs = await import('fs');
+          const path = await import('path');
+          const ext = matches[1].includes('png') ? 'png' : 'jpg';
+          const filename = `${user.id}-${Date.now()}.${ext}`;
+          const dir = path.join(process.cwd(), 'public', 'avatars');
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, filename), Buffer.from(matches[2], 'base64'));
+          finalAvatar = `/avatars/${filename}`;
+        }
+      } catch {
+        finalAvatar = null;
+      }
+    }
+    updateData.avatarUrl = finalAvatar;
   }
 
   await prisma.user.update({
@@ -1111,6 +1337,9 @@ export async function updateUserProfileAction(data: { name: string; password?: s
 
 // 6. Birthday Management Actions (All Database Sources: Staff, Clients, Co-Applicants & Manual Entries)
 export async function getUpcomingBirthdaysAction(includeAll = false) {
+  const authUser = await getAuthUser();
+  const isSuperAdmin = authUser?.role === 'SUPER_ADMIN';
+
   // 1. Staff Members (Users)
   const usersWithDob = await prisma.user.findMany({
     where: {
@@ -1121,6 +1350,7 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
       name: true,
       username: true,
       email: true,
+      phone: true,
       role: true,
       dob: true,
       team: { select: { name: true } },
@@ -1128,13 +1358,26 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
   });
 
   // 2. Intake Clients & Co-Applicants (Cases)
-  const casesWithDob = await prisma.case.findMany({
-    where: {
+  // Pointer 7: Staff sees only other staff member Birthday or lead pertaining to them
+  const caseWhereCondition: any = {
+    OR: [
+      { clientDob: { not: null } },
+      { coApplicantsData: { not: null } },
+    ],
+  };
+
+  if (!isSuperAdmin && authUser?.id) {
+    caseWhereCondition.AND = {
       OR: [
-        { clientDob: { not: null } },
-        { coApplicantsData: { not: null } },
+        { salesUserId: authUser.id },
+        { operationUserId: authUser.id },
+        { createdById: authUser.id },
       ],
-    },
+    };
+  }
+
+  const casesWithDob = await prisma.case.findMany({
+    where: caseWhereCondition,
     select: {
       id: true,
       clientName: true,
@@ -1199,28 +1442,42 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
     });
   }
 
-  // Map Intake Cases (Client & Co-Applicants)
+  // Map Intake Cases (Client & Co-Applicants) with Strict Deduplication
+  const casePersonMap = new Map<string, any>();
+
   for (const c of casesWithDob) {
     // Main Client
     if (c.clientDob) {
-      const evaluation = evaluateUpcomingBirthday(c.clientDob);
-      allItems.push({
-        id: `client-${c.id}`,
-        name: c.clientName,
-        phone: c.mobile,
-        email: c.email,
-        role: 'LOAN_CLIENT',
-        category: 'CLIENT',
-        categoryLabel: 'Loan Client',
-        teamName: 'Client File',
-        association: `Loan: ${c.product} (#${c.id.slice(-6).toUpperCase()})`,
-        remark: `Status: ${c.status}${c.clientCity ? ` | City: ${c.clientCity}` : ''}${c.clientState ? `, ${c.clientState}` : ''}`,
-        dob: c.clientDob,
-        isWithin30Days: evaluation.isWithin30Days,
-        isToday: evaluation.isToday,
-        daysRemaining: evaluation.daysRemaining,
-        formattedBirthday: evaluation.formattedBirthday,
-      });
+      const normPhone = c.mobile ? c.mobile.replace(/\D/g, '').slice(-10) : '';
+      const key = normPhone ? `phone_${normPhone}` : (c.email ? `email_${c.email.trim().toLowerCase()}` : `name_${c.clientName.trim().toLowerCase()}`);
+      
+      if (casePersonMap.has(key)) {
+        const existing = casePersonMap.get(key);
+        existing.caseCount = (existing.caseCount || 1) + 1;
+        if (!existing.products.includes(c.product)) existing.products.push(c.product);
+        existing.association = `${existing.caseCount} Cases (${existing.products.join(', ')})`;
+      } else {
+        const evaluation = evaluateUpcomingBirthday(c.clientDob);
+        casePersonMap.set(key, {
+          id: `client-${c.id}`,
+          name: c.clientName,
+          phone: c.mobile,
+          email: c.email,
+          role: 'LOAN_CLIENT',
+          category: 'CLIENT',
+          categoryLabel: 'Loan Client',
+          teamName: 'Client File',
+          products: [c.product],
+          caseCount: 1,
+          association: `Loan: ${c.product} (#${c.id.slice(-6).toUpperCase()})`,
+          remark: `Status: ${c.status}${c.clientCity ? ` | City: ${c.clientCity}` : ''}${c.clientState ? `, ${c.clientState}` : ''}`,
+          dob: c.clientDob,
+          isWithin30Days: evaluation.isWithin30Days,
+          isToday: evaluation.isToday,
+          daysRemaining: evaluation.daysRemaining,
+          formattedBirthday: evaluation.formattedBirthday,
+        });
+      }
     }
 
     // Co-Applicants
@@ -1229,27 +1486,37 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
         const coApps = JSON.parse(c.coApplicantsData);
         if (Array.isArray(coApps)) {
           coApps.forEach((coApp: any, idx: number) => {
-            if (coApp.dob) {
+            if (coApp && coApp.name && coApp.dob) {
               const dobDate = new Date(coApp.dob);
               if (!isNaN(dobDate.getTime())) {
-                const evaluation = evaluateUpcomingBirthday(dobDate);
-                allItems.push({
-                  id: `coapp-${c.id}-${idx}`,
-                  name: coApp.name || `Co-Applicant ${idx + 1}`,
-                  phone: coApp.mobile || null,
-                  email: coApp.email || null,
-                  role: 'CO_APPLICANT',
-                  category: 'CO_APPLICANT',
-                  categoryLabel: 'Co-Applicant',
-                  teamName: 'Co-Applicant',
-                  association: `Co-App for ${c.clientName} (${c.product})`,
-                  remark: `Client: ${c.clientName} | Case #${c.id.slice(-6).toUpperCase()}`,
-                  dob: dobDate,
-                  isWithin30Days: evaluation.isWithin30Days,
-                  isToday: evaluation.isToday,
-                  daysRemaining: evaluation.daysRemaining,
-                  formattedBirthday: evaluation.formattedBirthday,
-                });
+                const coPhone = coApp.mobile ? String(coApp.mobile).replace(/\D/g, '').slice(-10) : '';
+                const coKey = coPhone ? `phone_${coPhone}` : (coApp.email ? `email_${coApp.email.trim().toLowerCase()}` : `name_${coApp.name.trim().toLowerCase()}`);
+                
+                if (casePersonMap.has(coKey)) {
+                  const existing = casePersonMap.get(coKey);
+                  existing.caseCount = (existing.caseCount || 1) + 1;
+                  existing.association = `${existing.caseCount} Cases (Co-App): ${c.clientName}`;
+                } else {
+                  const evaluation = evaluateUpcomingBirthday(dobDate);
+                  casePersonMap.set(coKey, {
+                    id: `coapp-${c.id}-${idx}`,
+                    name: coApp.name || `Co-Applicant ${idx + 1}`,
+                    phone: coApp.mobile || null,
+                    email: coApp.email || null,
+                    role: 'CO_APPLICANT',
+                    category: 'CO_APPLICANT',
+                    categoryLabel: 'Co-Applicant',
+                    teamName: 'Co-Applicant',
+                    caseCount: 1,
+                    association: `Co-App for ${c.clientName} (${c.product})`,
+                    remark: `Client: ${c.clientName} | Case #${c.id.slice(-6).toUpperCase()}`,
+                    dob: dobDate,
+                    isWithin30Days: evaluation.isWithin30Days,
+                    isToday: evaluation.isToday,
+                    daysRemaining: evaluation.daysRemaining,
+                    formattedBirthday: evaluation.formattedBirthday,
+                  });
+                }
               }
             }
           });
@@ -1259,6 +1526,8 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
       }
     }
   }
+
+  allItems.push(...casePersonMap.values());
 
   // Map Manual Entries
   for (const m of manualEntries) {
@@ -1286,7 +1555,7 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
 
   const processed = allItems
     .filter((b) => (includeAll ? true : b.isWithin30Days))
-    .sort((a, b) => a.daysRemaining - b.daysRemaining);
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return { success: true, birthdays: processed };
 }
@@ -1533,6 +1802,10 @@ export async function getAllStaffAttendanceTodayAction() {
       name: true,
       email: true,
       role: true,
+      jobRole: true,
+      department: true,
+      monthlySalary: true,
+      currentCTC: true,
       team: { select: { name: true } },
     },
     orderBy: { name: 'asc' },
@@ -1560,6 +1833,10 @@ export async function getAllStaffAttendanceTodayAction() {
       name: s.name,
       email: s.email,
       role: s.role,
+      jobRole: s.jobRole || null,
+      department: s.department || null,
+      monthlySalary: s.monthlySalary || null,
+      currentCTC: s.currentCTC || null,
       teamName: s.team?.name || 'Unassigned',
       isPunchedIn,
       punchIn: rec?.punchIn || null,
@@ -1620,7 +1897,7 @@ export async function getStaffMonthlyAttendanceAction(targetUserId?: string, mon
 
 // 9. HRMS Leave Management Actions
 export async function applyLeaveAction(data: {
-  leaveType: 'CASUAL' | 'SICK' | 'PAID';
+  leaveType: 'CASUAL' | 'SICK' | 'PAID' | 'LWP';
   startDate: string;
   endDate: string;
   reason: string;
@@ -1688,6 +1965,7 @@ export async function getLeaveRequestsAction() {
   const usedCL = userLeavesThisYear.filter((l) => l.leaveType === 'CASUAL').reduce((sum, l) => sum + l.daysCount, 0);
   const usedSL = userLeavesThisYear.filter((l) => l.leaveType === 'SICK').reduce((sum, l) => sum + l.daysCount, 0);
   const usedPL = userLeavesThisYear.filter((l) => l.leaveType === 'PAID').reduce((sum, l) => sum + l.daysCount, 0);
+  const usedLWP = userLeavesThisYear.filter((l) => l.leaveType === 'LWP').reduce((sum, l) => sum + l.daysCount, 0);
 
   const quota = {
     casualTotal: 12,
@@ -1696,6 +1974,7 @@ export async function getLeaveRequestsAction() {
     sickRemaining: Math.max(0, 8 - usedSL),
     paidTotal: 15,
     paidRemaining: Math.max(0, 15 - usedPL),
+    lwpTotalTaken: usedLWP,
   };
 
   return { success: true, leaves, isSuperAdmin, quota };
@@ -1725,7 +2004,7 @@ export async function recordAdminLeaveAction(data: {
   userId?: string;
   manualName?: string;
   manualPhone?: string;
-  leaveType: 'CASUAL' | 'SICK' | 'PAID';
+  leaveType: 'CASUAL' | 'SICK' | 'PAID' | 'LWP';
   startDate: string;
   endDate: string;
   reason?: string;
@@ -1840,6 +2119,11 @@ export async function getHolidaysAction() {
 // 10. Product Master Actions
 export async function getProductsAction() {
   let products = await prisma.productMaster.findMany({
+    include: {
+      subProducts: {
+        orderBy: { name: 'asc' },
+      },
+    },
     orderBy: { name: 'asc' },
   });
 
@@ -1859,6 +2143,11 @@ export async function getProductsAction() {
       });
     }
     products = await prisma.productMaster.findMany({
+      include: {
+        subProducts: {
+          orderBy: { name: 'asc' },
+        },
+      },
       orderBy: { name: 'asc' },
     });
   }
@@ -1866,7 +2155,7 @@ export async function getProductsAction() {
   return { success: true, products };
 }
 
-export async function createProductAction(name: string) {
+export async function createProductAction(name: string, initialSubProducts?: string[]) {
   const user = await getAuthUser();
   if (!user) return { success: false, error: 'Unauthorized' };
 
@@ -1880,8 +2169,25 @@ export async function createProductAction(name: string) {
     return { success: false, error: 'Product already exists.' };
   }
 
+  const cleanSubProducts = (initialSubProducts || [])
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   const product = await prisma.productMaster.create({
-    data: { name: trimmed },
+    data: {
+      name: trimmed,
+      subProducts:
+        cleanSubProducts.length > 0
+          ? {
+              create: cleanSubProducts.map((spName) => ({ name: spName })),
+            }
+          : undefined,
+    },
+    include: {
+      subProducts: {
+        orderBy: { name: 'asc' },
+      },
+    },
   });
 
   revalidatePath('/admin/products');
@@ -1939,8 +2245,8 @@ export async function getProfilesAction() {
     const defaults = [
       'Salaried',
       'Self Employed Professional',
-      'Self Employed Non-Professional',
-      'NRI',
+      'Business / Non-Professional',
+      'Rental Income',
     ];
     for (const name of defaults) {
       await prisma.profileMaster.upsert({
@@ -2118,6 +2424,20 @@ export async function getTasksAction(filters?: {
       createdBy: {
         select: { id: true, name: true, role: true, username: true },
       },
+      completedBy: {
+        select: { id: true, name: true, role: true },
+      },
+      assignees: {
+        include: {
+          user: { select: { id: true, name: true, role: true } },
+        },
+      },
+      activityLogs: {
+        include: {
+          user: { select: { id: true, name: true, role: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
       case: {
         select: { id: true, clientName: true, product: true, mobile: true },
       },
@@ -2199,23 +2519,41 @@ export async function updateTaskStatusAction(
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    select: { id: true, assignedToId: true, createdById: true },
+    include: { assignees: true },
   });
 
   if (!task) {
     return { success: false, error: 'Task not found.' };
   }
 
+  const isAssignee = task.assignedToId === user.id || task.assignees.some(a => a.userId === user.id);
   // Assignee, creator, or Super Admin can update status
-  if (user.role !== 'SUPER_ADMIN' && task.assignedToId !== user.id && task.createdById !== user.id) {
+  if (user.role !== 'SUPER_ADMIN' && !isAssignee && task.createdById !== user.id) {
     return { success: false, error: 'Permission denied to update this task.' };
   }
+
+  const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
+  const staffName = dbUser?.name || 'Staff';
+  const isCompleted = status === 'COMPLETED';
 
   const updated = await prisma.task.update({
     where: { id: taskId },
     data: {
       status,
-      completedAt: status === 'COMPLETED' ? new Date() : null,
+      completedAt: isCompleted ? new Date() : null,
+      completedById: isCompleted ? user.id : null,
+    },
+  });
+
+  // Record Task Activity Log for every update
+  await prisma.taskActivityLog.create({
+    data: {
+      taskId,
+      userId: user.id,
+      action: isCompleted ? 'TASK_COMPLETED' : 'STATUS_CHANGED',
+      details: isCompleted
+        ? `${staffName} marked the task as COMPLETED.`
+        : `${staffName} changed task status from ${task.status} to ${status}.`,
     },
   });
 
@@ -2230,8 +2568,12 @@ export async function updateTaskAction(
     description?: string;
     priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
     status?: 'PENDING' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
+    isUrgent?: boolean;
+    isImportant?: boolean;
     dueDate?: string | null;
+    dueTime?: string | null;
     assignedToId?: string;
+    assigneeIds?: string[];
     caseId?: string | null;
   }
 ) {
@@ -2242,6 +2584,7 @@ export async function updateTaskAction(
 
   const existing = await prisma.task.findUnique({
     where: { id: taskId },
+    include: { assignees: true },
   });
 
   if (!existing) {
@@ -2253,20 +2596,12 @@ export async function updateTaskAction(
     return { success: false, error: 'Only task creator or Super Admin can edit task details.' };
   }
 
-  if (data.assignedToId && data.assignedToId !== existing.assignedToId) {
-    const targetUser = await prisma.user.findUnique({
-      where: { id: data.assignedToId },
-      select: { role: true },
-    });
-    if (targetUser?.role === 'CHANNEL') {
-      return { success: false, error: 'Tasks cannot be assigned to Channel partners.' };
-    }
-  }
-
   const updatePayload: any = {};
   if (data.title !== undefined) updatePayload.title = data.title.trim();
   if (data.description !== undefined) updatePayload.description = data.description?.trim() || null;
   if (data.priority !== undefined) updatePayload.priority = data.priority;
+  if (data.isUrgent !== undefined) updatePayload.isUrgent = data.isUrgent;
+  if (data.isImportant !== undefined) updatePayload.isImportant = data.isImportant;
   if (data.status !== undefined) {
     updatePayload.status = data.status;
     updatePayload.completedAt = data.status === 'COMPLETED' ? new Date() : null;
@@ -2274,20 +2609,72 @@ export async function updateTaskAction(
   if (data.dueDate !== undefined) {
     updatePayload.dueDate = data.dueDate ? new Date(data.dueDate) : null;
   }
-  if (data.assignedToId !== undefined && data.assignedToId !== existing.assignedToId) {
-    updatePayload.assignedToId = data.assignedToId;
-    updatePayload.assignedAt = new Date(); // reset elapsed time on reassignment
+  if (data.dueTime !== undefined) {
+    updatePayload.dueTime = data.dueTime || null;
   }
   if (data.caseId !== undefined) {
     updatePayload.caseId = data.caseId || null;
   }
 
+  // Multi-assignment synchronization
+  const effectiveAssigneeIds = data.assigneeIds && data.assigneeIds.length > 0
+    ? data.assigneeIds
+    : (data.assignedToId ? [data.assignedToId] : undefined);
+
+  if (effectiveAssigneeIds && effectiveAssigneeIds.length > 0) {
+    const targetUsers = await prisma.user.findMany({
+      where: { id: { in: effectiveAssigneeIds } },
+      select: { id: true, name: true, role: true },
+    });
+    if (targetUsers.some((u) => u.role === 'CHANNEL')) {
+      return { success: false, error: 'Tasks cannot be assigned to Channel partners.' };
+    }
+
+    const primaryAssigneeId = effectiveAssigneeIds[0];
+    const existingAssigneeIds = existing.assignees.map((a) => a.userId);
+    const assigneesChanged =
+      existing.assignedToId !== primaryAssigneeId ||
+      existingAssigneeIds.length !== effectiveAssigneeIds.length ||
+      existingAssigneeIds.some((id) => !effectiveAssigneeIds.includes(id));
+
+    if (assigneesChanged) {
+      updatePayload.assignedToId = primaryAssigneeId;
+      updatePayload.assignedAt = new Date(); // reset elapsed time on reassignment
+
+      await prisma.taskAssignee.deleteMany({
+        where: { taskId },
+      });
+      await prisma.taskAssignee.createMany({
+        data: effectiveAssigneeIds.map((uid) => ({
+          taskId,
+          userId: uid,
+        })),
+      });
+
+      const staffNames = targetUsers.map((u) => u.name).join(', ');
+      await prisma.taskActivityLog.create({
+        data: {
+          taskId,
+          userId: user.id,
+          action: 'TASK_REASSIGNED',
+          details: `Task assignees updated to: ${staffNames}`,
+        },
+      });
+    }
+  }
+
   const updated = await prisma.task.update({
     where: { id: taskId },
     data: updatePayload,
+    include: {
+      assignees: { include: { user: { select: { id: true, name: true, role: true } } } },
+      assignedTo: { select: { id: true, name: true, role: true } },
+      case: { select: { id: true, clientName: true } },
+    },
   });
 
   revalidatePath('/tasks');
+  revalidatePath('/dashboard');
   return { success: true, task: updated };
 }
 
@@ -2329,6 +2716,9 @@ export async function addTaskCommentAction(taskId: string, content: string) {
     return { success: false, error: 'Comment content cannot be empty.' };
   }
 
+  const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
+  const staffName = dbUser?.name || 'Staff';
+
   const comment = await prisma.taskComment.create({
     data: {
       taskId,
@@ -2339,6 +2729,15 @@ export async function addTaskCommentAction(taskId: string, content: string) {
       user: {
         select: { id: true, name: true, role: true },
       },
+    },
+  });
+
+  await prisma.taskActivityLog.create({
+    data: {
+      taskId,
+      userId: user.id,
+      action: 'COMMENT_ADDED',
+      details: `${staffName} added a comment: "${trimmed.slice(0, 60)}${trimmed.length > 60 ? '...' : ''}"`,
     },
   });
 
@@ -2404,6 +2803,2151 @@ export async function updateCrmBrandingAction(data: {
   revalidatePath('/admin/settings');
   return { success: true, setting };
 }
+
+// 14. Follow-Up & Timeline Log Actions
+export async function addCaseFollowUpAction(data: {
+  caseId: string;
+  stage?: number;
+  stageName?: string;
+  status: string;
+  remarks: string;
+}) {
+  const user = await getAuthUser();
+  if (!user || user.accessPermission === 'VIEW') {
+    return { success: false, error: 'Unauthorized or view-only access.' };
+  }
+
+  const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
+  const userName = dbUser?.name || 'Staff';
+
+  const followUp = await prisma.caseFollowUp.create({
+    data: {
+      caseId: data.caseId,
+      stage: data.stage || 1,
+      stageName: data.stageName || `Stage ${data.stage || 1}`,
+      status: data.status,
+      remarks: data.remarks.trim(),
+      createdById: user.id,
+      createdByName: userName,
+    },
+  });
+
+  // Also update case status if provided
+  if (data.status) {
+    await prisma.case.update({
+      where: { id: data.caseId },
+      data: { status: data.status },
+    });
+  }
+
+  revalidatePath(`/cases/${data.caseId}`);
+  revalidatePath('/cases');
+  return { success: true, followUp };
+}
+
+export async function getCaseFollowUpsAction(caseId: string) {
+  const followUps = await prisma.caseFollowUp.findMany({
+    where: { caseId },
+    orderBy: { createdAt: 'desc' },
+  });
+  return { success: true, followUps };
+}
+
+// 15. Multi-Staff Task Actions & Comment Edit
+export async function createTaskWithMultipleAssigneesAction(data: {
+  title: string;
+  description?: string;
+  priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  isUrgent?: boolean;
+  isImportant?: boolean;
+  dueDate?: string | null;
+  dueTime?: string | null;
+  assigneeIds: string[];
+  caseId?: string | null;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  // Pointer 32: Only Super Admin or Team Leader can assign tasks
+  const isSuperAdmin = user.role === 'SUPER_ADMIN';
+  const isTeamLeader = user.role === 'OPERATION' || user.role === 'SALES'; // Team leads
+  if (!isSuperAdmin && !isTeamLeader) {
+    return { success: false, error: 'Permission denied: Only Team Leaders or Super Admin can assign tasks.' };
+  }
+
+  if (!data.title?.trim()) {
+    return { success: false, error: 'Task title is required.' };
+  }
+
+  if (!data.assigneeIds || data.assigneeIds.length === 0) {
+    return { success: false, error: 'Please select at least one staff member.' };
+  }
+
+  const primaryAssigneeId = data.assigneeIds[0];
+  const dueDateTime = data.dueDate ? new Date(data.dueDate) : null;
+
+  const task = await prisma.task.create({
+    data: {
+      title: data.title.trim(),
+      description: data.description?.trim() || null,
+      priority: data.priority || 'MEDIUM',
+      isUrgent: !!data.isUrgent,
+      isImportant: !!data.isImportant,
+      dueDate: dueDateTime,
+      dueTime: data.dueTime || null,
+      assignedToId: primaryAssigneeId,
+      createdById: user.id,
+      caseId: data.caseId || null,
+      assignees: {
+        create: data.assigneeIds.map(uid => ({
+          userId: uid,
+        })),
+      },
+    },
+    include: {
+      assignees: { include: { user: { select: { id: true, name: true, role: true } } } },
+      case: { select: { id: true, clientName: true } },
+    },
+  });
+
+  const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
+  const staffName = dbUser?.name || 'Admin';
+
+  await prisma.taskActivityLog.create({
+    data: {
+      taskId: task.id,
+      userId: user.id,
+      action: 'TASK_CREATED',
+      details: `${staffName} created and assigned this task.`,
+    },
+  });
+
+  revalidatePath('/tasks');
+  revalidatePath('/dashboard');
+  return { success: true, task };
+}
+
+export async function editTaskCommentAction(commentId: string, newContent: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const existing = await prisma.taskComment.findUnique({ where: { id: commentId } });
+  if (!existing) return { success: false, error: 'Comment not found' };
+
+  // Only author or Super Admin can edit
+  if (existing.userId !== user.id && user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Permission denied: You can only edit your own comments.' };
+  }
+
+  const updated = await prisma.taskComment.update({
+    where: { id: commentId },
+    data: {
+      content: newContent.trim(),
+      isEdited: true,
+      editedAt: new Date(),
+    },
+  });
+
+  const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
+  const staffName = dbUser?.name || 'Staff';
+
+  await prisma.taskActivityLog.create({
+    data: {
+      taskId: existing.taskId,
+      userId: user.id,
+      action: 'COMMENT_EDITED',
+      details: `${staffName} edited comment to: "${newContent.trim().slice(0, 60)}${newContent.trim().length > 60 ? '...' : ''}"`,
+    },
+  });
+
+  revalidatePath('/tasks');
+  return { success: true, comment: updated };
+}
+
+// 16. Birthday Deduplication & Category Filter Actions
+export async function checkDuplicateBirthdayPhoneAction(phone: string) {
+  if (!phone || phone.trim().length < 10) return { exists: false };
+  const cleanPhone = phone.trim();
+
+  const existingManual = await prisma.manualBirthdayEntry.findFirst({
+    where: { phone: cleanPhone },
+  });
+  if (existingManual) {
+    return { exists: true, name: existingManual.name, category: existingManual.category };
+  }
+
+  const existingCase = await prisma.case.findFirst({
+    where: { mobile: cleanPhone },
+    select: { clientName: true },
+  });
+  if (existingCase) {
+    return { exists: true, name: existingCase.clientName, category: 'CUSTOMER' };
+  }
+
+  return { exists: false };
+}
+
+export async function createManualBirthdayWithCategoryAction(data: {
+  name: string;
+  phone: string;
+  email?: string | null;
+  dob: string;
+  category?: string; // STAFF, CUSTOMER, CHANNEL
+  onBehalfOf?: string | null;
+  remark?: string | null;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (!isValidName(data.name)) {
+    return { success: false, error: 'Name must contain only alphabetic characters and spaces.' };
+  }
+  if (!data.phone || !isValid10DigitPhone(data.phone)) {
+    return { success: false, error: 'Mobile number must be exactly 10 digits.' };
+  }
+
+  const entry = await prisma.manualBirthdayEntry.create({
+    data: {
+      name: data.name.trim(),
+      phone: data.phone.trim(),
+      email: data.email?.trim() || null,
+      dob: new Date(data.dob),
+      category: data.category || 'CUSTOMER',
+      onBehalfOf: data.onBehalfOf?.trim() || null,
+      remark: data.remark?.trim() || null,
+      createdById: user.id,
+    },
+  });
+
+  revalidatePath('/birthdays');
+  revalidatePath('/dashboard');
+  return { success: true, entry };
+}
+
+// 17. Staff Personal Profile & Salary Register Actions
+export async function updateStaffPersonalDetailsAction(userId: string, data: {
+  name?: string;
+  email?: string;
+  phone?: string;
+  gender?: string;
+  dob?: string | null;
+  pan?: string;
+  panCardUrl?: string | null;
+  aadhaar?: string;
+  aadhaarCardUrl?: string | null;
+  maritalStatus?: string;
+  marriageAnniversary?: string | null;
+  residentialAddress?: string;
+  permanentAddress?: string;
+  address?: string;
+  emergencyContact?: string;
+  emergencyContactName1?: string;
+  emergencyContactRelation1?: string;
+  emergencyContactPhone1?: string;
+  emergencyContactName2?: string;
+  emergencyContactRelation2?: string;
+  emergencyContactPhone2?: string;
+  dateOfJoining?: string | null;
+  educationQualification?: string;
+  pastExperience?: string | null;
+  photographUrl?: string | null;
+  avatarUrl?: string | null;
+  bankName?: string;
+  bankAccountNo?: string;
+  bankIfsc?: string;
+  bloodGroup?: string;
+  monthlySalary?: number;
+  currentCTC?: number;
+  jobRole?: string;
+  department?: string;
+  employmentType?: string;
+  workLocation?: string;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  // Self edit or Super Admin edit
+  if (user.id !== userId && user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Permission denied: You can only edit your own personal details.' };
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      name: data.name ? data.name.trim() : undefined,
+      email: data.email ? data.email.trim() : undefined,
+      phone: data.phone ? data.phone.trim() : undefined,
+      gender: data.gender || undefined,
+      dob: data.dob ? new Date(data.dob) : null,
+      pan: data.pan ? data.pan.trim().toUpperCase() : undefined,
+      panCardUrl: data.panCardUrl !== undefined ? data.panCardUrl : undefined,
+      aadhaar: data.aadhaar ? data.aadhaar.trim() : undefined,
+      aadhaarCardUrl: data.aadhaarCardUrl !== undefined ? data.aadhaarCardUrl : undefined,
+      maritalStatus: data.maritalStatus || undefined,
+      marriageAnniversary: data.marriageAnniversary ? new Date(data.marriageAnniversary) : null,
+      residentialAddress: data.residentialAddress ? data.residentialAddress.trim() : undefined,
+      permanentAddress: data.permanentAddress ? data.permanentAddress.trim() : undefined,
+      address: data.residentialAddress || data.address ? (data.residentialAddress || data.address || '').trim() : undefined,
+      emergencyContactName1: data.emergencyContactName1 ? data.emergencyContactName1.trim() : undefined,
+      emergencyContactRelation1: data.emergencyContactRelation1 ? data.emergencyContactRelation1.trim() : undefined,
+      emergencyContactPhone1: data.emergencyContactPhone1 ? data.emergencyContactPhone1.trim() : undefined,
+      emergencyContactName2: data.emergencyContactName2 ? data.emergencyContactName2.trim() : undefined,
+      emergencyContactRelation2: data.emergencyContactRelation2 ? data.emergencyContactRelation2.trim() : undefined,
+      emergencyContactPhone2: data.emergencyContactPhone2 ? data.emergencyContactPhone2.trim() : undefined,
+      emergencyContact: data.emergencyContactPhone1 || data.emergencyContact ? (data.emergencyContactPhone1 || data.emergencyContact || '').trim() : undefined,
+      dateOfJoining: data.dateOfJoining ? new Date(data.dateOfJoining) : null,
+      educationQualification: data.educationQualification || undefined,
+      pastExperience: data.pastExperience !== undefined ? data.pastExperience : undefined,
+      photographUrl: data.photographUrl !== undefined ? data.photographUrl : undefined,
+      avatarUrl: data.photographUrl || data.avatarUrl || undefined,
+      bankName: data.bankName ? data.bankName.trim() : undefined,
+      bankAccountNo: data.bankAccountNo ? data.bankAccountNo.trim() : undefined,
+      bankIfsc: data.bankIfsc ? data.bankIfsc.trim().toUpperCase() : undefined,
+      bloodGroup: data.bloodGroup || undefined,
+      monthlySalary: data.monthlySalary !== undefined ? Number(data.monthlySalary) || 0 : undefined,
+      currentCTC: data.currentCTC !== undefined ? Number(data.currentCTC) || 0 : undefined,
+      jobRole: data.jobRole !== undefined ? data.jobRole.trim() : undefined,
+      department: data.department !== undefined ? data.department.trim() : undefined,
+      employmentType: data.employmentType !== undefined ? data.employmentType.trim() : undefined,
+      workLocation: data.workLocation !== undefined ? data.workLocation.trim() : undefined,
+    },
+  });
+
+  revalidatePath('/admin/users');
+  revalidatePath(`/admin/users/${userId}`);
+  revalidatePath('/profile');
+  revalidatePath('/salary');
+  revalidatePath('/hrms');
+  revalidatePath('/dashboard');
+  return { success: true, user: updated };
+}
+
+export async function createSalaryRecordAction(data: {
+  userId: string;
+  month: string;
+  basicSalary: number;
+  allowances?: number;
+  deductions?: number;
+  paymentStatus?: string;
+  remarks?: string;
+}) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Unauthorized: Super Admin access required.' };
+  }
+
+  const basic = Number(data.basicSalary) || 0;
+  const allowances = Number(data.allowances) || 0;
+  const deductions = Number(data.deductions) || 0;
+  const netPayable = basic + allowances - deductions;
+
+  const record = await prisma.salaryRecord.create({
+    data: {
+      userId: data.userId,
+      month: data.month,
+      basicSalary: basic,
+      allowances,
+      deductions,
+      netPayable,
+      paymentStatus: data.paymentStatus || 'UNPAID',
+      remarks: data.remarks?.trim() || null,
+    },
+  });
+
+  revalidatePath('/salary');
+  return { success: true, record };
+}
+
+export async function updateSalaryRecordStatusAction(id: string, paymentStatus: string, remarks?: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Unauthorized: Super Admin access required.' };
+  }
+
+  const updated = await prisma.salaryRecord.update({
+    where: { id },
+    data: {
+      paymentStatus,
+      paidDate: paymentStatus === 'PAID' ? new Date() : null,
+      remarks: remarks !== undefined ? remarks.trim() : undefined,
+    },
+  });
+
+  revalidatePath('/salary');
+  return { success: true, record: updated };
+}
+
+export async function editSalaryRecordAction(
+  id: string,
+  data: {
+    month?: string;
+    basicSalary?: number;
+    allowances?: number;
+    deductions?: number;
+    workingDays?: number;
+    paidDays?: number;
+    lwpDays?: number;
+    incentiveEarned?: number;
+    paymentStatus?: string;
+    remarks?: string;
+  }
+) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Unauthorized: Super Admin access required.' };
+  }
+
+  const existing = await prisma.salaryRecord.findUnique({ where: { id } });
+  if (!existing) {
+    return { success: false, error: 'Salary record not found.' };
+  }
+
+  const basic = data.basicSalary !== undefined ? Number(data.basicSalary) : existing.basicSalary;
+  const allowances = data.allowances !== undefined ? Number(data.allowances) : existing.allowances;
+  const deductions = data.deductions !== undefined ? Number(data.deductions) : existing.deductions;
+  const incentive = data.incentiveEarned !== undefined ? Number(data.incentiveEarned) : (existing.incentiveEarned || 0);
+  const netPayable = Math.max(0, basic + allowances + incentive - deductions);
+
+  const updated = await prisma.salaryRecord.update({
+    where: { id },
+    data: {
+      month: data.month && data.month.trim() ? data.month.trim() : existing.month,
+      basicSalary: basic,
+      allowances,
+      deductions,
+      workingDays: data.workingDays !== undefined ? data.workingDays : existing.workingDays,
+      paidDays: data.paidDays !== undefined ? data.paidDays : existing.paidDays,
+      lwpDays: data.lwpDays !== undefined ? data.lwpDays : existing.lwpDays,
+      incentiveEarned: incentive,
+      netPayable,
+      paymentStatus: data.paymentStatus || existing.paymentStatus,
+      paidDate: data.paymentStatus === 'PAID' ? (existing.paidDate || new Date()) : null,
+      remarks: data.remarks !== undefined ? (data.remarks.trim() || null) : existing.remarks,
+    },
+  });
+
+  revalidatePath('/salary');
+  return { success: true, record: updated };
+}
+
+export async function deleteSalaryRecordAction(id: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Unauthorized: Super Admin access required.' };
+  }
+
+  await prisma.salaryRecord.delete({ where: { id } });
+  revalidatePath('/salary');
+  return { success: true };
+}
+
+// 18. Visit Tracker Actions
+export async function createVisitRecordAction(data: {
+  caseId?: string | null;
+  clientName: string;
+  clientPhone?: string | null;
+  propertyAddress?: string | null;
+  visitDate: string;
+  visitTime?: string | null;
+  staffUserId: string;
+  visitType?: string;
+  remarks?: string | null;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const staffUser = await prisma.user.findUnique({
+    where: { id: data.staffUserId },
+    select: { name: true },
+  });
+
+  const visit = await prisma.visitRecord.create({
+    data: {
+      caseId: data.caseId || null,
+      clientName: data.clientName.trim(),
+      clientPhone: data.clientPhone?.trim() || null,
+      propertyAddress: data.propertyAddress?.trim() || null,
+      visitDate: new Date(data.visitDate),
+      visitTime: data.visitTime || null,
+      staffUserId: data.staffUserId,
+      visitType: data.visitType || 'PROPERTY_VERIFICATION',
+      remarks: data.remarks?.trim() || null,
+    },
+  });
+
+  revalidatePath('/visits');
+  revalidatePath('/dashboard');
+  return { success: true, visit };
+}
+
+export async function updateVisitStatusAction(id: string, status: string, remarks?: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const updated = await prisma.visitRecord.update({
+    where: { id },
+    data: {
+      status,
+      remarks: remarks !== undefined ? remarks.trim() : undefined,
+    },
+  });
+
+  revalidatePath('/visits');
+  return { success: true, visit: updated };
+}
+
+// 19. Dynamic Masters & Target Category Actions
+
+export async function createTargetCategoryAction(name: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  const cat = await prisma.targetCategoryMaster.create({
+    data: { name: name.trim() },
+  });
+
+  revalidatePath('/admin/checklist-metrics');
+  revalidatePath('/cases/new');
+  return { success: true, cat };
+}
+
+export async function deleteTargetCategoryAction(id: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  await prisma.targetCategoryMaster.delete({ where: { id } });
+  revalidatePath('/admin/checklist-metrics');
+  revalidatePath('/cases/new');
+  return { success: true };
+}
+
+// 20. Dashboard Parameters Customization Action
+export async function updateDashboardConfigAction(configJson: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  await prisma.systemSetting.upsert({
+    where: { id: 'default' },
+    update: { dashboardConfig: configJson },
+    create: { id: 'default', dashboardConfig: configJson },
+  });
+
+  revalidatePath('/dashboard');
+  return { success: true };
+}
+
+// ==========================================
+// 21. DYNAMIC WORKFLOW STAGES MASTER ACTIONS
+// ==========================================
+export async function getWorkflowStagesAction() {
+  const stages = await prisma.workflowStageMaster.findMany({
+    orderBy: { stageNumber: 'asc' },
+  });
+  return { success: true, stages };
+}
+
+export async function createWorkflowStageAction(data: {
+  stageNumber: number;
+  name: string;
+  description?: string;
+  color?: string;
+  incentiveAmount?: number;
+}) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  if (!data.name?.trim() || !data.stageNumber) {
+    return { success: false, error: 'Stage Number and Name are required.' };
+  }
+
+  const existing = await prisma.workflowStageMaster.findUnique({
+    where: { stageNumber: data.stageNumber },
+  });
+  if (existing) {
+    return { success: false, error: `Stage ${data.stageNumber} already exists. Please pick another number or edit the existing stage.` };
+  }
+
+  const stage = await prisma.workflowStageMaster.create({
+    data: {
+      stageNumber: data.stageNumber,
+      name: data.name.trim(),
+      description: data.description?.trim() || null,
+      color: data.color || '#3b82f6',
+      incentiveAmount: data.incentiveAmount || 0,
+      isActive: true,
+    },
+  });
+
+  revalidatePath('/cases');
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/functionality');
+  return { success: true, stage };
+}
+
+export async function updateWorkflowStageAction(
+  id: string,
+  data: {
+    stageNumber?: number;
+    name?: string;
+    description?: string;
+    color?: string;
+    incentiveAmount?: number;
+    isActive?: boolean;
+  }
+) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  const updateData: any = {};
+  if (data.stageNumber !== undefined) updateData.stageNumber = data.stageNumber;
+  if (data.name !== undefined) updateData.name = data.name.trim();
+  if (data.description !== undefined) updateData.description = data.description.trim() || null;
+  if (data.color !== undefined) updateData.color = data.color;
+  if (data.incentiveAmount !== undefined) updateData.incentiveAmount = data.incentiveAmount;
+  if (data.isActive !== undefined) updateData.isActive = data.isActive;
+
+  const stage = await prisma.workflowStageMaster.update({
+    where: { id },
+    data: updateData,
+  });
+
+  revalidatePath('/cases');
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/functionality');
+  return { success: true, stage };
+}
+
+export async function deleteWorkflowStageAction(id: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  await prisma.workflowStageMaster.delete({ where: { id } });
+  revalidatePath('/cases');
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/functionality');
+  return { success: true };
+}
+
+// ==========================================
+// 22. ENTITY / CUSTOMER TYPE MASTER ACTIONS
+// ==========================================
+export async function getCustomerTypesAction() {
+  const types = await prisma.customerTypeMaster.findMany({
+    orderBy: { name: 'asc' },
+  });
+  return { success: true, types };
+}
+
+export async function createCustomerTypeAction(data: { name: string; description?: string }) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Entity name is required.' };
+  }
+
+  const cleanName = data.name.trim();
+  const type = await prisma.customerTypeMaster.upsert({
+    where: { name: cleanName },
+    update: { description: data.description?.trim() || null },
+    create: { name: cleanName, description: data.description?.trim() || null },
+  });
+
+  // Keep targetCategoryMaster in sync for backwards compatibility
+  await prisma.targetCategoryMaster.upsert({
+    where: { name: cleanName },
+    update: {},
+    create: { name: cleanName },
+  });
+
+  revalidatePath('/cases/new');
+  revalidatePath('/admin/functionality');
+  return { success: true, type };
+}
+
+export async function updateCustomerTypeAction(id: string, data: { name: string; description?: string }) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Entity name is required.' };
+  }
+
+  const existing = await prisma.customerTypeMaster.findUnique({ where: { id } });
+  if (!existing) {
+    return { success: false, error: 'Entity type not found.' };
+  }
+
+  const cleanName = data.name.trim();
+  const oldName = existing.name;
+
+  // Check if another type has the same name
+  if (cleanName.toLowerCase() !== oldName.toLowerCase()) {
+    const duplicate = await prisma.customerTypeMaster.findFirst({
+      where: {
+        name: cleanName,
+        NOT: { id },
+      },
+    });
+    if (duplicate) {
+      return { success: false, error: 'An entity type with this name already exists.' };
+    }
+  }
+
+  const updated = await prisma.customerTypeMaster.update({
+    where: { id },
+    data: {
+      name: cleanName,
+      description: data.description !== undefined ? (data.description.trim() || null) : existing.description,
+    },
+  });
+
+  // Keep targetCategoryMaster in sync
+  if (oldName !== cleanName) {
+    const targetCat = await prisma.targetCategoryMaster.findUnique({ where: { name: oldName } });
+    if (targetCat) {
+      await prisma.targetCategoryMaster.update({
+        where: { name: oldName },
+        data: { name: cleanName },
+      });
+    } else {
+      await prisma.targetCategoryMaster.upsert({
+        where: { name: cleanName },
+        update: {},
+        create: { name: cleanName },
+      });
+    }
+  }
+
+  revalidatePath('/cases/new');
+  revalidatePath('/admin/customer-types');
+  revalidatePath('/admin/functionality');
+  return { success: true, type: updated };
+}
+
+export async function deleteCustomerTypeAction(id: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  const existing = await prisma.customerTypeMaster.findUnique({ where: { id } });
+  if (existing) {
+    await prisma.customerTypeMaster.delete({ where: { id } });
+    await prisma.targetCategoryMaster.deleteMany({ where: { name: existing.name } });
+  }
+
+  revalidatePath('/cases/new');
+  revalidatePath('/admin/customer-types');
+  revalidatePath('/admin/functionality');
+  return { success: true };
+}
+
+// ==========================================
+// 23. OVERALL CASE STATUSES MASTER ACTIONS
+// ==========================================
+export async function getCaseStatusMastersAction() {
+  try {
+    const statuses = await prisma.caseStatusMaster.findMany({
+      orderBy: { displayOrder: 'asc' },
+    });
+    return { success: true, statuses };
+  } catch (error: any) {
+    return { success: false, error: error.message, statuses: [] };
+  }
+}
+
+export async function createCaseStatusMasterAction(data: {
+  name: string;
+  color?: string;
+  description?: string;
+  displayOrder?: number;
+  isDefault?: boolean;
+}) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL') {
+    return { success: false, error: 'Unauthorized.' };
+  }
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Status name is required.' };
+  }
+
+  const cleanName = data.name.trim();
+
+  // Check duplicate
+  const existing = await prisma.caseStatusMaster.findUnique({
+    where: { name: cleanName },
+  });
+  if (existing) {
+    return { success: false, error: 'A case status with this name already exists.' };
+  }
+
+  const status = await prisma.caseStatusMaster.create({
+    data: {
+      name: cleanName,
+      color: data.color?.trim() || '#3b82f6',
+      description: data.description?.trim() || null,
+      displayOrder: data.displayOrder ?? 0,
+      isDefault: data.isDefault ?? false,
+    },
+  });
+
+  revalidatePath('/cases');
+  revalidatePath('/admin/case-statuses');
+  return { success: true, status };
+}
+
+export async function updateCaseStatusMasterAction(
+  id: string,
+  data: {
+    name: string;
+    color?: string;
+    description?: string;
+    displayOrder?: number;
+    isDefault?: boolean;
+  }
+) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL') {
+    return { success: false, error: 'Unauthorized.' };
+  }
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Status name is required.' };
+  }
+
+  const existing = await prisma.caseStatusMaster.findUnique({ where: { id } });
+  if (!existing) {
+    return { success: false, error: 'Status not found.' };
+  }
+
+  const cleanName = data.name.trim();
+  const oldName = existing.name;
+
+  if (cleanName.toLowerCase() !== oldName.toLowerCase()) {
+    const duplicate = await prisma.caseStatusMaster.findFirst({
+      where: {
+        name: cleanName,
+        NOT: { id },
+      },
+    });
+    if (duplicate) {
+      return { success: false, error: 'A status with this name already exists.' };
+    }
+
+    // Cascade update to existing cases so cases don't lose status
+    await prisma.case.updateMany({
+      where: { status: oldName },
+      data: { status: cleanName },
+    });
+  }
+
+  const updated = await prisma.caseStatusMaster.update({
+    where: { id },
+    data: {
+      name: cleanName,
+      color: data.color?.trim() || existing.color,
+      description: data.description !== undefined ? (data.description.trim() || null) : existing.description,
+      displayOrder: data.displayOrder !== undefined ? data.displayOrder : existing.displayOrder,
+      isDefault: data.isDefault !== undefined ? data.isDefault : existing.isDefault,
+    },
+  });
+
+  revalidatePath('/cases');
+  revalidatePath('/admin/case-statuses');
+  return { success: true, status: updated };
+}
+
+export async function deleteCaseStatusMasterAction(id: string) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL') {
+    return { success: false, error: 'Unauthorized.' };
+  }
+
+  const existing = await prisma.caseStatusMaster.findUnique({ where: { id } });
+  if (!existing) {
+    return { success: false, error: 'Status not found.' };
+  }
+
+  // Prevent deleting if it's the last status
+  const count = await prisma.caseStatusMaster.count();
+  if (count <= 1) {
+    return { success: false, error: 'At least one case status must exist in the system.' };
+  }
+
+  await prisma.caseStatusMaster.delete({ where: { id } });
+
+  revalidatePath('/cases');
+  revalidatePath('/admin/case-statuses');
+  return { success: true };
+}
+
+// ==========================================
+// 22.1 PROPERTY SCOPES DYNAMIC ACTIONS
+// ==========================================
+export async function getPropertyScopesAction() {
+  try {
+    const scopes = await prisma.propertyScopeMaster.findMany({
+      orderBy: { name: 'asc' },
+    });
+    return { success: true, scopes };
+  } catch (error: any) {
+    return { success: false, error: error.message, scopes: [] };
+  }
+}
+
+export async function createPropertyScopeAction(data: {
+  name: string;
+  description?: string;
+}) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL') {
+    return { success: false, error: 'Unauthorized.' };
+  }
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Property scope name is required.' };
+  }
+
+  const cleanName = data.name.trim();
+
+  const existing = await prisma.propertyScopeMaster.findUnique({
+    where: { name: cleanName },
+  });
+  if (existing) {
+    return { success: false, error: 'A property scope with this name already exists.' };
+  }
+
+  const scope = await prisma.propertyScopeMaster.create({
+    data: {
+      name: cleanName,
+      description: data.description?.trim() || null,
+    },
+  });
+
+  revalidatePath('/admin/property-scopes');
+  revalidatePath('/admin/checklist-templates');
+  return { success: true, scope };
+}
+
+export async function updatePropertyScopeAction(
+  id: string,
+  data: {
+    name: string;
+    description?: string;
+  }
+) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL') {
+    return { success: false, error: 'Unauthorized.' };
+  }
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Property scope name is required.' };
+  }
+
+  const existing = await prisma.propertyScopeMaster.findUnique({ where: { id } });
+  if (!existing) {
+    return { success: false, error: 'Property scope not found.' };
+  }
+
+  const cleanName = data.name.trim();
+  const oldName = existing.name;
+
+  if (cleanName.toLowerCase() !== oldName.toLowerCase()) {
+    const duplicate = await prisma.propertyScopeMaster.findFirst({
+      where: {
+        name: cleanName,
+        NOT: { id },
+      },
+    });
+    if (duplicate) {
+      return { success: false, error: 'Another property scope already has this name.' };
+    }
+  }
+
+  const updated = await prisma.propertyScopeMaster.update({
+    where: { id },
+    data: {
+      name: cleanName,
+      description: data.description?.trim() || null,
+    },
+  });
+
+  revalidatePath('/admin/property-scopes');
+  revalidatePath('/admin/checklist-templates');
+  return { success: true, scope: updated };
+}
+
+export async function deletePropertyScopeAction(id: string) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL') {
+    return { success: false, error: 'Unauthorized.' };
+  }
+
+  const existing = await prisma.propertyScopeMaster.findUnique({ where: { id } });
+  if (!existing) {
+    return { success: false, error: 'Property scope not found.' };
+  }
+
+  const count = await prisma.propertyScopeMaster.count();
+  if (count <= 1) {
+    return { success: false, error: 'At least one property scope must exist in the system.' };
+  }
+
+  await prisma.propertyScopeMaster.delete({ where: { id } });
+
+  revalidatePath('/admin/property-scopes');
+  revalidatePath('/admin/checklist-templates');
+  return { success: true };
+}
+
+// ==========================================
+// 23. SUB-PRODUCTS DYNAMIC ACTIONS
+// ==========================================
+export async function getSubProductsAction(productId?: string) {
+  const where = productId ? { productId } : {};
+  const subProducts = await prisma.subProductMaster.findMany({
+    where,
+    include: { product: { select: { id: true, name: true } } },
+    orderBy: { name: 'asc' },
+  });
+  return { success: true, subProducts };
+}
+
+export async function createSubProductAction(data: { productId: string; name: string }) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  if (!data.productId || !data.name?.trim()) {
+    return { success: false, error: 'Product and Sub-product name are required.' };
+  }
+
+  const cleanName = data.name.trim();
+  const subProduct = await prisma.subProductMaster.upsert({
+    where: {
+      productId_name: {
+        productId: data.productId,
+        name: cleanName,
+      },
+    },
+    update: {},
+    create: {
+      productId: data.productId,
+      name: cleanName,
+    },
+  });
+
+  revalidatePath('/cases/new');
+  revalidatePath('/admin/products');
+  revalidatePath('/admin/functionality');
+  return { success: true, subProduct };
+}
+
+export async function updateSubProductAction(id: string, data: { name: string; productId?: string }) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Sub-product name is required.' };
+  }
+
+  const cleanName = data.name.trim();
+  const existing = await prisma.subProductMaster.findUnique({ where: { id } });
+  if (!existing) {
+    return { success: false, error: 'Sub-product not found.' };
+  }
+
+  const targetProductId = data.productId || existing.productId;
+
+  // Check if duplicate exists under targetProductId
+  const duplicate = await prisma.subProductMaster.findFirst({
+    where: {
+      productId: targetProductId,
+      name: cleanName,
+      NOT: { id },
+    },
+  });
+
+  if (duplicate) {
+    return { success: false, error: 'A sub-product with this name already exists under this product.' };
+  }
+
+  const updated = await prisma.subProductMaster.update({
+    where: { id },
+    data: {
+      name: cleanName,
+      productId: targetProductId,
+    },
+    include: { product: { select: { id: true, name: true } } },
+  });
+
+  revalidatePath('/cases/new');
+  revalidatePath('/admin/products');
+  revalidatePath('/admin/functionality');
+  return { success: true, subProduct: updated };
+}
+
+export async function deleteSubProductAction(id: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  await prisma.subProductMaster.delete({ where: { id } });
+  revalidatePath('/cases/new');
+  revalidatePath('/admin/products');
+  revalidatePath('/admin/functionality');
+  return { success: true };
+}
+
+// ==========================================
+// 24. EISENHOWER TASKS & SELF-TASKS ACTIONS
+// ==========================================
+export async function createSelfTaskAction(data: {
+  title: string;
+  description?: string;
+  priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  isUrgent?: boolean;
+  isImportant?: boolean;
+  dueDate?: string | null;
+  dueTime?: string | null;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (!data.title?.trim()) {
+    return { success: false, error: 'Task title is required.' };
+  }
+
+  const task = await prisma.task.create({
+    data: {
+      title: data.title.trim(),
+      description: data.description?.trim() || null,
+      priority: data.priority || (data.isUrgent ? 'URGENT' : 'MEDIUM'),
+      isUrgent: data.isUrgent ?? false,
+      isImportant: data.isImportant ?? false,
+      isSelfTask: true,
+      dueDate: data.dueDate ? new Date(data.dueDate) : null,
+      dueTime: data.dueTime || null,
+      assignedToId: user.id,
+      createdById: user.id,
+      assignees: {
+        create: [{ userId: user.id }],
+      },
+    },
+    include: {
+      assignees: { include: { user: { select: { id: true, name: true, role: true } } } },
+    },
+  });
+
+  revalidatePath('/tasks');
+  revalidatePath('/dashboard');
+  return { success: true, task };
+}
+
+export async function updateTaskEisenhowerAction(
+  taskId: string,
+  data: { isUrgent: boolean; isImportant: boolean }
+) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const task = await prisma.task.update({
+    where: { id: taskId },
+    data: {
+      isUrgent: data.isUrgent,
+      isImportant: data.isImportant,
+      priority: data.isUrgent ? 'URGENT' : data.isImportant ? 'HIGH' : 'MEDIUM',
+    },
+  });
+
+  revalidatePath('/tasks');
+  revalidatePath('/dashboard');
+  return { success: true, task };
+}
+
+export async function logTaskTimeSpentAction(taskId: string, minutes: number) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (!minutes || minutes <= 0) {
+    return { success: false, error: 'Valid minutes required.' };
+  }
+
+  const task = await prisma.task.update({
+    where: { id: taskId },
+    data: {
+      timeSpentMinutes: { increment: minutes },
+    },
+  });
+
+  const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
+  await prisma.taskActivityLog.create({
+    data: {
+      taskId,
+      userId: user.id,
+      action: 'TIME_SPENT_LOGGED',
+      details: `${dbUser?.name || 'Staff'} logged ${minutes} minutes spent on this task.`,
+    },
+  });
+
+  revalidatePath('/tasks');
+  return { success: true, task };
+}
+
+// ==========================================
+// 25. CHANNEL PARTNER CHILD ACCOUNTS
+// ==========================================
+export async function getChildChannelAccountsAction(parentChannelId?: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const where: any = { role: 'CHANNEL' };
+  if (parentChannelId) {
+    where.parentChannelId = parentChannelId;
+  } else {
+    where.parentChannelId = { not: null };
+  }
+
+  const childAccounts = await prisma.user.findMany({
+    where,
+    include: { parentChannel: { select: { id: true, name: true, email: true } } },
+    orderBy: { name: 'asc' },
+  });
+
+  return { success: true, childAccounts };
+}
+
+export async function createChildChannelAccountAction(data: {
+  parentChannelId?: string;
+  name: string;
+  username: string;
+  email?: string;
+  phone?: string;
+  password: string;
+}) {
+  const user = await getAuthUser();
+  if (!user) {
+    return { success: false, error: 'Unauthorized.' };
+  }
+
+  let effectiveParentId = data.parentChannelId;
+  if (user.role === 'CHANNEL') {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { parentChannelId: true },
+    });
+    effectiveParentId = dbUser?.parentChannelId || user.id;
+  } else if (user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin or Channel Partner access required.' };
+  }
+
+  if (!data.name?.trim() || !data.username?.trim() || !data.password?.trim() || !effectiveParentId) {
+    return { success: false, error: 'Parent Partner, Name, Username and Password are required.' };
+  }
+
+  const existing = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { username: data.username.trim().toLowerCase() },
+        { email: data.email?.trim() ? data.email.trim().toLowerCase() : undefined },
+      ],
+    },
+  });
+
+  if (existing) {
+    return { success: false, error: 'A user with this username or email already exists.' };
+  }
+
+  const passwordHash = await bcrypt.hash(data.password.trim(), 10);
+
+  const childUser = await prisma.user.create({
+    data: {
+      name: data.name.trim(),
+      username: data.username.trim().toLowerCase(),
+      email: data.email?.trim() ? data.email.trim().toLowerCase() : null,
+      phone: data.phone?.trim() || null,
+      passwordHash,
+      role: 'CHANNEL',
+      accessPermission: 'VIEW', // Child channels are strictly VIEW only
+      parentChannelId: effectiveParentId,
+    },
+  });
+
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/users');
+  return { success: true, user: childUser };
+}
+
+export async function deleteChildChannelAccountAction(id: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized.' };
+
+  if (user.role !== 'SUPER_ADMIN') {
+    if (user.role === 'CHANNEL') {
+      const target = await prisma.user.findUnique({ where: { id }, select: { parentChannelId: true } });
+      if (!target || target.parentChannelId !== user.id) {
+        return { success: false, error: 'Unauthorized to delete this sub-account.' };
+      }
+    } else {
+      return { success: false, error: 'Super Admin or Channel Partner access required.' };
+    }
+  }
+
+  await prisma.user.delete({ where: { id } });
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/users');
+  return { success: true };
+}
+
+export async function updateChildChannelAccountAction(data: {
+  id: string;
+  name: string;
+  username: string;
+  email?: string;
+  phone?: string;
+  password?: string;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized.' };
+
+  const target = await prisma.user.findUnique({
+    where: { id: data.id },
+    select: { id: true, parentChannelId: true, role: true },
+  });
+
+  if (!target || !target.parentChannelId) {
+    return { success: false, error: 'Child account not found.' };
+  }
+
+  if (user.role !== 'SUPER_ADMIN') {
+    if (user.role === 'CHANNEL') {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { parentChannelId: true },
+      });
+      const effectiveParentId = dbUser?.parentChannelId || user.id;
+      if (target.parentChannelId !== effectiveParentId) {
+        return { success: false, error: 'Unauthorized to edit this child account.' };
+      }
+    } else {
+      return { success: false, error: 'Super Admin or Channel Partner access required.' };
+    }
+  }
+
+  if (!data.name?.trim() || !data.username?.trim()) {
+    return { success: false, error: 'Name and Username are required.' };
+  }
+
+  const existing = await prisma.user.findFirst({
+    where: {
+      id: { not: data.id },
+      OR: [
+        { username: data.username.trim().toLowerCase() },
+        { email: data.email?.trim() ? data.email.trim().toLowerCase() : undefined },
+      ],
+    },
+  });
+
+  if (existing) {
+    return { success: false, error: 'A user with this username or email already exists.' };
+  }
+
+  const updatePayload: any = {
+    name: data.name.trim(),
+    username: data.username.trim().toLowerCase(),
+    email: data.email?.trim() ? data.email.trim().toLowerCase() : null,
+    phone: data.phone?.trim() || null,
+    accessPermission: 'VIEW', // Child channels are strictly VIEW only!
+  };
+
+  if (data.password && data.password.trim()) {
+    updatePayload.passwordHash = await bcrypt.hash(data.password.trim(), 10);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: data.id },
+    data: updatePayload,
+  });
+
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/users');
+  return { success: true, user: updated };
+}
+
+// ==========================================
+// 25B. ROLES & ACCESS PERMISSIONS MASTER
+// ==========================================
+export interface RoleMatrixItem {
+  id: string;
+  name: string;
+  description?: string;
+  isSystem: boolean;
+  baseRole: 'SUPER_ADMIN' | 'TEAM_LEADER' | 'TEAM_MEMBER' | 'CHANNEL' | 'SALES' | 'OPERATION';
+  accessPermission: 'EDIT' | 'VIEW';
+  modules: {
+    cases: 'FULL' | 'VIEW' | 'ASSIGNED_ONLY' | 'NONE';
+    tasks: 'FULL' | 'ASSIGNED_ONLY' | 'NONE';
+    visits: 'FULL' | 'ASSIGNED_ONLY' | 'NONE';
+    hrms: 'FULL' | 'VIEW' | 'NONE';
+    salary: 'FULL' | 'MY_SLIP' | 'NONE';
+    checklist: 'FULL' | 'VIEW' | 'NONE';
+    settings: 'FULL' | 'VIEW' | 'NONE';
+  };
+  createdAt?: string;
+}
+
+const DEFAULT_ROLES_MATRIX: RoleMatrixItem[] = [
+  {
+    id: 'SUPER_ADMIN',
+    name: 'Super Admin',
+    description: 'Full unrestricted system administration & security controls',
+    isSystem: true,
+    baseRole: 'SUPER_ADMIN',
+    accessPermission: 'EDIT',
+    modules: {
+      cases: 'FULL',
+      tasks: 'FULL',
+      visits: 'FULL',
+      hrms: 'FULL',
+      salary: 'FULL',
+      checklist: 'FULL',
+      settings: 'FULL',
+    },
+  },
+  {
+    id: 'TEAM_LEADER',
+    name: 'Team Leader',
+    description: 'Oversee team members, case operations and task delegation',
+    isSystem: true,
+    baseRole: 'TEAM_LEADER',
+    accessPermission: 'EDIT',
+    modules: {
+      cases: 'FULL',
+      tasks: 'FULL',
+      visits: 'FULL',
+      hrms: 'VIEW',
+      salary: 'MY_SLIP',
+      checklist: 'VIEW',
+      settings: 'NONE',
+    },
+  },
+  {
+    id: 'TEAM_MEMBER',
+    name: 'Team Member',
+    description: 'Standard back-office staff managing cases and checklists',
+    isSystem: true,
+    baseRole: 'TEAM_MEMBER',
+    accessPermission: 'EDIT',
+    modules: {
+      cases: 'FULL',
+      tasks: 'ASSIGNED_ONLY',
+      visits: 'ASSIGNED_ONLY',
+      hrms: 'VIEW',
+      salary: 'MY_SLIP',
+      checklist: 'VIEW',
+      settings: 'NONE',
+    },
+  },
+  {
+    id: 'SALES',
+    name: 'Sales Lead',
+    description: 'Lead generation, sales intake and customer engagement',
+    isSystem: true,
+    baseRole: 'SALES',
+    accessPermission: 'EDIT',
+    modules: {
+      cases: 'FULL',
+      tasks: 'FULL',
+      visits: 'FULL',
+      hrms: 'VIEW',
+      salary: 'MY_SLIP',
+      checklist: 'VIEW',
+      settings: 'NONE',
+    },
+  },
+  {
+    id: 'OPERATION',
+    name: 'Operation Lead',
+    description: 'Loan verification, document validation and disbursements',
+    isSystem: true,
+    baseRole: 'OPERATION',
+    accessPermission: 'EDIT',
+    modules: {
+      cases: 'FULL',
+      tasks: 'FULL',
+      visits: 'FULL',
+      hrms: 'VIEW',
+      salary: 'MY_SLIP',
+      checklist: 'VIEW',
+      settings: 'NONE',
+    },
+  },
+  {
+    id: 'CHANNEL',
+    name: 'Channel Partner',
+    description: 'External broker/partner with restricted view-only case tracking',
+    isSystem: true,
+    baseRole: 'CHANNEL',
+    accessPermission: 'VIEW',
+    modules: {
+      cases: 'ASSIGNED_ONLY',
+      tasks: 'NONE',
+      visits: 'NONE',
+      hrms: 'NONE',
+      salary: 'NONE',
+      checklist: 'NONE',
+      settings: 'NONE',
+    },
+  },
+];
+
+export async function getRolesMatrixAction() {
+  try {
+    const setting = await prisma.systemSetting.findUnique({
+      where: { id: 'roles_matrix_config' },
+    });
+
+    let customRoles: RoleMatrixItem[] = [];
+    if (setting?.dashboardConfig) {
+      try {
+        customRoles = JSON.parse(setting.dashboardConfig);
+      } catch (e) {
+        customRoles = [];
+      }
+    }
+
+    // Merge system roles and custom roles
+    const allRoles = [...DEFAULT_ROLES_MATRIX];
+    for (const custom of customRoles) {
+      if (!allRoles.some((r) => r.id === custom.id)) {
+        allRoles.push(custom);
+      }
+    }
+
+    // Get active user count per role
+    const userRoleCounts = await prisma.user.groupBy({
+      by: ['role'],
+      _count: { id: true },
+    });
+
+    const countMap: Record<string, number> = {};
+    userRoleCounts.forEach((u) => {
+      countMap[u.role] = u._count.id;
+    });
+
+    return { success: true, roles: allRoles, userCounts: countMap };
+  } catch (error) {
+    console.error('Error in getRolesMatrixAction:', error);
+    return { success: true, roles: DEFAULT_ROLES_MATRIX, userCounts: {} };
+  }
+}
+
+export async function saveCustomRoleAction(roleData: {
+  id?: string;
+  name: string;
+  description?: string;
+  baseRole: 'SUPER_ADMIN' | 'TEAM_LEADER' | 'TEAM_MEMBER' | 'CHANNEL' | 'SALES' | 'OPERATION';
+  accessPermission: 'EDIT' | 'VIEW';
+  modules: {
+    cases: 'FULL' | 'VIEW' | 'ASSIGNED_ONLY' | 'NONE';
+    tasks: 'FULL' | 'ASSIGNED_ONLY' | 'NONE';
+    visits: 'FULL' | 'ASSIGNED_ONLY' | 'NONE';
+    hrms: 'FULL' | 'VIEW' | 'NONE';
+    salary: 'FULL' | 'MY_SLIP' | 'NONE';
+    checklist: 'FULL' | 'VIEW' | 'NONE';
+    settings: 'FULL' | 'VIEW' | 'NONE';
+  };
+}) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required to manage roles.' };
+  }
+
+  if (!roleData.name?.trim()) {
+    return { success: false, error: 'Role name is required.' };
+  }
+
+  const roleId = roleData.id || ('ROLE_' + roleData.name.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_'));
+
+  // Fetch current custom roles
+  const setting = await prisma.systemSetting.findUnique({
+    where: { id: 'roles_matrix_config' },
+  });
+
+  let customRoles: RoleMatrixItem[] = [];
+  if (setting?.dashboardConfig) {
+    try {
+      customRoles = JSON.parse(setting.dashboardConfig);
+    } catch (e) {
+      customRoles = [];
+    }
+  }
+
+  const newRole: RoleMatrixItem = {
+    id: roleId,
+    name: roleData.name.trim(),
+    description: roleData.description?.trim() || '',
+    isSystem: false,
+    baseRole: roleData.baseRole,
+    accessPermission: roleData.accessPermission,
+    modules: roleData.modules,
+    createdAt: new Date().toISOString(),
+  };
+
+  const existingIndex = customRoles.findIndex((r) => r.id === roleId);
+  if (existingIndex >= 0) {
+    customRoles[existingIndex] = newRole;
+  } else {
+    customRoles.push(newRole);
+  }
+
+  await prisma.systemSetting.upsert({
+    where: { id: 'roles_matrix_config' },
+    update: { dashboardConfig: JSON.stringify(customRoles) },
+    create: { id: 'roles_matrix_config', dashboardConfig: JSON.stringify(customRoles) },
+  });
+
+  revalidatePath('/admin/users/roles');
+  revalidatePath('/admin/users');
+  return { success: true, role: newRole };
+}
+
+export async function deleteCustomRoleAction(roleId: string) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  if (DEFAULT_ROLES_MATRIX.some((r) => r.id === roleId)) {
+    return { success: false, error: 'System default roles cannot be deleted.' };
+  }
+
+  const setting = await prisma.systemSetting.findUnique({
+    where: { id: 'roles_matrix_config' },
+  });
+
+  if (!setting?.dashboardConfig) {
+    return { success: true };
+  }
+
+  let customRoles: RoleMatrixItem[] = [];
+  try {
+    customRoles = JSON.parse(setting.dashboardConfig);
+  } catch (e) {
+    customRoles = [];
+  }
+
+  customRoles = customRoles.filter((r) => r.id !== roleId);
+
+  await prisma.systemSetting.update({
+    where: { id: 'roles_matrix_config' },
+    data: { dashboardConfig: JSON.stringify(customRoles) },
+  });
+
+  revalidatePath('/admin/users/roles');
+  revalidatePath('/admin/users');
+  return { success: true };
+}
+
+// ==========================================
+// 26. WORKING DAYS, LWP & AUTOMATED INCENTIVES
+// ==========================================
+export async function calculateAndCreateSalaryAction(data: {
+  userId: string;
+  month: string;
+  monthlySalary: number;
+  workingDays: number;
+  lwpDays: number;
+  allowances: number;
+  deductions: number;
+  paymentStatus: string;
+  remarks?: string;
+}) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required.' };
+  }
+
+  if (!data.userId || data.monthlySalary <= 0 || data.workingDays <= 0) {
+    return { success: false, error: 'Valid employee, monthly salary, and working days are required.' };
+  }
+
+  const effectivePaidDays = Math.max(0, data.workingDays - (data.lwpDays || 0));
+  const proratedBasic = Math.round((data.monthlySalary / data.workingDays) * effectivePaidDays);
+
+  // Fetch automatic stage-linked incentives earned by this user in this month
+  const assignedCases = await prisma.case.findMany({
+    where: {
+      OR: [{ salesUserId: data.userId }, { operationUserId: data.userId }, { createdById: data.userId }],
+    },
+    select: { stage: true },
+  });
+
+  // Sum up incentives based on workflow stages configured
+  const stages = await prisma.workflowStageMaster.findMany({
+    where: { isActive: true },
+  });
+
+  let autoIncentives = 0;
+  for (const c of assignedCases) {
+    const matchedStage = stages.find(s => s.stageNumber === c.stage);
+    if (matchedStage && matchedStage.incentiveAmount > 0) {
+      autoIncentives += matchedStage.incentiveAmount;
+    }
+  }
+
+  const netPayable = Math.max(0, proratedBasic + (data.allowances || 0) + autoIncentives - (data.deductions || 0));
+
+  const record = await prisma.salaryRecord.create({
+    data: {
+      userId: data.userId,
+      month: data.month,
+      basicSalary: proratedBasic,
+      allowances: data.allowances || 0,
+      deductions: data.deductions || 0,
+      workingDays: data.workingDays,
+      paidDays: effectivePaidDays,
+      lwpDays: data.lwpDays || 0,
+      incentiveEarned: autoIncentives,
+      netPayable,
+      paymentStatus: data.paymentStatus || 'UNPAID',
+      paidDate: data.paymentStatus === 'PAID' ? new Date() : null,
+      remarks: data.remarks?.trim() || (autoIncentives > 0 ? `Includes ₹${autoIncentives} stage-linked incentive` : null),
+    },
+  });
+
+  revalidatePath('/salary');
+  return { success: true, record };
+}
+
+// ==========================================
+// 27. FORGOT PASSWORD & OLD PASSWORD VERIFICATION
+// ==========================================
+export async function requestPasswordResetAction(emailOrUsername: string) {
+  if (!emailOrUsername?.trim()) {
+    return { success: false, error: 'Please enter your registered Email address or Username.' };
+  }
+
+  const query = emailOrUsername.trim().toLowerCase();
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { email: query },
+        { username: query },
+      ],
+    },
+    select: { id: true, email: true, name: true },
+  });
+
+  if (!user || !user.email) {
+    // For privacy, don't disclose non-existence, but give friendly guidance
+    return { success: false, error: 'No account found with this email/username or account has no email registered. Please contact Super Admin.' };
+  }
+
+  const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour expiry
+
+  await prisma.passwordResetToken.create({
+    data: {
+      email: user.email,
+      token,
+      expiresAt,
+    },
+  });
+
+  return {
+    success: true,
+    message: `Password reset request generated for ${user.email}. Use your reset token or link to update your password.`,
+    token, // Provided for seamless local reset
+  };
+}
+
+export async function resetPasswordWithTokenAction(token: string, newPassword: string) {
+  if (!token?.trim() || !newPassword || newPassword.length < 6) {
+    return { success: false, error: 'Token and a password of at least 6 characters are required.' };
+  }
+
+  const resetToken = await prisma.passwordResetToken.findUnique({
+    where: { token: token.trim() },
+  });
+
+  if (!resetToken || resetToken.expiresAt < new Date()) {
+    return { success: false, error: 'Invalid or expired password reset token.' };
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+
+  await prisma.user.updateMany({
+    where: { email: resetToken.email },
+    data: { passwordHash },
+  });
+
+  await prisma.passwordResetToken.delete({ where: { token: token.trim() } });
+
+  return { success: true, message: 'Password has been reset successfully! You can now log in.' };
+}
+
+export async function verifyAndChangePasswordAction(existingPassword: string, newPassword: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (!existingPassword || !newPassword || newPassword.length < 6) {
+    return { success: false, error: 'Please provide existing password and a new password with at least 6 characters.' };
+  }
+
+  const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
+  if (!dbUser || !dbUser.passwordHash) {
+    return { success: false, error: 'User record not found.' };
+  }
+
+  const isValid = await bcrypt.compare(existingPassword, dbUser.passwordHash);
+  if (!isValid) {
+    return { success: false, error: 'Existing password is incorrect. Verification failed.' };
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash: newHash },
+  });
+
+  return { success: true, message: 'Password updated successfully!' };
+}
+
+// ==========================================
+// 28. DEDUPLICATED CLIENTS & CO-APPLICANTS DIRECTORY
+// ==========================================
+export interface UniqueClientItem {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string | null;
+  dob?: Date | string | null;
+  gender?: string | null;
+  city?: string | null;
+  state?: string | null;
+  caseCount: number;
+  roles: ('PRIMARY_APPLICANT' | 'CO_APPLICANT')[];
+  primaryApplicantFor: string[];
+  coApplicantFor: string[];
+  linkedCases: Array<{
+    id: string;
+    clientRole: 'PRIMARY_APPLICANT' | 'CO_APPLICANT';
+    product: string;
+    subProduct?: string | null;
+    stage: number;
+    status: string;
+    createdAt: Date | string;
+    coApplicants?: string[];
+    primaryClientName?: string;
+  }>;
+  latestActivityDate: Date | string;
+}
+
+export async function getClientsDirectoryAction() {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized', clients: [] };
+
+  if (user.role === 'CHANNEL') {
+    return { success: false, error: 'Permission denied: Channel partners cannot access client directory.', clients: [] };
+  }
+
+  const cases = await prisma.case.findMany({
+    select: {
+      id: true,
+      clientName: true,
+      mobile: true,
+      email: true,
+      gender: true,
+      clientDob: true,
+      clientState: true,
+      clientCity: true,
+      product: true,
+      subProduct: true,
+      stage: true,
+      status: true,
+      coApplicantsData: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const clientMap = new Map<string, UniqueClientItem>();
+
+  for (const c of cases) {
+    // 1. Process Main Client
+    const normPhone = c.mobile ? c.mobile.replace(/\D/g, '').slice(-10) : '';
+    const key = normPhone ? `phone_${normPhone}` : (c.email ? `email_${c.email.trim().toLowerCase()}` : `name_${c.clientName.trim().toLowerCase()}`);
+
+    let coAppNames: string[] = [];
+    if (c.coApplicantsData) {
+      try {
+        const parsed = JSON.parse(c.coApplicantsData);
+        if (Array.isArray(parsed)) {
+          coAppNames = parsed.map((ca: any) => ca.name).filter(Boolean);
+        }
+      } catch (e) {}
+    }
+
+    const linkedCaseInfo = {
+      id: c.id,
+      clientRole: 'PRIMARY_APPLICANT' as const,
+      product: c.product,
+      subProduct: c.subProduct,
+      stage: c.stage,
+      status: c.status,
+      createdAt: c.createdAt,
+      coApplicants: coAppNames,
+    };
+
+    if (clientMap.has(key)) {
+      const existing = clientMap.get(key)!;
+      existing.caseCount += 1;
+      if (!existing.roles.includes('PRIMARY_APPLICANT')) {
+        existing.roles.push('PRIMARY_APPLICANT');
+      }
+      if (!existing.primaryApplicantFor.includes(c.product)) {
+        existing.primaryApplicantFor.push(c.product);
+      }
+      existing.linkedCases.push(linkedCaseInfo);
+      if (!existing.email && c.email) existing.email = c.email;
+      if (!existing.dob && c.clientDob) existing.dob = c.clientDob;
+      if (!existing.city && c.clientCity) existing.city = c.clientCity;
+      if (!existing.state && c.clientState) existing.state = c.clientState;
+      if (!existing.gender && c.gender) existing.gender = c.gender;
+    } else {
+      clientMap.set(key, {
+        id: `client_${key}`,
+        name: c.clientName,
+        phone: normPhone || c.mobile,
+        email: c.email || null,
+        dob: c.clientDob || null,
+        gender: c.gender || null,
+        city: c.clientCity || null,
+        state: c.clientState || null,
+        caseCount: 1,
+        roles: ['PRIMARY_APPLICANT'],
+        primaryApplicantFor: [c.product],
+        coApplicantFor: [],
+        linkedCases: [linkedCaseInfo],
+        latestActivityDate: c.createdAt,
+      });
+    }
+
+    // 2. Process Co-Applicants from this case
+    if (c.coApplicantsData) {
+      try {
+        const coApps = JSON.parse(c.coApplicantsData);
+        if (Array.isArray(coApps)) {
+          for (const coApp of coApps) {
+            if (!coApp || !coApp.name) continue;
+            const coPhone = coApp.mobile ? String(coApp.mobile).replace(/\D/g, '').slice(-10) : '';
+            const coKey = coPhone ? `phone_${coPhone}` : (coApp.email ? `email_${coApp.email.trim().toLowerCase()}` : `name_${coApp.name.trim().toLowerCase()}`);
+
+            const coLinkedCase = {
+              id: c.id,
+              clientRole: 'CO_APPLICANT' as const,
+              product: c.product,
+              subProduct: c.subProduct,
+              stage: c.stage,
+              status: c.status,
+              createdAt: c.createdAt,
+              primaryClientName: c.clientName,
+            };
+
+            if (clientMap.has(coKey)) {
+              const existing = clientMap.get(coKey)!;
+              const alreadyLinked = existing.linkedCases.some((lc) => lc.id === c.id);
+              if (!alreadyLinked) {
+                existing.caseCount += 1;
+                existing.linkedCases.push(coLinkedCase);
+              }
+              if (!existing.roles.includes('CO_APPLICANT')) {
+                existing.roles.push('CO_APPLICANT');
+              }
+              if (!existing.coApplicantFor.includes(c.clientName)) {
+                existing.coApplicantFor.push(c.clientName);
+              }
+              if (!existing.email && coApp.email) existing.email = coApp.email;
+              if (!existing.dob && coApp.dob) existing.dob = coApp.dob;
+              if (!existing.city && coApp.city) existing.city = coApp.city;
+              if (!existing.state && coApp.state) existing.state = coApp.state;
+              if (!existing.gender && coApp.gender) existing.gender = coApp.gender;
+            } else {
+              clientMap.set(coKey, {
+                id: `coapp_${coKey}`,
+                name: coApp.name,
+                phone: coPhone || coApp.mobile || 'N/A',
+                email: coApp.email || null,
+                dob: coApp.dob || null,
+                gender: coApp.gender || null,
+                city: coApp.city || null,
+                state: coApp.state || null,
+                caseCount: 1,
+                roles: ['CO_APPLICANT'],
+                primaryApplicantFor: [],
+                coApplicantFor: [c.clientName],
+                linkedCases: [coLinkedCase],
+                latestActivityDate: c.createdAt,
+              });
+            }
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  const clients = Array.from(clientMap.values()).sort(
+    (a, b) => b.caseCount - a.caseCount || a.name.localeCompare(b.name)
+  );
+
+  return { success: true, clients };
+}
+
+// ==========================================
+// 30. NOTIFICATIONS ACTIONS & AJAX POLLING
+// ==========================================
+export async function getNotificationsAction() {
+  const user = await getAuthUser();
+  if (!user) return { success: false, notifications: [], unreadCount: 0 };
+
+  // Fetch notifications targeted to user or broadcast
+  const notifications = await prisma.notification.findMany({
+    where: {
+      OR: [
+        { userId: user.id },
+        {
+          userId: null,
+          OR: [{ role: null }, { role: user.role }],
+        },
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 40,
+  });
+
+  // If no notifications exist in DB at all, auto-seed a welcoming/live notification from recent cases
+  if (notifications.length === 0) {
+    const recentCase = await prisma.case.findFirst({
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true, clientName: true, product: true, stage: true },
+    });
+
+    if (recentCase) {
+      await prisma.notification.create({
+        data: {
+          title: 'System Active: Real-Time Alerts On',
+          message: `Case pipeline connected. Recent case: ${recentCase.clientName} (${recentCase.product}) is at stage "${recentCase.stage}".`,
+          type: 'INFO',
+          link: `/cases/${recentCase.id}`,
+        },
+      });
+
+      const seeded = await prisma.notification.findMany({
+        where: {
+          OR: [
+            { userId: user.id },
+            {
+              userId: null,
+              OR: [{ role: null }, { role: user.role }],
+            },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 40,
+      });
+
+      return {
+        success: true,
+        notifications: seeded,
+        unreadCount: seeded.filter((n) => !n.isRead).length,
+      };
+    }
+  }
+
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
+  return { success: true, notifications, unreadCount };
+}
+
+export async function markNotificationAsReadAction(id?: string, all?: boolean) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (all) {
+    await prisma.notification.updateMany({
+      where: {
+        OR: [
+          { userId: user.id },
+          {
+            userId: null,
+            OR: [{ role: null }, { role: user.role }],
+          },
+        ],
+        isRead: false,
+      },
+      data: { isRead: true },
+    });
+  } else if (id) {
+    await prisma.notification.update({
+      where: { id },
+      data: { isRead: true },
+    });
+  }
+
+  return { success: true };
+}
+
+export async function createNotificationAction(data: {
+  userId?: string | null;
+  role?: any;
+  title: string;
+  message: string;
+  type?: 'INFO' | 'SUCCESS' | 'WARNING' | 'CASE_UPDATE' | 'TASK_UPDATE';
+  link?: string | null;
+}) {
+  try {
+    const notification = await prisma.notification.create({
+      data: {
+        userId: data.userId || null,
+        role: data.role || null,
+        title: data.title,
+        message: data.message,
+        type: data.type || 'INFO',
+        link: data.link || null,
+      },
+    });
+    return { success: true, notification };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+
+
 
 
 

@@ -5,10 +5,15 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   createTaskAction,
+  createTaskWithMultipleAssigneesAction,
   updateTaskStatusAction,
   updateTaskAction,
   deleteTaskAction,
   addTaskCommentAction,
+  editTaskCommentAction,
+  createSelfTaskAction,
+  updateTaskEisenhowerAction,
+  logTaskTimeSpentAction,
 } from '@/app/actions';
 import {
   CheckSquare,
@@ -32,6 +37,14 @@ import {
   Send,
   Briefcase,
   Eye,
+  LayoutGrid,
+  List,
+  Timer,
+  Check,
+  Zap,
+  StickyNote,
+  Tag,
+  ShieldAlert,
 } from 'lucide-react';
 
 export interface TaskItem {
@@ -41,8 +54,15 @@ export interface TaskItem {
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   status: 'PENDING' | 'IN_PROGRESS' | 'IN_REVIEW' | 'COMPLETED' | 'CANCELLED';
   dueDate: string | null;
+  dueTime?: string | null;
   assignedAt: string;
   completedAt: string | null;
+  completedById?: string | null;
+  completedBy?: {
+    id: string;
+    name: string;
+    role: string;
+  } | null;
   assignedToId: string;
   assignedTo: {
     id: string;
@@ -50,6 +70,30 @@ export interface TaskItem {
     role: string;
     username: string | null;
   };
+  isUrgent?: boolean;
+  isImportant?: boolean;
+  isSelfTask?: boolean;
+  timeSpentMinutes?: number;
+  assignees?: Array<{
+    id: string;
+    userId: string;
+    user: {
+      id: string;
+      name: string;
+      role: string;
+    };
+  }>;
+  activityLogs?: Array<{
+    id: string;
+    action: string;
+    details: string;
+    createdAt: string;
+    user: {
+      id: string;
+      name: string;
+      role: string;
+    };
+  }>;
   createdById: string;
   createdBy: {
     id: string;
@@ -67,6 +111,8 @@ export interface TaskItem {
   comments: Array<{
     id: string;
     content: string;
+    isEdited?: boolean;
+    editedAt?: string | null;
     createdAt: string;
     user: {
       id: string;
@@ -104,6 +150,7 @@ interface TaskManagementClientProps {
     id: string;
     name: string;
     role: string;
+    isTeamLeader?: boolean;
   };
 }
 
@@ -158,42 +205,71 @@ export default function TaskManagementClient({
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
   const [assigneeFilter, setAssigneeFilter] = useState('ALL');
+  const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
 
   // Modals & Drawers
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isSelfModalOpen, setIsSelfModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null);
   const [isEditingTask, setIsEditingTask] = useState(false);
+
+  // Self-Task form state
+  const [selfTitle, setSelfTitle] = useState('');
+  const [selfDesc, setSelfDesc] = useState('');
+  const [selfDueDate, setSelfDueDate] = useState('');
+  const [selfIsUrgent, setSelfIsUrgent] = useState(false);
+  const [selfIsImportant, setSelfIsImportant] = useState(false);
 
   // Create form state
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newPriority, setNewPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'>('MEDIUM');
+  const [newIsUrgent, setNewIsUrgent] = useState(false);
+  const [newIsImportant, setNewIsImportant] = useState(false);
   const [newAssigneeId, setNewAssigneeId] = useState(assignableUsers[0]?.id || '');
+  const [newAssigneeIds, setNewAssigneeIds] = useState<string[]>(assignableUsers[0]?.id ? [assignableUsers[0].id] : []);
   const [newDueDate, setNewDueDate] = useState('');
+  const [newDueTime, setNewDueTime] = useState('');
   const [newCaseId, setNewCaseId] = useState('');
 
   // Edit form state
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editPriority, setEditPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'>('MEDIUM');
+  const [editIsUrgent, setEditIsUrgent] = useState(false);
+  const [editIsImportant, setEditIsImportant] = useState(false);
   const [editStatus, setEditStatus] = useState<TaskItem['status']>('PENDING');
   const [editAssigneeId, setEditAssigneeId] = useState('');
+  const [editAssigneeIds, setEditAssigneeIds] = useState<string[]>([]);
   const [editDueDate, setEditDueDate] = useState('');
+  const [editDueTime, setEditDueTime] = useState('');
   const [editCaseId, setEditCaseId] = useState('');
+
+  // Time logging in drawer
+  const [timeMinutesInput, setTimeMinutesInput] = useState('');
+  const [loggingTime, setLoggingTime] = useState(false);
 
   // Comment state
   const [commentText, setCommentText] = useState('');
+  const [editCommentId, setEditCommentId] = useState<string | null>(null);
+  const [editCommentText, setEditCommentText] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Meeting Feedback: Only Super Admin and Team Leaders can assign tasks to others
   const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
+  const isTeamLeader = currentUser.role === 'TEAM_LEADER' || currentUser.role === 'SALES' || currentUser.role === 'OPERATION' || !!currentUser.isTeamLeader;
+  const canAssignTask = isSuperAdmin || isTeamLeader;
 
   // Filter tasks
   const filteredTasks = useMemo(() => {
     return initialTasks.filter((task) => {
       // Tab filter
-      if (activeTab === 'my' && task.assignedToId !== currentUser.id) return false;
+      if (activeTab === 'my') {
+        const isAssignedToMe = task.assignedToId === currentUser.id || task.assignees?.some((a) => a.userId === currentUser.id);
+        if (!isAssignedToMe) return false;
+      }
       if (activeTab === 'assigned_by_me' && task.createdById !== currentUser.id) return false;
 
       // Status filter
@@ -203,15 +279,20 @@ export default function TaskManagementClient({
       if (priorityFilter !== 'ALL' && task.priority !== priorityFilter) return false;
 
       // Assignee filter
-      if (assigneeFilter !== 'ALL' && task.assignedToId !== assigneeFilter) return false;
+      if (assigneeFilter !== 'ALL') {
+        const hasAssignee = task.assignedToId === assigneeFilter || task.assignees?.some((a) => a.userId === assigneeFilter);
+        if (!hasAssignee) return false;
+      }
 
       // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const titleMatch = task.title.toLowerCase().includes(q);
+        const titleMatch = (task.title || '').toLowerCase().includes(q);
         const descMatch = task.description?.toLowerCase().includes(q);
-        const assigneeMatch = task.assignedTo.name.toLowerCase().includes(q);
-        const caseMatch = task.case?.clientName.toLowerCase().includes(q);
+        const assigneeMatch =
+          (task.assignedTo?.name || '').toLowerCase().includes(q) ||
+          task.assignees?.some((a) => a.user?.name?.toLowerCase().includes(q));
+        const caseMatch = (task.case?.clientName || '').toLowerCase().includes(q);
         if (!titleMatch && !descMatch && !assigneeMatch && !caseMatch) return false;
       }
 
@@ -260,20 +341,102 @@ export default function TaskManagementClient({
     }
   };
 
-  // Handle Create Task
-  const handleCreateTask = async (e: React.FormEvent) => {
+  // Handle Create Self Task
+  const handleCreateSelfTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim() || !newAssigneeId) return;
+    if (!selfTitle.trim()) return;
 
     setLoading(true);
     setErrorMsg('');
 
-    const res = await createTaskAction({
+    const res = await createSelfTaskAction({
+      title: selfTitle.trim(),
+      description: selfDesc.trim() || undefined,
+      dueDate: selfDueDate || undefined,
+      isUrgent: selfIsUrgent,
+      isImportant: selfIsImportant,
+    });
+
+    setLoading(false);
+    if (res.success) {
+      setIsSelfModalOpen(false);
+      setSelfTitle('');
+      setSelfDesc('');
+      setSelfDueDate('');
+      setSelfIsUrgent(false);
+      setSelfIsImportant(false);
+      router.refresh();
+    } else {
+      setErrorMsg(res.error || 'Failed to create self task');
+    }
+  };
+
+  // Handle Eisenhower Quick Toggle
+  const handleToggleEisenhower = async (
+    taskId: string,
+    currentUrgent: boolean,
+    currentImportant: boolean,
+    field: 'urgent' | 'important'
+  ) => {
+    const newUrgent = field === 'urgent' ? !currentUrgent : currentUrgent;
+    const newImportant = field === 'important' ? !currentImportant : currentImportant;
+
+    const res = await updateTaskEisenhowerAction(taskId, {
+      isUrgent: newUrgent,
+      isImportant: newImportant,
+    });
+
+    if (res.success) {
+      if (selectedTask && selectedTask.id === taskId) {
+        setSelectedTask((prev) =>
+          prev ? { ...prev, isUrgent: newUrgent, isImportant: newImportant } : null
+        );
+      }
+      router.refresh();
+    } else {
+      alert(res.error || 'Failed to update Eisenhower flags');
+    }
+  };
+
+  // Handle Log Time Spent
+  const handleLogTimeSpent = async (taskId: string, minutes: number) => {
+    if (minutes <= 0) return;
+    setLoggingTime(true);
+
+    const res = await logTaskTimeSpentAction(taskId, minutes);
+    setLoggingTime(false);
+
+    if (res.success) {
+      if (selectedTask && selectedTask.id === taskId) {
+        setSelectedTask((prev) =>
+          prev ? { ...prev, timeSpentMinutes: (prev.timeSpentMinutes || 0) + minutes } : null
+        );
+      }
+      setTimeMinutesInput('');
+      router.refresh();
+    } else {
+      alert(res.error || 'Failed to log time spent');
+    }
+  };
+
+  // Handle Create Task
+  const handleCreateTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetAssignees = newAssigneeIds.length > 0 ? newAssigneeIds : (newAssigneeId ? [newAssigneeId] : []);
+    if (!newTitle.trim() || targetAssignees.length === 0) return;
+
+    setLoading(true);
+    setErrorMsg('');
+
+    const res = await createTaskWithMultipleAssigneesAction({
       title: newTitle,
       description: newDesc || undefined,
       priority: newPriority,
+      isUrgent: newIsUrgent,
+      isImportant: newIsImportant,
       dueDate: newDueDate || undefined,
-      assignedToId: newAssigneeId,
+      dueTime: newDueTime || undefined,
+      assigneeIds: targetAssignees,
       caseId: newCaseId || undefined,
     });
 
@@ -283,10 +446,32 @@ export default function TaskManagementClient({
       setNewTitle('');
       setNewDesc('');
       setNewDueDate('');
+      setNewDueTime('');
       setNewCaseId('');
+      setNewIsUrgent(false);
+      setNewIsImportant(false);
       router.refresh();
     } else {
       setErrorMsg(res.error || 'Failed to create task');
+    }
+  };
+
+  // Handle Edit Comment
+  const handleEditComment = async (commentId: string) => {
+    if (!editCommentText.trim()) return;
+    const res = await editTaskCommentAction(commentId, editCommentText);
+    if (res.success && selectedTask) {
+      setSelectedTask({
+        ...selectedTask,
+        comments: selectedTask.comments.map((c) =>
+          c.id === commentId ? { ...c, content: editCommentText.trim() } : c
+        ),
+      });
+      setEditCommentId(null);
+      setEditCommentText('');
+      router.refresh();
+    } else {
+      alert(res.error || 'Failed to edit comment');
     }
   };
 
@@ -296,16 +481,76 @@ export default function TaskManagementClient({
     setEditDesc(task.description || '');
     setEditPriority(task.priority);
     setEditStatus(task.status);
-    setEditAssigneeId(task.assignedToId);
+    const existingAssigneeIds =
+      task.assignees && task.assignees.length > 0
+        ? task.assignees.map((a) => a.userId)
+        : task.assignedToId
+        ? [task.assignedToId]
+        : assignableUsers[0]?.id
+        ? [assignableUsers[0].id]
+        : [];
+    setEditAssigneeIds(existingAssigneeIds);
+    setEditAssigneeId(task.assignedToId || assignableUsers[0]?.id || '');
     setEditDueDate(task.dueDate ? new Date(task.dueDate).toISOString().slice(0, 10) : '');
+    setEditDueTime(task.dueTime || '');
     setEditCaseId(task.caseId || '');
+    setEditIsUrgent(!!task.isUrgent);
+    setEditIsImportant(!!task.isImportant);
     setIsEditingTask(true);
+  };
+
+  // Quick helper to extend/increase deadline by hours or days
+  const extendEditDeadline = (type: 'hour' | 'day', amount: number) => {
+    let base: Date;
+    if (editDueDate) {
+      const parts = editDueDate.split('-').map(Number);
+      base = new Date(parts[0], parts[1] - 1, parts[2]);
+    } else {
+      base = new Date();
+    }
+
+    if (editDueTime) {
+      const [h, m] = editDueTime.split(':').map(Number);
+      if (!isNaN(h) && !isNaN(m)) {
+        base.setHours(h, m, 0, 0);
+      }
+    } else {
+      // Default to 18:00 (6 PM) if no time set yet
+      base.setHours(18, 0, 0, 0);
+    }
+
+    if (type === 'day') {
+      base.setDate(base.getDate() + amount);
+    } else if (type === 'hour') {
+      base.setHours(base.getHours() + amount);
+    }
+
+    const yyyy = base.getFullYear();
+    const mm = String(base.getMonth() + 1).padStart(2, '0');
+    const dd = String(base.getDate()).padStart(2, '0');
+    const hh = String(base.getHours()).padStart(2, '0');
+    const min = String(base.getMinutes()).padStart(2, '0');
+
+    setEditDueDate(`${yyyy}-${mm}-${dd}`);
+    setEditDueTime(`${hh}:${min}`);
   };
 
   // Handle Update Task
   const handleUpdateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTask || !editTitle.trim()) return;
+
+    const targetAssignees =
+      editAssigneeIds.length > 0
+        ? editAssigneeIds
+        : editAssigneeId
+        ? [editAssigneeId]
+        : [];
+
+    if (targetAssignees.length === 0) {
+      setErrorMsg('Please select at least one staff member.');
+      return;
+    }
 
     setLoading(true);
     setErrorMsg('');
@@ -315,8 +560,12 @@ export default function TaskManagementClient({
       description: editDesc || undefined,
       priority: editPriority,
       status: editStatus,
+      isUrgent: editIsUrgent,
+      isImportant: editIsImportant,
       dueDate: editDueDate || null,
-      assignedToId: editAssigneeId,
+      dueTime: editDueTime || null,
+      assignedToId: targetAssignees[0],
+      assigneeIds: targetAssignees,
       caseId: editCaseId || null,
     });
 
@@ -371,7 +620,7 @@ export default function TaskManagementClient({
 
   return (
     <div className="space-y-6">
-      {/* Header & Create Button */}
+      {/* Header & Create Buttons */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
         <div>
           <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center gap-2.5">
@@ -379,17 +628,32 @@ export default function TaskManagementClient({
             Task Management Hub
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Assign, track, and monitor team activities with live elapsed time tracking and status progression
+            Assign, track, and prioritize team & personal activities with live elapsed time, time-spent tracking and Eisenhower matrix
           </p>
         </div>
 
-        <button
-          onClick={() => setIsCreateModalOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-sky-500/20 transition-all shrink-0 cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          Assign New Task
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Personal Self-Task button available to ALL staff */}
+          <button
+            type="button"
+            onClick={() => setIsSelfModalOpen(true)}
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 font-bold text-xs transition-all shrink-0 cursor-pointer shadow-sm"
+          >
+            <StickyNote className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            + Personal Self-Task
+          </button>
+
+          {canAssignTask && (
+            <button
+              type="button"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-sky-500/20 transition-all shrink-0 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              Assign Team Task
+            </button>
+          )}
+        </div>
       </div>
 
       {/* KPI Overview Cards */}
@@ -433,10 +697,11 @@ export default function TaskManagementClient({
 
       {/* Tabs & Filters Bar */}
       <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
-        {/* Navigation Tabs */}
+        {/* Navigation Tabs & View Mode Toggle */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
           <div className="inline-flex rounded-xl p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-semibold">
             <button
+              type="button"
               onClick={() => setActiveTab('all')}
               className={`px-3 py-1.5 rounded-lg transition-all ${
                 activeTab === 'all'
@@ -447,6 +712,7 @@ export default function TaskManagementClient({
               All Team Tasks ({initialTasks.length})
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('my')}
               className={`px-3 py-1.5 rounded-lg transition-all ${
                 activeTab === 'my'
@@ -454,9 +720,10 @@ export default function TaskManagementClient({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              My Tasks ({initialTasks.filter((t) => t.assignedToId === currentUser.id).length})
+              My Tasks ({initialTasks.filter((t) => t.assignedToId === currentUser.id || t.assignees?.some((a) => a.userId === currentUser.id)).length})
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('assigned_by_me')}
               className={`px-3 py-1.5 rounded-lg transition-all ${
                 activeTab === 'assigned_by_me'
@@ -468,8 +735,36 @@ export default function TaskManagementClient({
             </button>
           </div>
 
-          <div className="text-xs text-slate-500 font-medium">
-            Showing <strong className="text-slate-900 dark:text-white">{filteredTasks.length}</strong> tasks
+          <div className="flex items-center gap-3">
+            {/* View Mode Toggle: List vs Eisenhower Matrix */}
+            <div className="inline-flex rounded-xl p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setViewMode('list')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  viewMode === 'list'
+                    ? 'bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-sm font-bold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <List className="w-3.5 h-3.5" /> List View
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('matrix')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  viewMode === 'matrix'
+                    ? 'bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-sm font-bold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" /> Eisenhower Matrix
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-500 font-medium">
+              Showing <strong className="text-slate-900 dark:text-white">{filteredTasks.length}</strong> tasks
+            </div>
           </div>
         </div>
 
@@ -536,304 +831,981 @@ export default function TaskManagementClient({
         </div>
       </div>
 
-      {/* Task List / Matrix */}
-      <div className="space-y-3">
-        {filteredTasks.length === 0 ? (
-          <div className="p-12 text-center glass-panel rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-500 space-y-2">
-            <CheckSquare className="w-8 h-8 mx-auto text-slate-400 opacity-50" />
-            <p className="text-sm font-semibold">No tasks found matching current filters.</p>
-            <p className="text-xs text-slate-400">Click &quot;Assign New Task&quot; above to create one.</p>
+      {/* Task List or Eisenhower Matrix */}
+      {viewMode === 'matrix' ? (
+        <div className="space-y-4">
+          <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 dark:text-slate-400">
+            <span className="font-semibold flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-500" />
+              <strong>Eisenhower Time Management Matrix</strong> — Categorizes tasks by Urgency and Importance
+            </span>
+            <span className="text-[11px] font-mono text-slate-500">
+              Click Urgent / Important chips to seamlessly shift tasks between quadrants
+            </span>
           </div>
-        ) : (
-          filteredTasks.map((task) => {
-            const priorityInfo = priorityConfig[task.priority] || priorityConfig.MEDIUM;
-            const statusInfo = statusConfig[task.status] || statusConfig.PENDING;
-            const PriorityIcon = priorityInfo.icon;
-            const isOverdue =
-              task.dueDate &&
-              task.status !== 'COMPLETED' &&
-              task.status !== 'CANCELLED' &&
-              new Date(task.dueDate) < new Date();
 
-            return (
-              <div
-                key={task.id}
-                className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-sky-300 dark:hover:border-sky-700/60 transition-all shadow-sm space-y-3"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  {/* Title & Description */}
-                  <div className="space-y-1 flex-1 min-w-[240px]">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3
-                        onClick={() => setSelectedTask(task)}
-                        className="text-sm font-bold text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-sky-400 cursor-pointer transition-colors"
-                      >
-                        {task.title}
-                      </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Quadrant 1: Urgent & Important (DO FIRST) */}
+            <div className="glass-panel p-4 rounded-2xl border-2 border-rose-300 dark:border-rose-900/60 bg-rose-50/20 dark:bg-rose-950/10 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-rose-200 dark:border-rose-900/40">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white uppercase">Q1</span>
+                  <h3 className="text-sm font-bold text-rose-900 dark:text-rose-200 flex items-center gap-1.5">
+                    <Flame className="w-4 h-4 text-rose-600" />
+                    Do First (Urgent & Important)
+                  </h3>
+                </div>
+                <span className="text-xs font-extrabold text-rose-700 dark:text-rose-400 bg-rose-100 dark:bg-rose-900/50 px-2.5 py-0.5 rounded-full">
+                  {filteredTasks.filter((t) => (t.isUrgent && t.isImportant) || t.priority === 'URGENT').length}
+                </span>
+              </div>
+              <p className="text-[11px] text-rose-700/80 dark:text-rose-400/80">Crises, urgent approvals, critical deadlines</p>
 
-                      {/* Priority Badge */}
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${priorityInfo.bg} ${priorityInfo.text} ${priorityInfo.border}`}
-                      >
-                        <PriorityIcon className="w-2.5 h-2.5" />
-                        {priorityInfo.label}
-                      </span>
+              <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+                {filteredTasks.filter((t) => (t.isUrgent && t.isImportant) || t.priority === 'URGENT').length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">No tasks in Q1 (Clear!)</p>
+                ) : (
+                  filteredTasks.filter((t) => (t.isUrgent && t.isImportant) || t.priority === 'URGENT').map((task) => (
+                    <div
+                      key={task.id}
+                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 shadow-sm space-y-2 hover:border-rose-400 transition-all"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4
+                          onClick={() => setSelectedTask(task)}
+                          className="text-xs font-bold text-slate-900 dark:text-white hover:text-rose-600 cursor-pointer line-clamp-2"
+                        >
+                          {task.title}
+                        </h4>
+                        <select
+                          value={task.status}
+                          onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
+                        >
+                          <option value="PENDING">Pending</option>
+                          <option value="IN_PROGRESS">In Progress</option>
+                          <option value="IN_REVIEW">Review</option>
+                          <option value="COMPLETED">Completed</option>
+                          <option value="CANCELLED">Cancelled</option>
+                        </select>
+                      </div>
 
-                      {/* Overdue Badge */}
-                      {isOverdue && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 animate-pulse">
-                          <Flame className="w-2.5 h-2.5" />
-                          Overdue
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {task.assignedTo?.name || 'Unassigned'}
                         </span>
+                        <div className="flex items-center gap-1 font-mono">
+                          <Timer className="w-3 h-3 text-indigo-500" />
+                          <span>{task.timeSpentMinutes || 0}m</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                          >
+                            Urgent
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                          >
+                            Important
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Quadrant 2: Not Urgent & Important (SCHEDULE) */}
+            <div className="glass-panel p-4 rounded-2xl border-2 border-emerald-300 dark:border-emerald-900/60 bg-emerald-50/20 dark:bg-emerald-950/10 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-emerald-200 dark:border-emerald-900/40">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white uppercase">Q2</span>
+                  <h3 className="text-sm font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-emerald-600" />
+                    Schedule (Important, Not Urgent)
+                  </h3>
+                </div>
+                <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/50 px-2.5 py-0.5 rounded-full">
+                  {filteredTasks.filter((t) => !t.isUrgent && (t.isImportant || t.priority === 'HIGH')).length}
+                </span>
+              </div>
+              <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80">Planning, relationship building, preparation</p>
+
+              <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+                {filteredTasks.filter((t) => !t.isUrgent && (t.isImportant || t.priority === 'HIGH')).length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">No tasks in Q2</p>
+                ) : (
+                  filteredTasks.filter((t) => !t.isUrgent && (t.isImportant || t.priority === 'HIGH')).map((task) => (
+                    <div
+                      key={task.id}
+                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 shadow-sm space-y-2 hover:border-emerald-400 transition-all"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4
+                          onClick={() => setSelectedTask(task)}
+                          className="text-xs font-bold text-slate-900 dark:text-white hover:text-emerald-600 cursor-pointer line-clamp-2"
+                        >
+                          {task.title}
+                        </h4>
+                        <select
+                          value={task.status}
+                          onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
+                        >
+                          <option value="PENDING">Pending</option>
+                          <option value="IN_PROGRESS">In Progress</option>
+                          <option value="IN_REVIEW">Review</option>
+                          <option value="COMPLETED">Completed</option>
+                          <option value="CANCELLED">Cancelled</option>
+                        </select>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {task.assignedTo?.name || 'Unassigned'}
+                        </span>
+                        <div className="flex items-center gap-1 font-mono">
+                          <Timer className="w-3 h-3 text-indigo-500" />
+                          <span>{task.timeSpentMinutes || 0}m</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                          >
+                            Urgent
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                          >
+                            Important
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Quadrant 3: Urgent & Not Important (DELEGATE) */}
+            <div className="glass-panel p-4 rounded-2xl border-2 border-sky-300 dark:border-sky-900/60 bg-sky-50/20 dark:bg-sky-950/10 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-sky-200 dark:border-sky-900/40">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-600 text-white uppercase">Q3</span>
+                  <h3 className="text-sm font-bold text-sky-900 dark:text-sky-200 flex items-center gap-1.5">
+                    <User className="w-4 h-4 text-sky-600" />
+                    Delegate (Urgent, Not Important)
+                  </h3>
+                </div>
+                <span className="text-xs font-extrabold text-sky-700 dark:text-sky-400 bg-sky-100 dark:bg-sky-900/50 px-2.5 py-0.5 rounded-full">
+                  {filteredTasks.filter((t) => t.isUrgent && !t.isImportant && t.priority !== 'URGENT').length}
+                </span>
+              </div>
+              <p className="text-[11px] text-sky-700/80 dark:text-sky-400/80">Routine follow-ups, minor interruptions, quick requests</p>
+
+              <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+                {filteredTasks.filter((t) => t.isUrgent && !t.isImportant && t.priority !== 'URGENT').length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">No tasks in Q3</p>
+                ) : (
+                  filteredTasks.filter((t) => t.isUrgent && !t.isImportant && t.priority !== 'URGENT').map((task) => (
+                    <div
+                      key={task.id}
+                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-sky-200 dark:border-sky-900/60 shadow-sm space-y-2 hover:border-sky-400 transition-all"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4
+                          onClick={() => setSelectedTask(task)}
+                          className="text-xs font-bold text-slate-900 dark:text-white hover:text-sky-600 cursor-pointer line-clamp-2"
+                        >
+                          {task.title}
+                        </h4>
+                        <select
+                          value={task.status}
+                          onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
+                        >
+                          <option value="PENDING">Pending</option>
+                          <option value="IN_PROGRESS">In Progress</option>
+                          <option value="IN_REVIEW">Review</option>
+                          <option value="COMPLETED">Completed</option>
+                          <option value="CANCELLED">Cancelled</option>
+                        </select>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {task.assignedTo?.name || 'Unassigned'}
+                        </span>
+                        <div className="flex items-center gap-1 font-mono">
+                          <Timer className="w-3 h-3 text-indigo-500" />
+                          <span>{task.timeSpentMinutes || 0}m</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                          >
+                            Urgent
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                          >
+                            Important
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Quadrant 4: Not Urgent & Not Important (ELIMINATE) */}
+            <div className="glass-panel p-4 rounded-2xl border-2 border-slate-300 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-500 text-white uppercase">Q4</span>
+                  <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-slate-400" />
+                    Eliminate / Backlog (Neither)
+                  </h3>
+                </div>
+                <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 bg-slate-200 dark:bg-slate-800 px-2.5 py-0.5 rounded-full">
+                  {filteredTasks.filter((t) => !t.isUrgent && !t.isImportant && t.priority !== 'HIGH' && t.priority !== 'URGENT').length}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500">Low-priority backlog, optional research, non-pressing items</p>
+
+              <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+                {filteredTasks.filter((t) => !t.isUrgent && !t.isImportant && t.priority !== 'HIGH' && t.priority !== 'URGENT').length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">No tasks in Q4</p>
+                ) : (
+                  filteredTasks.filter((t) => !t.isUrgent && !t.isImportant && t.priority !== 'HIGH' && t.priority !== 'URGENT').map((task) => (
+                    <div
+                      key={task.id}
+                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2 hover:border-slate-400 transition-all"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4
+                          onClick={() => setSelectedTask(task)}
+                          className="text-xs font-bold text-slate-900 dark:text-white hover:text-slate-600 cursor-pointer line-clamp-2"
+                        >
+                          {task.title}
+                        </h4>
+                        <select
+                          value={task.status}
+                          onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
+                        >
+                          <option value="PENDING">Pending</option>
+                          <option value="IN_PROGRESS">In Progress</option>
+                          <option value="IN_REVIEW">Review</option>
+                          <option value="COMPLETED">Completed</option>
+                          <option value="CANCELLED">Cancelled</option>
+                        </select>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {task.assignedTo?.name || 'Unassigned'}
+                        </span>
+                        <div className="flex items-center gap-1 font-mono">
+                          <Timer className="w-3 h-3 text-indigo-500" />
+                          <span>{task.timeSpentMinutes || 0}m</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                          >
+                            Urgent
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                          >
+                            Important
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* List View */
+        <div className="space-y-3">
+          {filteredTasks.length === 0 ? (
+            <div className="p-12 text-center glass-panel rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-500 space-y-2">
+              <CheckSquare className="w-8 h-8 mx-auto text-slate-400 opacity-50" />
+              <p className="text-sm font-semibold">No tasks found matching current filters.</p>
+              <p className="text-xs text-slate-400">Click &quot;+ Personal Self-Task&quot; or &quot;Assign Team Task&quot; above to create one.</p>
+            </div>
+          ) : (
+            filteredTasks.map((task) => {
+              const priorityInfo = priorityConfig[task.priority] || priorityConfig.MEDIUM;
+              const statusInfo = statusConfig[task.status] || statusConfig.PENDING;
+              const PriorityIcon = priorityInfo.icon;
+              const isOverdue =
+                task.dueDate &&
+                task.status !== 'COMPLETED' &&
+                task.status !== 'CANCELLED' &&
+                new Date(task.dueDate) < new Date();
+
+              return (
+                <div
+                  key={task.id}
+                  className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-sky-300 dark:hover:border-sky-700/60 transition-all shadow-sm space-y-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    {/* Title & Description */}
+                    <div className="space-y-1 flex-1 min-w-[240px]">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3
+                          onClick={() => setSelectedTask(task)}
+                          className="text-sm font-bold text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-sky-400 cursor-pointer transition-colors"
+                        >
+                          {task.title}
+                        </h3>
+
+                        {/* Priority Badge */}
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${priorityInfo.bg} ${priorityInfo.text} ${priorityInfo.border}`}
+                        >
+                          <PriorityIcon className="w-2.5 h-2.5" />
+                          {priorityInfo.label}
+                        </span>
+
+                        {/* Self Task Badge */}
+                        {task.isSelfTask && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                            <StickyNote className="w-2.5 h-2.5 text-amber-600" />
+                            Personal
+                          </span>
+                        )}
+
+                        {/* Overdue Badge */}
+                        {isOverdue && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 animate-pulse">
+                            <Flame className="w-2.5 h-2.5" />
+                            Overdue
+                          </span>
+                        )}
+                      </div>
+
+                      {task.description && (
+                        <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">
+                          {task.description}
+                        </p>
                       )}
                     </div>
 
-                    {task.description && (
-                      <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">
-                        {task.description}
-                      </p>
-                    )}
-                  </div>
+                    {/* Quick Status Dropdown & Action Icons */}
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={task.status}
+                        onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                        className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${statusInfo.color}`}
+                      >
+                        <option value="PENDING">Pending / To Do</option>
+                        <option value="IN_PROGRESS">In Progress</option>
+                        <option value="IN_REVIEW">In Review</option>
+                        <option value="COMPLETED">Completed</option>
+                        <option value="CANCELLED">Cancelled</option>
+                      </select>
 
-                  {/* Quick Status Dropdown & Action Icons */}
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={task.status}
-                      onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
-                      className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${statusInfo.color}`}
-                    >
-                      <option value="PENDING">Pending / To Do</option>
-                      <option value="IN_PROGRESS">In Progress</option>
-                      <option value="IN_REVIEW">In Review</option>
-                      <option value="COMPLETED">Completed</option>
-                      <option value="CANCELLED">Cancelled</option>
-                    </select>
+                      <button
+                        onClick={() => setSelectedTask(task)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-slate-800 transition-colors"
+                        title="View Details & Comments"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
 
-                    <button
-                      onClick={() => setSelectedTask(task)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-slate-800 transition-colors"
-                      title="View Details & Comments"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-
-                    {(isSuperAdmin || task.createdById === currentUser.id) && (
-                      <>
-                        <button
-                          onClick={() => {
-                            setSelectedTask(task);
-                            handleOpenEdit(task);
-                          }}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 transition-colors"
-                          title="Edit Task"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteTask(task.id, task.title)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors"
-                          title="Delete Task"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Metadata Footer: Elapsed Time, Assignee, Due Date, Linked Case */}
-                <div className="flex flex-wrap items-center gap-y-2 gap-x-4 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-[11px] text-slate-500">
-                  {/* Elapsed Time Badge */}
-                  <div
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 font-semibold"
-                    title={`Exact Assignment Time: ${new Date(task.assignedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`}
-                  >
-                    <Clock className="w-3.5 h-3.5 text-sky-500" />
-                    <span>Assigned: {formatElapsedTime(task.assignedAt)}</span>
-                  </div>
-
-                  {/* Assignee */}
-                  <div className="flex items-center gap-1 font-medium">
-                    <User className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Assignee:</span>
-                    <strong className="text-slate-800 dark:text-slate-200">{task.assignedTo.name}</strong>
-                    <span className="text-[10px] text-slate-400">({task.assignedTo.role})</span>
-                  </div>
-
-                  {/* Created By */}
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                    <span>By:</span>
-                    <span className="font-semibold text-slate-600 dark:text-slate-300">{task.createdBy.name}</span>
-                  </div>
-
-                  {/* Due Date */}
-                  {task.dueDate && (
-                    <div
-                      className={`flex items-center gap-1 font-medium ${
-                        isOverdue ? 'text-rose-600 dark:text-rose-400 font-bold' : ''
-                      }`}
-                    >
-                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Due: {new Date(task.dueDate).toLocaleDateString('en-IN')}</span>
+                      {(isSuperAdmin || task.createdById === currentUser.id) && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setSelectedTask(task);
+                              handleOpenEdit(task);
+                            }}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 transition-colors"
+                            title="Edit Task"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTask(task.id, task.title)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors"
+                            title="Delete Task"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
-                  )}
+                  </div>
 
-                  {/* Linked Case */}
-                  {task.case && (
-                    <Link
-                      href={`/cases/${task.case.id}`}
-                      className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-500 dark:text-sky-400 font-semibold hover:underline"
+                  {/* Metadata Footer: Elapsed Time, Assignee, Due Date, Time Spent, Eisenhower Toggles */}
+                  <div className="flex flex-wrap items-center gap-y-2 gap-x-4 pt-2 border-t border-slate-100 dark:border-slate-800/80 text-[11px] text-slate-500">
+                    {/* Elapsed Time Badge */}
+                    <div
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 font-semibold"
+                      title={`Exact Assignment Time: ${new Date(task.assignedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`}
                     >
-                      <Briefcase className="w-3.5 h-3.5" />
-                      <span>Case: {task.case.clientName}</span>
-                      <ExternalLink className="w-2.5 h-2.5" />
-                    </Link>
-                  )}
+                      <Clock className="w-3.5 h-3.5 text-sky-500" />
+                      <span>Assigned: {formatElapsedTime(task.assignedAt)}</span>
+                    </div>
 
-                  {/* Comments Count */}
-                  <div
-                    onClick={() => setSelectedTask(task)}
-                    className="ml-auto inline-flex items-center gap-1 text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 cursor-pointer"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>{task.comments.length} updates</span>
+                    {/* Time Spent Badge */}
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-semibold">
+                      <Timer className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>Time: {task.timeSpentMinutes || 0}m</span>
+                    </div>
+
+                    {/* Assignee */}
+                    <div className="flex items-center gap-1 font-medium">
+                      <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>Assignee:</span>
+                      {task.assignees && task.assignees.length > 1 ? (
+                        <span className="flex items-center gap-1" title={task.assignees.map((a) => a.user?.name).filter(Boolean).join(', ')}>
+                          <strong className="text-slate-800 dark:text-slate-200">{task.assignedTo?.name || task.assignees[0]?.user?.name}</strong>
+                          <span className="px-1.5 py-0.2 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 text-[10px] font-bold border border-sky-200 dark:border-sky-800">
+                            +{task.assignees.length - 1} more
+                          </span>
+                        </span>
+                      ) : (
+                        <>
+                          <strong className="text-slate-800 dark:text-slate-200">{task.assignedTo?.name || 'Unassigned'}</strong>
+                          <span className="text-[10px] text-slate-400">({task.assignedTo?.role || ''})</span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Due Date & Time */}
+                    {task.dueDate && (
+                      <div
+                        className={`flex items-center gap-1 font-medium ${
+                          isOverdue ? 'text-rose-600 dark:text-rose-400 font-bold' : ''
+                        }`}
+                      >
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>
+                          Due: {new Date(task.dueDate).toLocaleDateString('en-IN')}
+                          {task.dueTime ? ` (${task.dueTime})` : ''}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Linked Case */}
+                    {task.case && (
+                      <Link
+                        href={`/cases/${task.case.id}`}
+                        className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-500 dark:text-sky-400 font-semibold hover:underline"
+                      >
+                        <Briefcase className="w-3.5 h-3.5" />
+                        <span>Case: {task.case.clientName}</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </Link>
+                    )}
+
+                    {/* Eisenhower Quick Toggles */}
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          task.isUrgent
+                            ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 hover:border-rose-300'
+                        }`}
+                        title="Toggle Urgent flag"
+                      >
+                        Urgent
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          task.isImportant
+                            ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 hover:border-emerald-300'
+                        }`}
+                        title="Toggle Important flag"
+                      >
+                        Important
+                      </button>
+                    </div>
+
+                    {/* Completed By Badge */}
+                    {task.status === 'COMPLETED' && (
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 shadow-sm">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Completed by: {task.completedBy?.name || 'Staff'}{task.completedAt ? ` on ${new Date(task.completedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })}` : ''}</span>
+                      </div>
+                    )}
+
+                    {/* Comments Count */}
+                    <div
+                      onClick={() => setSelectedTask(task)}
+                      className="inline-flex items-center gap-1 text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 cursor-pointer"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>{task.comments.length} updates</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+              );
+            })
+          )}
+        </div>
+      )}
 
-      {/* Create Task Modal */}
-      {isCreateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-          <div className="glass-panel w-full max-w-lg p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 bg-white dark:bg-slate-900 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+      {/* Personal Self-Task Modal (For ALL Staff) */}
+      {isSelfModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="glass-panel w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl bg-white dark:bg-slate-900 max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Plus className="w-5 h-5 text-sky-600 dark:text-sky-400" />
-                Assign New Task
+                <StickyNote className="w-5 h-5 text-amber-500" />
+                Add Personal Self-Task
               </h3>
               <button
-                onClick={() => setIsCreateModalOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                type="button"
+                onClick={() => setIsSelfModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {errorMsg && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs">
+              <div className="mx-5 mt-3 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs shrink-0">
                 {errorMsg}
               </div>
             )}
 
-            <form onSubmit={handleCreateTask} className="space-y-4">
-              {/* Title */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Task Title *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Verify salary slips & bank sanction letter for HDFC case"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold"
-                />
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Detailed Instructions / Remarks
-                </label>
-                <textarea
-                  rows={3}
-                  placeholder="Provide detailed instructions, notes, or required deliverables..."
-                  value={newDesc}
-                  onChange={(e) => setNewDesc(e.target.value)}
-                  className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                />
-              </div>
-
-              {/* Priority & Assignee */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleCreateSelfTask} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-5 overflow-y-auto space-y-4 flex-1">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Priority Level
-                  </label>
-                  <select
-                    value={newPriority}
-                    onChange={(e) => setNewPriority(e.target.value as any)}
-                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900"
-                  >
-                    <option value="LOW">Low</option>
-                    <option value="MEDIUM">Medium</option>
-                    <option value="HIGH">High</option>
-                    <option value="URGENT">Urgent 🔥</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Assign To Staff *
-                  </label>
-                  <select
-                    required
-                    value={newAssigneeId}
-                    onChange={(e) => setNewAssigneeId(e.target.value)}
-                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-bold text-sky-600 dark:text-sky-400 bg-white dark:bg-slate-900"
-                  >
-                    {assignableUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.role})
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-slate-400 mt-1">Channel partners are strictly excluded.</p>
-                </div>
-              </div>
-
-              {/* Due Date & Optional Case Link */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Due Date (Optional)
+                    Task / Reminder Title *
                   </label>
                   <input
-                    type="date"
-                    value={newDueDate}
-                    onChange={(e) => setNewDueDate(e.target.value)}
+                    type="text"
+                    required
+                    placeholder="e.g. Call Rajesh Ji at 3 PM regarding HDFC salary slip"
+                    value={selfTitle}
+                    onChange={(e) => setSelfTitle(e.target.value)}
+                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Quick Notes (Optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Any specific note or reminder for yourself..."
+                    value={selfDesc}
+                    onChange={(e) => setSelfDesc(e.target.value)}
                     className="w-full glass-input px-3 py-2 rounded-xl text-xs"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Link to Loan Case (Optional)
+                    Due Date
                   </label>
-                  <select
-                    value={newCaseId}
-                    onChange={(e) => setNewCaseId(e.target.value)}
-                    className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
-                  >
-                    <option value="">No Case Linked</option>
-                    {activeCases.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.clientName} ({c.product})
-                      </option>
-                    ))}
-                  </select>
+                  <input
+                    type="date"
+                    value={selfDueDate}
+                    onChange={(e) => setSelfDueDate(e.target.value)}
+                    className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                  />
+                </div>
+
+                {/* Eisenhower Matrix tags */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
+                      <Zap className="w-4 h-4 text-amber-500" />
+                      Priority Tags (Eisenhower Classification)
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 truncate max-w-full">
+                      {selfIsUrgent && selfIsImportant && 'Q1: Do First (तुरंत करें)'}
+                      {!selfIsUrgent && selfIsImportant && 'Q2: Schedule (योजना बनाएं)'}
+                      {selfIsUrgent && !selfIsImportant && 'Q3: Delegate (सौंपें)'}
+                      {!selfIsUrgent && !selfIsImportant && 'Q4: Eliminate (बाद में)'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    {/* Urgent */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        selfIsUrgent
+                          ? 'bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400 shadow-sm ring-1 ring-rose-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selfIsUrgent}
+                        onChange={(e) => setSelfIsUrgent(e.target.checked)}
+                        className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Urgent 🔥</span>
+                    </label>
+
+                    {/* Not Urgent */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        !selfIsUrgent
+                          ? 'bg-sky-500/10 border-sky-500 text-sky-600 dark:text-sky-400 shadow-sm ring-1 ring-sky-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!selfIsUrgent}
+                        onChange={(e) => setSelfIsUrgent(!e.target.checked)}
+                        className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Not Urgent ⏳</span>
+                    </label>
+
+                    {/* Important */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        selfIsImportant
+                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selfIsImportant}
+                        onChange={(e) => setSelfIsImportant(e.target.checked)}
+                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Important ⭐</span>
+                    </label>
+
+                    {/* Not Important */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        !selfIsImportant
+                          ? 'bg-slate-500/10 border-slate-400 text-slate-700 dark:text-slate-300 shadow-sm ring-1 ring-slate-400/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!selfIsImportant}
+                        onChange={(e) => setSelfIsImportant(!e.target.checked)}
+                        className="w-4 h-4 rounded text-slate-600 focus:ring-slate-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Not Important 📋</span>
+                    </label>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+              {/* Fixed Footer */}
+              <div className="flex items-center justify-end gap-2 p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsSelfModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {loading ? 'Saving...' : 'Save Personal Task'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Task Modal */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="glass-panel w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl bg-white dark:bg-slate-900 max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Plus className="w-5 h-5 text-sky-600 dark:text-sky-400" />
+                Assign New Task
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {errorMsg && (
+              <div className="mx-5 mt-3 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs shrink-0">
+                {errorMsg}
+              </div>
+            )}
+
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleCreateTask} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-5 overflow-y-auto space-y-4 flex-1">
+                {/* Title */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Task Title *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Verify salary slips & bank sanction letter for HDFC case"
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold"
+                  />
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Detailed Instructions / Remarks
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Provide detailed instructions, notes, or required deliverables..."
+                    value={newDesc}
+                    onChange={(e) => setNewDesc(e.target.value)}
+                    className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                  />
+                </div>
+
+                {/* Priority & Assignee */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Priority Level
+                    </label>
+                    <select
+                      value={newPriority}
+                      onChange={(e) => setNewPriority(e.target.value as any)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900"
+                    >
+                      <option value="LOW">Low</option>
+                      <option value="MEDIUM">Medium</option>
+                      <option value="HIGH">High</option>
+                      <option value="URGENT">Urgent 🔥</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        Assign To Staff (Select Multiple) *
+                      </label>
+                      <span className="text-[10px] font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/60 px-2 py-0.5 rounded-full border border-sky-200 dark:border-sky-800 shrink-0">
+                        {newAssigneeIds.length} Selected
+                      </span>
+                    </div>
+                    <div className="max-h-28 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
+                      {assignableUsers.map((u) => {
+                        const isChecked = newAssigneeIds.includes(u.id);
+                        return (
+                          <label key={u.id} className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer p-1 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {
+                                if (isChecked) {
+                                  if (newAssigneeIds.length > 1) {
+                                    setNewAssigneeIds(newAssigneeIds.filter(id => id !== u.id));
+                                  }
+                                } else {
+                                  setNewAssigneeIds([...newAssigneeIds, u.id]);
+                                }
+                              }}
+                              className="w-3.5 h-3.5 text-sky-600 rounded border-slate-300 shrink-0"
+                            />
+                            <span className="font-semibold truncate">{u.name}</span>
+                            <span className="text-[10px] text-slate-400 truncate">({u.role})</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">One task can be assigned to multiple staff members simultaneously.</p>
+                  </div>
+                </div>
+
+                {/* Due Date, Due Time & Optional Case Link */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Due Date
+                    </label>
+                    <input
+                      type="date"
+                      value={newDueDate}
+                      onChange={(e) => setNewDueDate(e.target.value)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Due Time (hh:mm)
+                    </label>
+                    <input
+                      type="time"
+                      value={newDueTime}
+                      onChange={(e) => setNewDueTime(e.target.value)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Link to Loan Case
+                    </label>
+                    <select
+                      value={newCaseId}
+                      onChange={(e) => setNewCaseId(e.target.value)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                    >
+                      <option value="">No Case Linked</option>
+                      {activeCases.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.clientName} ({c.product})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Eisenhower Matrix tags */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
+                      <Zap className="w-4 h-4 text-amber-500" />
+                      Priority Tags (Eisenhower Classification)
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 truncate max-w-full">
+                      {newIsUrgent && newIsImportant && 'Q1: Do First (तुरंत करें)'}
+                      {!newIsUrgent && newIsImportant && 'Q2: Schedule (योजना बनाएं)'}
+                      {newIsUrgent && !newIsImportant && 'Q3: Delegate (सौंपें)'}
+                      {!newIsUrgent && !newIsImportant && 'Q4: Eliminate (बाद में)'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    {/* Urgent */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        newIsUrgent
+                          ? 'bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400 shadow-sm ring-1 ring-rose-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newIsUrgent}
+                        onChange={(e) => setNewIsUrgent(e.target.checked)}
+                        className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Urgent 🔥</span>
+                    </label>
+
+                    {/* Not Urgent */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        !newIsUrgent
+                          ? 'bg-sky-500/10 border-sky-500 text-sky-600 dark:text-sky-400 shadow-sm ring-1 ring-sky-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!newIsUrgent}
+                        onChange={(e) => setNewIsUrgent(!e.target.checked)}
+                        className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Not Urgent ⏳</span>
+                    </label>
+
+                    {/* Important */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        newIsImportant
+                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newIsImportant}
+                        onChange={(e) => setNewIsImportant(e.target.checked)}
+                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Important ⭐</span>
+                    </label>
+
+                    {/* Not Important */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        !newIsImportant
+                          ? 'bg-slate-500/10 border-slate-400 text-slate-700 dark:text-slate-300 shadow-sm ring-1 ring-slate-400/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!newIsImportant}
+                        onChange={(e) => setNewIsImportant(!e.target.checked)}
+                        className="w-4 h-4 rounded text-slate-600 focus:ring-slate-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Not Important 📋</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Fixed Footer */}
+              <div className="flex items-center justify-end gap-2 p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 >
                   Cancel
                 </button>
@@ -842,7 +1814,7 @@ export default function TaskManagementClient({
                   disabled={loading}
                   className="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shadow-lg shadow-sky-500/20 transition-all disabled:opacity-50 cursor-pointer"
                 >
-                  Create & Assign Task
+                  {loading ? 'Assigning...' : 'Create & Assign Task'}
                 </button>
               </div>
             </form>
@@ -900,13 +1872,30 @@ export default function TaskManagementClient({
             </div>
 
             {/* Overview Details Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-xs">
               <div>
-                <span className="text-[10px] font-semibold text-slate-400 uppercase">Assigned To</span>
-                <div className="font-bold text-slate-900 dark:text-white mt-0.5">
-                  {selectedTask.assignedTo.name}
-                </div>
-                <div className="text-[10px] text-slate-400">{selectedTask.assignedTo.role}</div>
+                <span className="text-[10px] font-semibold text-slate-400 uppercase">
+                  Assigned To {selectedTask.assignees && selectedTask.assignees.length > 1 ? `(${selectedTask.assignees.length})` : ''}
+                </span>
+                {selectedTask.assignees && selectedTask.assignees.length > 1 ? (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {selectedTask.assignees.map((a) => (
+                      <span
+                        key={a.id || a.userId}
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                      >
+                        {a.user?.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <div className="font-bold text-slate-900 dark:text-white mt-0.5">
+                      {selectedTask.assignedTo?.name || 'Unassigned'}
+                    </div>
+                    <div className="text-[10px] text-slate-400">{selectedTask.assignedTo?.role || ''}</div>
+                  </>
+                )}
               </div>
 
               <div>
@@ -920,20 +1909,153 @@ export default function TaskManagementClient({
               </div>
 
               <div>
-                <span className="text-[10px] font-semibold text-slate-400 uppercase">Due Date</span>
+                <span className="text-[10px] font-semibold text-slate-400 uppercase">Due Date & Time</span>
                 <div className="font-bold text-slate-900 dark:text-white mt-0.5">
                   {selectedTask.dueDate
                     ? new Date(selectedTask.dueDate).toLocaleDateString('en-IN')
                     : 'No deadline'}
+                  {selectedTask.dueTime && (
+                    <span className="text-xs text-sky-600 dark:text-sky-400 font-semibold flex items-center gap-1 mt-0.5">
+                      <Clock className="w-3 h-3 text-sky-500" />
+                      {selectedTask.dueTime}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[10px] font-semibold text-slate-400 uppercase">Time Spent</span>
+                <div className="font-bold text-indigo-600 dark:text-indigo-400 mt-0.5 flex items-center gap-1 font-mono">
+                  <Timer className="w-3.5 h-3.5" />
+                  {selectedTask.timeSpentMinutes || 0}m
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  {Math.floor((selectedTask.timeSpentMinutes || 0) / 60)}h {(selectedTask.timeSpentMinutes || 0) % 60}m
                 </div>
               </div>
 
               <div>
                 <span className="text-[10px] font-semibold text-slate-400 uppercase">Created By</span>
                 <div className="font-bold text-slate-900 dark:text-white mt-0.5">
-                  {selectedTask.createdBy.name}
+                  {selectedTask.createdBy?.name || 'Admin'}
                 </div>
-                <div className="text-[10px] text-slate-400">{selectedTask.createdBy.role}</div>
+                <div className="text-[10px] text-slate-400">{selectedTask.createdBy?.role || ''}</div>
+              </div>
+
+              {selectedTask.status === 'COMPLETED' && (
+                <div className="col-span-2 sm:col-span-5 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 font-medium flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span><strong>Marked Completed by:</strong> {selectedTask.completedBy?.name || 'Staff Member'}</span>
+                  </div>
+                  {selectedTask.completedAt && (
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono">
+                      {new Date(selectedTask.completedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Work Time Spent Logger */}
+            <div className="p-3 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800/60 space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-indigo-900 dark:text-indigo-300">
+                <span className="flex items-center gap-1.5">
+                  <Timer className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  Log Time Spent on this Task
+                </span>
+                <span className="text-[11px] text-indigo-700 dark:text-indigo-400 font-mono">
+                  Total Logged: {selectedTask.timeSpentMinutes || 0} mins
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleLogTimeSpent(selectedTask.id, 15)}
+                  disabled={loggingTime}
+                  className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 text-xs font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  +15 mins
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLogTimeSpent(selectedTask.id, 30)}
+                  disabled={loggingTime}
+                  className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 text-xs font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  +30 mins
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLogTimeSpent(selectedTask.id, 60)}
+                  disabled={loggingTime}
+                  className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 text-xs font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  +1 hour
+                </button>
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Mins"
+                    value={timeMinutesInput}
+                    onChange={(e) => setTimeMinutesInput(e.target.value)}
+                    className="w-16 px-2 py-1 text-xs rounded-lg border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-900 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const m = parseInt(timeMinutesInput);
+                      if (m > 0) handleLogTimeSpent(selectedTask.id, m);
+                    }}
+                    disabled={loggingTime || !timeMinutesInput}
+                    className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {loggingTime ? 'Saving...' : 'Add'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Eisenhower Priority Classification Bar */}
+            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-xs">
+              <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Zap className="w-4 h-4 text-amber-500" />
+                Eisenhower Priority Classification:
+              </span>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 font-bold cursor-pointer text-rose-600 dark:text-rose-400">
+                  <input
+                    type="checkbox"
+                    checked={!!selectedTask.isUrgent}
+                    onChange={() =>
+                      handleToggleEisenhower(
+                        selectedTask.id,
+                        !!selectedTask.isUrgent,
+                        !!selectedTask.isImportant,
+                        'urgent'
+                      )
+                    }
+                    className="rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                  />
+                  <span>Urgent</span>
+                </label>
+                <label className="flex items-center gap-1.5 font-bold cursor-pointer text-emerald-600 dark:text-emerald-400">
+                  <input
+                    type="checkbox"
+                    checked={!!selectedTask.isImportant}
+                    onChange={() =>
+                      handleToggleEisenhower(
+                        selectedTask.id,
+                        !!selectedTask.isUrgent,
+                        !!selectedTask.isImportant,
+                        'important'
+                      )
+                    }
+                    className="rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <span>Important</span>
+                </label>
               </div>
             </div>
 
@@ -1003,20 +2125,63 @@ export default function TaskManagementClient({
                 {selectedTask.comments.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No comments yet. Post the first update below.</p>
                 ) : (
-                  selectedTask.comments.map((cm) => (
+                  selectedTask.comments.map((cm: any) => (
                     <div
                       key={cm.id}
-                      className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-1 text-xs"
+                      className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-1.5 text-xs"
                     >
                       <div className="flex items-center justify-between text-[10px]">
                         <span className="font-bold text-slate-900 dark:text-white">
                           {cm.user.name} <span className="font-normal text-slate-400">({cm.user.role})</span>
                         </span>
-                        <span className="text-slate-400 font-mono">
-                          {new Date(cm.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-400 font-mono">
+                            {new Date(cm.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                            {cm.isEdited && <span className="text-amber-500 ml-1 font-sans">(edited)</span>}
+                          </span>
+                          {(cm.user.id === currentUser.id || isSuperAdmin) && editCommentId !== cm.id && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditCommentId(cm.id);
+                                setEditCommentText(cm.content);
+                              }}
+                              className="text-slate-400 hover:text-sky-500 p-0.5"
+                              title="Edit this comment"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{cm.content}</p>
+                      {editCommentId === cm.id ? (
+                        <div className="space-y-1.5 pt-1">
+                          <textarea
+                            rows={2}
+                            value={editCommentText}
+                            onChange={(e) => setEditCommentText(e.target.value)}
+                            className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs"
+                          />
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setEditCommentId(null)}
+                              className="px-2 py-0.5 rounded text-[10px] text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEditComment(cm.id)}
+                              className="px-2.5 py-0.5 rounded text-[10px] bg-sky-600 text-white font-bold hover:bg-sky-500"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{cm.content}</p>
+                      )}
                     </div>
                   ))
                 )}
@@ -1041,151 +2206,399 @@ export default function TaskManagementClient({
                 </button>
               </form>
             </div>
+
+            {/* Task Activity & Audit Trail Log */}
+            <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+              <h4 className="text-xs font-extrabold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-indigo-500" />
+                Task Activity & Audit Log ({selectedTask.activityLogs?.length || 0})
+              </h4>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {!selectedTask.activityLogs || selectedTask.activityLogs.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic">No activity logs recorded yet.</p>
+                ) : (
+                  selectedTask.activityLogs.map((log: any) => (
+                    <div
+                      key={log.id}
+                      className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-xs"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-slate-900 dark:text-white text-[11px]">
+                            {log.user?.name || 'Staff'}
+                            <span className="font-normal text-slate-400 text-[10px] ml-1">({log.user?.role || 'User'})</span>
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {new Date(log.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })}
+                          </span>
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-300 text-[11px] mt-0.5">{log.details}</p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* Edit Task Modal */}
       {isEditingTask && selectedTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-          <div className="glass-panel w-full max-w-lg p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 bg-white dark:bg-slate-900 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="glass-panel w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl bg-white dark:bg-slate-900 max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Edit3 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                 Edit Task
               </h3>
               <button
+                type="button"
                 onClick={() => setIsEditingTask(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleUpdateTask} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Title
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold"
-                />
+            {errorMsg && (
+              <div className="mx-5 mt-3 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs shrink-0">
+                {errorMsg}
               </div>
+            )}
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Description
-                </label>
-                <textarea
-                  rows={3}
-                  value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)}
-                  className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleUpdateTask} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-5 overflow-y-auto space-y-4 flex-1">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Priority
-                  </label>
-                  <select
-                    value={editPriority}
-                    onChange={(e) => setEditPriority(e.target.value as any)}
-                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900"
-                  >
-                    <option value="LOW">Low</option>
-                    <option value="MEDIUM">Medium</option>
-                    <option value="HIGH">High</option>
-                    <option value="URGENT">Urgent</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Status
-                  </label>
-                  <select
-                    value={editStatus}
-                    onChange={(e) => setEditStatus(e.target.value as any)}
-                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900"
-                  >
-                    <option value="PENDING">Pending</option>
-                    <option value="IN_PROGRESS">In Progress</option>
-                    <option value="IN_REVIEW">In Review</option>
-                    <option value="COMPLETED">Completed</option>
-                    <option value="CANCELLED">Cancelled</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Assignee
-                  </label>
-                  <select
-                    value={editAssigneeId}
-                    onChange={(e) => setEditAssigneeId(e.target.value)}
-                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400"
-                  >
-                    {assignableUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.role})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Due Date
+                    Title *
                   </label>
                   <input
-                    type="date"
-                    value={editDueDate}
-                    onChange={(e) => setEditDueDate(e.target.value)}
+                    type="text"
+                    required
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Description
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)}
                     className="w-full glass-input px-3 py-2 rounded-xl text-xs"
                   />
                 </div>
+
+                {/* Priority & Status */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Priority
+                    </label>
+                    <select
+                      value={editPriority}
+                      onChange={(e) => setEditPriority(e.target.value as any)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900"
+                    >
+                      <option value="LOW">Low</option>
+                      <option value="MEDIUM">Medium</option>
+                      <option value="HIGH">High</option>
+                      <option value="URGENT">Urgent 🔥</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Status
+                    </label>
+                    <select
+                      value={editStatus}
+                      onChange={(e) => setEditStatus(e.target.value as any)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900"
+                    >
+                      <option value="PENDING">Pending</option>
+                      <option value="IN_PROGRESS">In Progress</option>
+                      <option value="IN_REVIEW">In Review</option>
+                      <option value="COMPLETED">Completed</option>
+                      <option value="CANCELLED">Cancelled</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Multi-Staff Assignment Checkboxes */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Assign To Staff (Select Multiple) *
+                    </label>
+                    <span className="text-[10px] font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/60 px-2 py-0.5 rounded-full border border-sky-200 dark:border-sky-800 shrink-0">
+                      {editAssigneeIds.length} Selected
+                    </span>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
+                    {assignableUsers.map((u) => {
+                      const isChecked = editAssigneeIds.includes(u.id);
+                      return (
+                        <label
+                          key={u.id}
+                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-xs ${
+                            isChecked
+                              ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-900 dark:text-sky-200 font-medium'
+                              : 'hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {
+                                if (isChecked) {
+                                  if (editAssigneeIds.length > 1) {
+                                    setEditAssigneeIds(editAssigneeIds.filter((id) => id !== u.id));
+                                  }
+                                } else {
+                                  setEditAssigneeIds([...editAssigneeIds, u.id]);
+                                }
+                              }}
+                              className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer shrink-0"
+                            />
+                            <div className="truncate">
+                              <span className="font-semibold">{u.name}</span>{' '}
+                              <span className="text-[10px] text-slate-400">({u.role})</span>
+                            </div>
+                          </div>
+                          {isChecked && (
+                            <span className="text-[10px] font-bold text-sky-600 dark:text-sky-400 shrink-0 ml-2">
+                              Assigned
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    One task can be assigned to multiple staff members simultaneously.
+                  </p>
+                </div>
+
+                {/* Due Date, Due Time & Optional Case Link */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                      <span>Due Date</span>
+                      {editDueDate && (
+                        <button
+                          type="button"
+                          onClick={() => setEditDueDate('')}
+                          className="text-[10px] text-slate-400 hover:text-rose-500"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </label>
+                    <input
+                      type="date"
+                      value={editDueDate}
+                      onChange={(e) => setEditDueDate(e.target.value)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                      <span>Due Time (hh:mm)</span>
+                      {editDueTime && (
+                        <button
+                          type="button"
+                          onClick={() => setEditDueTime('')}
+                          className="text-[10px] text-slate-400 hover:text-rose-500"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </label>
+                    <input
+                      type="time"
+                      value={editDueTime}
+                      onChange={(e) => setEditDueTime(e.target.value)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Link to Loan Case
+                    </label>
+                    <select
+                      value={editCaseId}
+                      onChange={(e) => setEditCaseId(e.target.value)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                    >
+                      <option value="">No Case Linked</option>
+                      {activeCases.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.clientName} ({c.product})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Quick Increase / Extend Deadline Buttons */}
+                <div className="p-3 rounded-2xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/60 flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-sky-900 dark:text-sky-200">
+                    <Clock className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                    <span>Quick Increase / Extend Deadline:</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => extendEditDeadline('hour', 1)}
+                      className="px-2.5 py-1 text-xs font-bold rounded-lg bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 hover:bg-sky-600 hover:text-white dark:hover:bg-sky-500 transition-all shadow-xs active:scale-95"
+                    >
+                      +1 Hr
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => extendEditDeadline('hour', 3)}
+                      className="px-2.5 py-1 text-xs font-bold rounded-lg bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 hover:bg-sky-600 hover:text-white dark:hover:bg-sky-500 transition-all shadow-xs active:scale-95"
+                    >
+                      +3 Hrs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => extendEditDeadline('day', 1)}
+                      className="px-2.5 py-1 text-xs font-bold rounded-lg bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 hover:bg-sky-600 hover:text-white dark:hover:bg-sky-500 transition-all shadow-xs active:scale-95"
+                    >
+                      +1 Day
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => extendEditDeadline('day', 2)}
+                      className="px-2.5 py-1 text-xs font-bold rounded-lg bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 hover:bg-sky-600 hover:text-white dark:hover:bg-sky-500 transition-all shadow-xs active:scale-95"
+                    >
+                      +2 Days
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => extendEditDeadline('day', 7)}
+                      className="px-2.5 py-1 text-xs font-bold rounded-lg bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 hover:bg-sky-600 hover:text-white dark:hover:bg-sky-500 transition-all shadow-xs active:scale-95"
+                    >
+                      +1 Week
+                    </button>
+                  </div>
+                </div>
+
+                {/* Eisenhower Matrix tags */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
+                      <Zap className="w-4 h-4 text-amber-500" />
+                      Priority Tags (Eisenhower Classification)
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 truncate max-w-full">
+                      {editIsUrgent && editIsImportant && 'Q1: Do First (तुरंत करें)'}
+                      {!editIsUrgent && editIsImportant && 'Q2: Schedule (योजना बनाएं)'}
+                      {editIsUrgent && !editIsImportant && 'Q3: Delegate (सौंपें)'}
+                      {!editIsUrgent && !editIsImportant && 'Q4: Eliminate (बाद में)'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    {/* Urgent */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        editIsUrgent
+                          ? 'bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400 shadow-sm ring-1 ring-rose-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={editIsUrgent}
+                        onChange={(e) => setEditIsUrgent(e.target.checked)}
+                        className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Urgent 🔥</span>
+                    </label>
+
+                    {/* Not Urgent */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        !editIsUrgent
+                          ? 'bg-sky-500/10 border-sky-500 text-sky-600 dark:text-sky-400 shadow-sm ring-1 ring-sky-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!editIsUrgent}
+                        onChange={(e) => setEditIsUrgent(!e.target.checked)}
+                        className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Not Urgent ⏳</span>
+                    </label>
+
+                    {/* Important */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        editIsImportant
+                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={editIsImportant}
+                        onChange={(e) => setEditIsImportant(e.target.checked)}
+                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Important ⭐</span>
+                    </label>
+
+                    {/* Not Important */}
+                    <label
+                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                        !editIsImportant
+                          ? 'bg-slate-500/10 border-slate-400 text-slate-700 dark:text-slate-300 shadow-sm ring-1 ring-slate-400/20'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!editIsImportant}
+                        onChange={(e) => setEditIsImportant(!e.target.checked)}
+                        className="w-4 h-4 rounded text-slate-600 focus:ring-slate-500 cursor-pointer shrink-0"
+                      />
+                      <span className="whitespace-nowrap">Not Important 📋</span>
+                    </label>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Link to Loan Case
-                </label>
-                <select
-                  value={editCaseId}
-                  onChange={(e) => setEditCaseId(e.target.value)}
-                  className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
-                >
-                  <option value="">No Case Linked</option>
-                  {activeCases.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.clientName} ({c.product})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+              {/* Fixed Footer */}
+              <div className="flex items-center justify-end gap-2 p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsEditingTask(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-all disabled:opacity-50 cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50 cursor-pointer"
                 >
-                  Save Changes
+                  {loading ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>

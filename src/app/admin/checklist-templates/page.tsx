@@ -14,7 +14,7 @@ export default async function ChecklistTemplatesPage() {
     redirect('/dashboard');
   }
 
-  const [categories, productsRes, profilesRes] = await Promise.all([
+  const [categories, productsRes, profilesRes, propertyScopes, customerTypes, workflowStages, subProducts] = await Promise.all([
     prisma.checklistCategory.findMany({
       include: {
         items: {
@@ -25,6 +25,13 @@ export default async function ChecklistTemplatesPage() {
     }),
     getProductsAction(),
     getProfilesAction(),
+    prisma.propertyScopeMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.customerTypeMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.workflowStageMaster.findMany({ where: { isActive: true }, orderBy: { stageNumber: 'asc' } }),
+    prisma.subProductMaster.findMany({
+      include: { product: true },
+      orderBy: { name: 'asc' },
+    }),
   ]);
 
   const products = productsRes.products || [];
@@ -43,6 +50,10 @@ export default async function ChecklistTemplatesPage() {
         categories={categories}
         products={products}
         profiles={profiles}
+        propertyScopes={propertyScopes}
+        customerTypes={customerTypes}
+        workflowStages={workflowStages}
+        subProducts={subProducts}
       />
     </div>
   );

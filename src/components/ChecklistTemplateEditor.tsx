@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -24,6 +24,14 @@ import {
   MessageSquare,
   AlertCircle,
   HelpCircle,
+  Building2,
+  Package,
+  Briefcase,
+  Users2,
+  Layers,
+  Plus,
+  ChevronDown,
+  Search,
 } from 'lucide-react';
 
 export interface TemplateItem {
@@ -32,6 +40,10 @@ export interface TemplateItem {
   applicantRequirement: string;
   coApplicantRequirement: string;
   propertyTypeScope: string | null;
+  subProduct?: string | null;
+  incomeType?: string | null;
+  customerType?: string | null;
+  stages?: string | null;
   stage: number;
   requireOnedrive?: boolean;
   requireRemark?: boolean;
@@ -50,12 +62,283 @@ interface ChecklistTemplateEditorProps {
   categories: CategoryItem[];
   products?: Array<{ id: string; name: string }>;
   profiles?: Array<{ id: string; name: string }>;
+  propertyScopes?: Array<{ id: string; name: string; description?: string | null }>;
+  customerTypes?: Array<{ id: string; name: string; description?: string | null }>;
+  workflowStages?: Array<{ id: string; stageNumber: number; name: string; color?: string | null }>;
+  subProducts?: Array<{ id: string; name: string; productId: string; product?: { id: string; name: string } }>;
+}
+
+function MultiSelectDropdown({
+  label,
+  icon: Icon,
+  options,
+  selected,
+  onChange,
+  color = 'indigo',
+  allLabel = 'All',
+}: {
+  label: string;
+  icon?: any;
+  options: { label: string; value: string }[];
+  selected: string[];
+  onChange: (newSelected: string[]) => void;
+  color?: 'indigo' | 'sky' | 'purple' | 'amber' | 'emerald';
+  allLabel?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const toggleOption = (val: string) => {
+    if (selected.includes(val)) {
+      onChange(selected.filter((v) => v !== val));
+    } else {
+      onChange([...selected, val]);
+    }
+  };
+
+  const selectAll = () => onChange(options.map((o) => o.value));
+  const clearAll = () => onChange([]);
+
+  const isAll = selected.length === 0;
+
+  const filteredOptions = options.filter((o) =>
+    o.label.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const themeColors = {
+    indigo: {
+      border: 'border-indigo-500 focus:border-indigo-600',
+      badge: 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800',
+      checkbox: 'bg-indigo-600 border-indigo-600 text-white',
+      hover: 'hover:bg-indigo-50/70 dark:hover:bg-indigo-950/30',
+      text: 'text-indigo-600 dark:text-indigo-400',
+      ring: 'focus:ring-indigo-500/20',
+    },
+    amber: {
+      border: 'border-amber-500 focus:border-amber-600',
+      badge: 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800',
+      checkbox: 'bg-amber-600 border-amber-600 text-white',
+      hover: 'hover:bg-amber-50/70 dark:hover:bg-amber-950/30',
+      text: 'text-amber-600 dark:text-amber-400',
+      ring: 'focus:ring-amber-500/20',
+    },
+    emerald: {
+      border: 'border-emerald-500 focus:border-emerald-600',
+      badge: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800',
+      checkbox: 'bg-emerald-600 border-emerald-600 text-white',
+      hover: 'hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30',
+      text: 'text-emerald-600 dark:text-emerald-400',
+      ring: 'focus:ring-emerald-500/20',
+    },
+    purple: {
+      border: 'border-purple-500 focus:border-purple-600',
+      badge: 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800',
+      checkbox: 'bg-purple-600 border-purple-600 text-white',
+      hover: 'hover:bg-purple-50/70 dark:hover:bg-purple-950/30',
+      text: 'text-purple-600 dark:text-purple-400',
+      ring: 'focus:ring-purple-500/20',
+    },
+    sky: {
+      border: 'border-sky-500 focus:border-sky-600',
+      badge: 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800',
+      checkbox: 'bg-sky-600 border-sky-600 text-white',
+      hover: 'hover:bg-sky-50/70 dark:hover:bg-sky-950/30',
+      text: 'text-sky-600 dark:text-sky-400',
+      ring: 'focus:ring-sky-500/20',
+    },
+  }[color];
+
+  // Dynamic summary text for the trigger button
+  let summaryText = allLabel;
+  if (selected.length === 1) {
+    const matched = options.find((o) => o.value === selected[0]);
+    summaryText = matched ? matched.label : selected[0];
+  } else if (selected.length > 1) {
+    summaryText = `${selected.length} Selected`;
+  }
+
+  return (
+    <div className="relative space-y-1" ref={dropdownRef}>
+      <div className="flex items-center justify-between">
+        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+          {Icon && <Icon className={`w-3.5 h-3.5 ${themeColors.text}`} />}
+          <span>{label}</span>
+        </label>
+        <span
+          className={`text-[9.5px] font-bold px-2 py-0.5 rounded-full border transition-all ${
+            isAll
+              ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+              : themeColors.badge
+          }`}
+        >
+          {isAll ? 'All (Default)' : `${selected.length} Selected`}
+        </span>
+      </div>
+
+      {/* Trigger Button */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border transition-all text-left shadow-sm ${
+          isOpen
+            ? `${themeColors.border} ring-2 ${themeColors.ring}`
+            : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+        }`}
+      >
+        <div className="flex items-center gap-2 overflow-hidden">
+          <span className="text-slate-800 dark:text-slate-200 truncate font-medium">
+            {isAll ? (
+              <span className="text-slate-400 font-normal">All / Any (No restriction)</span>
+            ) : (
+              <span className="font-semibold">{summaryText}</span>
+            )}
+          </span>
+        </div>
+        <ChevronDown
+          className={`w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200 ${
+            isOpen ? 'rotate-180 text-slate-800 dark:text-white' : ''
+          }`}
+        />
+      </button>
+
+      {/* Dismissible Selected Badges Preview */}
+      {!isAll && (
+        <div className="flex flex-wrap gap-1 pt-0.5">
+          {selected.slice(0, 3).map((val) => {
+            const opt = options.find((o) => o.value === val);
+            return (
+              <span
+                key={val}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${themeColors.badge}`}
+              >
+                <span className="max-w-[130px] truncate">{opt ? opt.label : val}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleOption(val);
+                  }}
+                  className="hover:opacity-75 p-0.5"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </span>
+            );
+          })}
+          {selected.length > 3 && (
+            <span className="text-[10px] text-slate-400 font-semibold self-center">
+              +{selected.length - 3} more
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Floating Popover with Search & Checkboxes */}
+      {isOpen && (
+        <div className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2.5 space-y-2 animate-in fade-in zoom-in-95 duration-150">
+          {/* Popover Header / Search */}
+          <div className="space-y-1.5 pb-2 border-b border-slate-100 dark:border-slate-800">
+            {options.length > 4 && (
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder={`Search ${label}...`}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-8 pr-2.5 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none"
+                  autoFocus
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between text-[11px] pt-0.5 px-0.5">
+              <span className="text-slate-400 font-medium">
+                {selected.length} of {options.length} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={clearAll}
+                  className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 font-semibold hover:underline"
+                >
+                  Clear (All)
+                </button>
+                <span className="text-slate-300 dark:text-slate-700">•</span>
+                <button
+                  type="button"
+                  onClick={selectAll}
+                  className={`font-semibold hover:underline ${themeColors.text}`}
+                >
+                  Select All
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Options List with Checkboxes */}
+          <div className="max-h-48 overflow-y-auto space-y-0.5 custom-scrollbar pr-0.5">
+            {filteredOptions.length === 0 ? (
+              <div className="p-3 text-center text-xs text-slate-400">No matching options</div>
+            ) : (
+              filteredOptions.map((opt) => {
+                const checked = selected.includes(opt.value);
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => toggleOption(opt.value)}
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
+                      checked
+                        ? `${themeColors.hover} font-semibold text-slate-900 dark:text-white`
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {/* Modern Checkbox */}
+                    <div
+                      className={`w-4 h-4 rounded-md flex items-center justify-center border transition-all shrink-0 ${
+                        checked
+                          ? themeColors.checkbox
+                          : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                      }`}
+                    >
+                      {checked && <Check className="w-3 h-3 stroke-[3]" />}
+                    </div>
+                    <span className="truncate">{opt.label}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ChecklistTemplateEditor({
   categories,
   products = [],
   profiles = [],
+  propertyScopes = [],
+  customerTypes = [],
+  workflowStages = [],
+  subProducts = [],
 }: ChecklistTemplateEditorProps) {
   const router = useRouter();
 
@@ -77,8 +360,11 @@ export default function ChecklistTemplateEditor({
   const [newItemLabel, setNewItemLabel] = useState('');
   const [applicantReq, setApplicantReq] = useState('YES');
   const [coApplicantReq, setCoApplicantReq] = useState('IF_APPLICABLE');
-  const [propScope, setPropScope] = useState('');
-  const [itemStage, setItemStage] = useState(1);
+  const [selectedPropScopes, setSelectedPropScopes] = useState<string[]>([]);
+  const [selectedSubProducts, setSelectedSubProducts] = useState<string[]>([]);
+  const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
+  const [selectedCustomerTypes, setSelectedCustomerTypes] = useState<string[]>([]);
+  const [selectedStages, setSelectedStages] = useState<number[]>([1]);
   const [requireOnedrive, setRequireOnedrive] = useState(true);
   const [requireRemark, setRequireRemark] = useState(false);
   const [remarkPlaceholder, setRemarkPlaceholder] = useState('');
@@ -90,7 +376,11 @@ export default function ChecklistTemplateEditor({
     label: string;
     applicantRequirement: string;
     coApplicantRequirement: string;
-    propertyTypeScope: string;
+    selectedPropScopes: string[];
+    selectedSubProducts: string[];
+    selectedProfiles: string[];
+    selectedCustomerTypes: string[];
+    selectedStages: number[];
     stage: number;
     requireOnedrive: boolean;
     requireRemark: boolean;
@@ -171,8 +461,12 @@ export default function ChecklistTemplateEditor({
       label: newItemLabel,
       applicantRequirement: applicantReq as any,
       coApplicantRequirement: coApplicantReq as any,
-      propertyTypeScope: propScope || undefined,
-      stage: itemStage,
+      propertyTypeScope: selectedPropScopes.length > 0 ? selectedPropScopes.join(', ') : undefined,
+      subProduct: selectedSubProducts.length > 0 ? selectedSubProducts.join(', ') : undefined,
+      incomeType: selectedProfiles.length > 0 ? selectedProfiles.join(', ') : undefined,
+      customerType: selectedCustomerTypes.length > 0 ? selectedCustomerTypes.join(', ') : undefined,
+      stages: selectedStages.length > 0 ? selectedStages.join(', ') : undefined,
+      stage: selectedStages.length > 0 ? selectedStages[0] : 1,
       requireOnedrive,
       requireRemark,
       remarkPlaceholder: requireRemark ? remarkPlaceholder : undefined,
@@ -183,6 +477,11 @@ export default function ChecklistTemplateEditor({
       setRemarkPlaceholder('');
       setRequireRemark(false);
       setRequireOnedrive(true);
+      setSelectedPropScopes([]);
+      setSelectedSubProducts([]);
+      setSelectedProfiles([]);
+      setSelectedCustomerTypes([]);
+      setSelectedStages([1]);
       router.refresh();
     } else {
       setErrorMsg(res.error || 'Failed to create item');
@@ -200,8 +499,12 @@ export default function ChecklistTemplateEditor({
       label: editingItem.label,
       applicantRequirement: editingItem.applicantRequirement as any,
       coApplicantRequirement: editingItem.coApplicantRequirement as any,
-      propertyTypeScope: editingItem.propertyTypeScope || undefined,
-      stage: editingItem.stage,
+      propertyTypeScope: editingItem.selectedPropScopes.length > 0 ? editingItem.selectedPropScopes.join(', ') : undefined,
+      subProduct: editingItem.selectedSubProducts.length > 0 ? editingItem.selectedSubProducts.join(', ') : undefined,
+      incomeType: editingItem.selectedProfiles.length > 0 ? editingItem.selectedProfiles.join(', ') : undefined,
+      customerType: editingItem.selectedCustomerTypes.length > 0 ? editingItem.selectedCustomerTypes.join(', ') : undefined,
+      stages: editingItem.selectedStages.length > 0 ? editingItem.selectedStages.join(', ') : undefined,
+      stage: editingItem.selectedStages.length > 0 ? editingItem.selectedStages[0] : 1,
       requireOnedrive: editingItem.requireOnedrive,
       requireRemark: editingItem.requireRemark,
       remarkPlaceholder: editingItem.requireRemark ? editingItem.remarkPlaceholder : undefined,
@@ -514,37 +817,90 @@ export default function ChecklistTemplateEditor({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Property Scope
-                  </label>
-                  <select
-                    value={propScope}
-                    onChange={(e) => setPropScope(e.target.value)}
-                    className="w-full glass-input px-2 py-1.5 rounded-xl text-[11px] bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400"
-                  >
-                    <option value="">All Property Types</option>
-                    <option value="RESALE">RESALE</option>
-                    <option value="TAKEOVER_SELLER_BT">TAKEOVER_SELLER_BT</option>
-                    <option value="DIRECT_ALLOTMENT">DIRECT_ALLOTMENT</option>
-                  </select>
-                </div>
+              {/* Multi-Select Dropdown: Property Scope */}
+              <MultiSelectDropdown
+                label="Property Scope"
+                icon={Building2}
+                options={propertyScopes.length > 0 ? propertyScopes.map(s => ({ label: s.name, value: s.name })) : [
+                  { label: 'Resale', value: 'Resale' },
+                  { label: 'Takeover / Seller BT', value: 'Takeover / Seller BT' },
+                  { label: 'Direct Allotment - Flat', value: 'Direct Allotment - Flat' },
+                  { label: 'Direct Allotment - Plot', value: 'Direct Allotment - Plot' },
+                  { label: 'Commercial Property', value: 'Commercial Property' },
+                  { label: 'Industrial Plot', value: 'Industrial Plot' },
+                ]}
+                selected={selectedPropScopes}
+                onChange={setSelectedPropScopes}
+                color="indigo"
+                allLabel="All Property Scopes"
+              />
 
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Stage (1 to 4)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="4"
-                    value={itemStage}
-                    onChange={(e) => setItemStage(parseInt(e.target.value) || 1)}
-                    className="w-full glass-input px-3 py-1.5 rounded-xl text-xs font-bold text-center"
-                  />
-                </div>
-              </div>
+              {/* Multi-Select Dropdown: Product Type and Sub Product Type */}
+              <MultiSelectDropdown
+                label="Product & Sub-Product Type"
+                icon={Package}
+                options={subProducts.length > 0 ? subProducts.map(sp => {
+                  const prefix = sp.product?.name ? `${sp.product.name} - ` : '';
+                  return { label: `${prefix}${sp.name}`, value: `${prefix}${sp.name}` };
+                }) : products.map(p => ({ label: p.name, value: p.name }))}
+                selected={selectedSubProducts}
+                onChange={setSelectedSubProducts}
+                color="amber"
+                allLabel="All Products / Sub-Products"
+              />
+
+              {/* Multi-Select Dropdown: Income Profile */}
+              <MultiSelectDropdown
+                label="Income Profile Option"
+                icon={Briefcase}
+                options={profiles.length > 0 ? profiles.map(p => ({ label: p.name, value: p.name })) : [
+                  { label: 'Salaried', value: 'Salaried' },
+                  { label: 'Self Employed Professional', value: 'Self Employed Professional' },
+                  { label: 'Self Employed Non-Professional', value: 'Self Employed Non-Professional' },
+                  { label: 'Rental Income', value: 'Rental Income' },
+                ]}
+                selected={selectedProfiles}
+                onChange={setSelectedProfiles}
+                color="emerald"
+                allLabel="All Income Profiles"
+              />
+
+              {/* Multi-Select Dropdown: Customer Type */}
+              <MultiSelectDropdown
+                label="Customer Type"
+                icon={Users2}
+                options={customerTypes.length > 0 ? customerTypes.map(c => ({ label: c.name, value: c.name })) : [
+                  { label: 'Individual', value: 'Individual' },
+                  { label: 'Proprietorship', value: 'Proprietorship' },
+                  { label: 'Partnership', value: 'Partnership' },
+                  { label: 'Pvt Ltd', value: 'Pvt Ltd' },
+                  { label: 'Public Ltd', value: 'Public Ltd' },
+                  { label: 'HUF', value: 'HUF' },
+                ]}
+                selected={selectedCustomerTypes}
+                onChange={setSelectedCustomerTypes}
+                color="purple"
+                allLabel="All Customer Types"
+              />
+
+              {/* Multi-Select Dropdown: Workflow Stages */}
+              <MultiSelectDropdown
+                label="Workflow Stages"
+                icon={Layers}
+                options={workflowStages.length > 0 ? workflowStages.map(s => ({
+                  label: `Stage ${s.stageNumber}: ${s.name}`,
+                  value: String(s.stageNumber),
+                })) : [
+                  { label: 'Stage 1 (Login Docs)', value: '1' },
+                  { label: 'Stage 2 (Sanction Docs)', value: '2' },
+                  { label: 'Stage 3 (Disbursal Docs)', value: '3' },
+                  { label: 'Stage 4 (Post-Disbursal)', value: '4' },
+                ]}
+                selected={selectedStages.map(String)}
+                onChange={(vals) => setSelectedStages(vals.map(v => parseInt(v)).filter(n => !isNaN(n)))}
+                color="sky"
+                allLabel="All Stages (1 to 4)"
+              />
 
               <button
                 type="submit"
@@ -635,9 +991,22 @@ export default function ChecklistTemplateEditor({
                         <span className="font-bold text-slate-900 dark:text-white text-xs">
                           {item.label}
                         </span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          Stage {item.stage}
-                        </span>
+                        {item.stages ? (
+                          <div className="flex items-center gap-1">
+                            {item.stages.split(',').map((s) => (
+                              <span
+                                key={s.trim()}
+                                className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800"
+                              >
+                                Stage {s.trim()}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            Stage {item.stage}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -649,8 +1018,30 @@ export default function ChecklistTemplateEditor({
                         </span>
 
                         {item.propertyTypeScope && (
-                          <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 text-[10px] font-bold">
+                          <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 text-[10px] font-bold flex items-center gap-1">
+                            <Building2 className="w-2.5 h-2.5" />
                             {item.propertyTypeScope}
+                          </span>
+                        )}
+
+                        {item.customerType && (
+                          <span className="px-2 py-0.5 rounded bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-500/30 text-[10px] font-semibold flex items-center gap-1">
+                            <Users2 className="w-2.5 h-2.5" />
+                            {item.customerType}
+                          </span>
+                        )}
+
+                        {item.incomeType && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 text-[10px] font-semibold flex items-center gap-1">
+                            <Briefcase className="w-2.5 h-2.5" />
+                            {item.incomeType}
+                          </span>
+                        )}
+
+                        {item.subProduct && (
+                          <span className="px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 text-[10px] font-semibold flex items-center gap-1">
+                            <Package className="w-2.5 h-2.5" />
+                            {item.subProduct}
                           </span>
                         )}
 
@@ -694,7 +1085,13 @@ export default function ChecklistTemplateEditor({
                             label: item.label,
                             applicantRequirement: item.applicantRequirement,
                             coApplicantRequirement: item.coApplicantRequirement,
-                            propertyTypeScope: item.propertyTypeScope || '',
+                            selectedPropScopes: item.propertyTypeScope ? item.propertyTypeScope.split(',').map((s) => s.trim()).filter(Boolean) : [],
+                            selectedSubProducts: item.subProduct ? item.subProduct.split(',').map((s) => s.trim()).filter(Boolean) : [],
+                            selectedProfiles: item.incomeType ? item.incomeType.split(',').map((s) => s.trim()).filter(Boolean) : [],
+                            selectedCustomerTypes: item.customerType ? item.customerType.split(',').map((s) => s.trim()).filter(Boolean) : [],
+                            selectedStages: item.stages
+                              ? item.stages.split(',').map((s) => parseInt(s.trim())).filter((n) => !isNaN(n) && n > 0)
+                              : [item.stage || 1],
                             stage: item.stage,
                             requireOnedrive: item.requireOnedrive !== false,
                             requireRemark: item.requireRemark === true,
@@ -1007,41 +1404,94 @@ export default function ChecklistTemplateEditor({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Property Scope
-                  </label>
-                  <select
-                    value={editingItem.propertyTypeScope}
-                    onChange={(e) =>
-                      setEditingItem({ ...editingItem, propertyTypeScope: e.target.value })
-                    }
-                    className="w-full glass-input px-2 py-1.5 rounded-xl text-[11px] bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400"
-                  >
-                    <option value="">All Property Types</option>
-                    <option value="RESALE">RESALE</option>
-                    <option value="TAKEOVER_SELLER_BT">TAKEOVER_SELLER_BT</option>
-                    <option value="DIRECT_ALLOTMENT">DIRECT_ALLOTMENT</option>
-                  </select>
-                </div>
+              {/* Multi-Select Dropdown: Property Scope in Edit Modal */}
+              <MultiSelectDropdown
+                label="Property Scope"
+                icon={Building2}
+                options={propertyScopes.length > 0 ? propertyScopes.map(s => ({ label: s.name, value: s.name })) : [
+                  { label: 'Resale', value: 'Resale' },
+                  { label: 'Takeover / Seller BT', value: 'Takeover / Seller BT' },
+                  { label: 'Direct Allotment - Flat', value: 'Direct Allotment - Flat' },
+                  { label: 'Direct Allotment - Plot', value: 'Direct Allotment - Plot' },
+                  { label: 'Commercial Property', value: 'Commercial Property' },
+                  { label: 'Industrial Plot', value: 'Industrial Plot' },
+                ]}
+                selected={editingItem.selectedPropScopes}
+                onChange={(scopes) => setEditingItem({ ...editingItem, selectedPropScopes: scopes })}
+                color="indigo"
+                allLabel="All Property Scopes"
+              />
 
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Stage (1 to 4)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="4"
-                    value={editingItem.stage}
-                    onChange={(e) =>
-                      setEditingItem({ ...editingItem, stage: parseInt(e.target.value) || 1 })
-                    }
-                    className="w-full glass-input px-3 py-1.5 rounded-xl text-xs font-bold text-center"
-                  />
-                </div>
-              </div>
+              {/* Multi-Select Dropdown: Product Type and Sub Product Type in Edit Modal */}
+              <MultiSelectDropdown
+                label="Product & Sub-Product Type"
+                icon={Package}
+                options={subProducts.length > 0 ? subProducts.map(sp => {
+                  const prefix = sp.product?.name ? `${sp.product.name} - ` : '';
+                  return { label: `${prefix}${sp.name}`, value: `${prefix}${sp.name}` };
+                }) : products.map(p => ({ label: p.name, value: p.name }))}
+                selected={editingItem.selectedSubProducts}
+                onChange={(subs) => setEditingItem({ ...editingItem, selectedSubProducts: subs })}
+                color="amber"
+                allLabel="All Products / Sub-Products"
+              />
+
+              {/* Multi-Select Dropdown: Income Profile in Edit Modal */}
+              <MultiSelectDropdown
+                label="Income Profile Option"
+                icon={Briefcase}
+                options={profiles.length > 0 ? profiles.map(p => ({ label: p.name, value: p.name })) : [
+                  { label: 'Salaried', value: 'Salaried' },
+                  { label: 'Self Employed Professional', value: 'Self Employed Professional' },
+                  { label: 'Self Employed Non-Professional', value: 'Self Employed Non-Professional' },
+                  { label: 'Rental Income', value: 'Rental Income' },
+                ]}
+                selected={editingItem.selectedProfiles}
+                onChange={(profs) => setEditingItem({ ...editingItem, selectedProfiles: profs })}
+                color="emerald"
+                allLabel="All Income Profiles"
+              />
+
+              {/* Multi-Select Dropdown: Customer Type in Edit Modal */}
+              <MultiSelectDropdown
+                label="Customer Type"
+                icon={Users2}
+                options={customerTypes.length > 0 ? customerTypes.map(c => ({ label: c.name, value: c.name })) : [
+                  { label: 'Individual', value: 'Individual' },
+                  { label: 'Proprietorship', value: 'Proprietorship' },
+                  { label: 'Partnership', value: 'Partnership' },
+                  { label: 'Pvt Ltd', value: 'Pvt Ltd' },
+                  { label: 'Public Ltd', value: 'Public Ltd' },
+                  { label: 'HUF', value: 'HUF' },
+                ]}
+                selected={editingItem.selectedCustomerTypes}
+                onChange={(custs) => setEditingItem({ ...editingItem, selectedCustomerTypes: custs })}
+                color="purple"
+                allLabel="All Customer Types"
+              />
+
+              {/* Multi-Select Dropdown: Workflow Stages in Edit Modal */}
+              <MultiSelectDropdown
+                label="Workflow Stages"
+                icon={Layers}
+                options={workflowStages.length > 0 ? workflowStages.map(s => ({
+                  label: `Stage ${s.stageNumber}: ${s.name}`,
+                  value: String(s.stageNumber),
+                })) : [
+                  { label: 'Stage 1 (Login Docs)', value: '1' },
+                  { label: 'Stage 2 (Sanction Docs)', value: '2' },
+                  { label: 'Stage 3 (Disbursal Docs)', value: '3' },
+                  { label: 'Stage 4 (Post-Disbursal)', value: '4' },
+                ]}
+                selected={editingItem.selectedStages.map(String)}
+                onChange={(vals) => setEditingItem({
+                  ...editingItem,
+                  selectedStages: vals.map(v => parseInt(v)).filter(n => !isNaN(n)),
+                  stage: vals.length > 0 ? parseInt(vals[0]) : 1,
+                })}
+                color="sky"
+                allLabel="All Stages (1 to 4)"
+              />
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button

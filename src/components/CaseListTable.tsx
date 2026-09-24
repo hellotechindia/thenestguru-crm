@@ -21,18 +21,26 @@ import {
   Building,
   Layers,
   Users,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 import { deleteCaseAction, updateCaseIntakeDetailsAction } from '@/app/actions';
 import { useRouter } from 'next/navigation';
 import { exportToCSV } from '@/lib/excel-export';
 import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
+import { INDIAN_STATES, getCitiesForIndianState } from '@/lib/india-data';
 
 export interface CoApplicantInfo {
   name: string;
+  relationship?: string;
   mobile: string;
   email: string;
+  gender?: string;
   state: string;
+  city?: string;
   dob?: string;
+  customerType?: string;
+  incomeTypes?: string[];
   incomeRequired: boolean;
 }
 
@@ -47,6 +55,8 @@ export interface CaseItem {
   product: string;
   customerType: string;
   propertyType: string;
+  propertyState?: string | null;
+  propertyCity?: string | null;
   coApplicantCount: number;
   coApplicantsData?: string | null;
   stage: number;
@@ -56,6 +66,7 @@ export interface CaseItem {
   operationUserId?: string | null;
   assignedTeamId?: string | null;
   createdAt: string;
+  updatedAt?: string;
   checklistCount: number;
   receivedCount: number;
   assignedTeamName: string;
@@ -69,7 +80,17 @@ interface CaseListTableProps {
   users?: Array<{ id: string; name: string; role: string; email?: string | null; username?: string | null }>;
   products?: Array<{ id: string; name: string }>;
   profiles?: Array<{ id: string; name: string }>;
+  caseStatuses?: Array<{ id: string; name: string; color?: string | null; description?: string | null; displayOrder?: number }>;
 }
+
+const DEFAULT_STATUSES = [
+  { id: '1', name: 'Pending Documents', color: '#f59e0b' },
+  { id: '2', name: 'Ready for Submission', color: '#0284c7' },
+  { id: '3', name: 'In Review', color: '#8b5cf6' },
+  { id: '4', name: 'Approved', color: '#10b981' },
+  { id: '5', name: 'Disbursed', color: '#059669' },
+  { id: '6', name: 'Rejected', color: '#ef4444' },
+];
 
 export default function CaseListTable({
   cases,
@@ -79,8 +100,10 @@ export default function CaseListTable({
   users = [],
   products = [],
   profiles = [],
+  caseStatuses = [],
 }: CaseListTableProps) {
   const router = useRouter();
+  const availableStatuses = caseStatuses && caseStatuses.length > 0 ? caseStatuses : DEFAULT_STATUSES;
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [propertyFilter, setPropertyFilter] = useState('ALL');
@@ -371,12 +394,11 @@ export default function CaseListTable({
               className="bg-transparent text-sky-600 dark:text-sky-400 font-semibold focus:outline-none"
             >
               <option value="ALL">All Statuses</option>
-              <option value="Pending Documents">Pending Documents</option>
-              <option value="Ready for Submission">Ready for Submission</option>
-              <option value="In Review">In Review</option>
-              <option value="Approved">Approved</option>
-              <option value="Disbursed">Disbursed</option>
-              <option value="Rejected">Rejected</option>
+              {availableStatuses.map((st) => (
+                <option key={st.id || st.name} value={st.name}>
+                  {st.name}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -420,6 +442,7 @@ export default function CaseListTable({
                 <th className="py-3 px-4">Product / Profile</th>
                 <th className="py-3 px-4">Property</th>
                 <th className="py-3 px-4 text-center">Co-Applicants</th>
+                <th className="py-3 px-4">Timeline / Age</th>
                 <th className="py-3 px-4 text-center">Stage</th>
                 <th className="py-3 px-4 text-center">Checklist Progress</th>
                 <th className="py-3 px-4 text-right">Actions</th>
@@ -428,7 +451,7 @@ export default function CaseListTable({
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {filteredCases.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500">
+                  <td colSpan={8} className="py-8 text-center text-slate-500">
                     No cases match your filters.
                   </td>
                 </tr>
@@ -465,6 +488,74 @@ export default function CaseListTable({
                           <span className="text-slate-400 font-normal">Sole Applicant</span>
                         )}
                       </td>
+                      <td className="py-4 px-4 whitespace-nowrap">
+                        <div className="flex flex-col gap-1">
+                          {/* Intake Date */}
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+                            <Calendar className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                            <span>
+                              {new Date(c.createdAt).toLocaleDateString('en-IN', {
+                                day: 'numeric',
+                                month: 'short',
+                                year: 'numeric',
+                              })}
+                            </span>
+                          </div>
+
+                          {/* Dynamic Age Badge */}
+                          <div className="flex items-center">
+                            {(() => {
+                              const created = new Date(c.createdAt);
+                              const now = new Date();
+                              const diffMs = now.getTime() - created.getTime();
+                              const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                              const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+                              let badgeText = '';
+                              let badgeClass = '';
+
+                              if (diffDays === 0) {
+                                badgeText = diffHours <= 1 ? 'Intake: Today (Fresh)' : `Intake: Today (${diffHours}h ago)`;
+                                badgeClass = 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30';
+                              } else if (diffDays === 1) {
+                                badgeText = '1 day old';
+                                badgeClass = 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30';
+                              } else if (diffDays <= 7) {
+                                badgeText = `${diffDays} days old`;
+                                badgeClass = 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/30';
+                              } else if (diffDays <= 15) {
+                                badgeText = `${diffDays} days old`;
+                                badgeClass = 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30';
+                              } else {
+                                badgeText = `${diffDays} days old`;
+                                badgeClass = 'bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/30';
+                              }
+
+                              return (
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${badgeClass}`}>
+                                  ⏱ {badgeText}
+                                </span>
+                              );
+                            })()}
+                          </div>
+
+                          {/* Last Modified */}
+                          {c.updatedAt && (
+                            <div className="flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium">
+                              <Clock className="w-3 h-3 shrink-0" />
+                              <span>
+                                Updated: {new Date(c.updatedAt).toLocaleDateString('en-IN', {
+                                  day: 'numeric',
+                                  month: 'short',
+                                })}, {new Date(c.updatedAt).toLocaleTimeString('en-IN', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-4 px-4 text-center">
                         <span className="inline-block px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 font-bold text-[10px] border border-indigo-200 dark:border-indigo-500/30">
                           Stage {c.stage}
@@ -472,15 +563,22 @@ export default function CaseListTable({
                       </td>
                       <td className="py-4 px-4">
                         <div className="flex flex-col items-center">
-                          <span
-                            className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold mb-1.5 ${
-                              c.status === 'Ready for Submission' || c.status === 'Approved' || c.status === 'Disbursed'
-                                ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30'
-                                : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
-                            }`}
-                          >
-                            {c.status}
-                          </span>
+                          {(() => {
+                            const statusObj = availableStatuses.find((s) => s.name === c.status);
+                            const statusColor = statusObj?.color || '#3b82f6';
+                            return (
+                              <span
+                                className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold mb-1.5 border"
+                                style={{
+                                  backgroundColor: `${statusColor}18`,
+                                  color: statusColor,
+                                  borderColor: `${statusColor}40`,
+                                }}
+                              >
+                                {c.status}
+                              </span>
+                            );
+                          })()}
                           <div className="w-28 bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
                             <div
                               className={`h-1.5 rounded-full ${
@@ -649,9 +747,9 @@ export default function CaseListTable({
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
                     >
                       <option value="">-- Select State --</option>
-                      {states.map((s) => (
-                        <option key={s.id} value={s.name}>
-                          {s.name}
+                      {INDIAN_STATES.map((stateName) => (
+                        <option key={stateName} value={stateName}>
+                          {stateName}
                         </option>
                       ))}
                     </select>
@@ -662,8 +760,9 @@ export default function CaseListTable({
                       Client City
                     </label>
                     {(() => {
-                      const editStateObj = states.find((s) => s.name === editFormData.clientState);
-                      const editCities = editStateObj?.cities || [];
+                      const editStateObj = states.find((s) => s.name?.toLowerCase() === editFormData.clientState?.toLowerCase());
+                      const dbCities = editStateObj?.cities?.map(c => c.name) || [];
+                      const editCities = Array.from(new Set([...dbCities, ...getCitiesForIndianState(editFormData.clientState)]));
                       if (editCities.length > 0) {
                         return (
                           <div className="space-y-1">
@@ -671,7 +770,7 @@ export default function CaseListTable({
                               value={
                                 isCustomCityEdit
                                   ? '__other__'
-                                  : editCities.some((c) => c.name === editFormData.clientCity)
+                                  : editCities.some((c) => c === editFormData.clientCity)
                                   ? editFormData.clientCity
                                   : editFormData.clientCity
                                   ? '__other__'
@@ -689,9 +788,9 @@ export default function CaseListTable({
                               className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
                             >
                               <option value="">-- Select City --</option>
-                              {editCities.map((c) => (
-                                <option key={c.id} value={c.name}>
-                                  {c.name}
+                              {editCities.map((cityName) => (
+                                <option key={cityName} value={cityName}>
+                                  {cityName}
                                 </option>
                               ))}
                               <option value="__other__">+ Other / Enter Manually</option>
@@ -929,9 +1028,9 @@ export default function CaseListTable({
                               className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-900"
                             >
                               <option value="">-- Select State --</option>
-                              {states.map((s) => (
-                                <option key={s.id} value={s.name}>
-                                  {s.name}
+                              {INDIAN_STATES.map((stateName) => (
+                                <option key={stateName} value={stateName}>
+                                  {stateName}
                                 </option>
                               ))}
                             </select>
@@ -984,14 +1083,16 @@ export default function CaseListTable({
                     <select
                       value={editFormData.status}
                       onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-bold text-emerald-600 dark:text-emerald-400"
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-bold"
+                      style={{
+                        color: availableStatuses.find((s) => s.name === editFormData.status)?.color || '#10b981',
+                      }}
                     >
-                      <option value="Pending Documents">Pending Documents</option>
-                      <option value="Ready for Submission">Ready for Submission</option>
-                      <option value="In Review">In Review</option>
-                      <option value="Approved">Approved</option>
-                      <option value="Disbursed">Disbursed</option>
-                      <option value="Rejected">Rejected</option>
+                      {availableStatuses.map((st) => (
+                        <option key={st.id || st.name} value={st.name}>
+                          {st.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
 

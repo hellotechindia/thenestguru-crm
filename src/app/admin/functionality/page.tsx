@@ -12,26 +12,28 @@ export default async function AdminFunctionalityPage() {
     redirect('/dashboard');
   }
 
-  const banks = await prisma.bankConfig.findMany({ orderBy: { bankName: 'asc' } });
-  const states = await prisma.stateConfig.findMany({
-    include: {
-      cities: {
-        orderBy: { name: 'asc' },
-      },
-    },
-    orderBy: { name: 'asc' },
-  });
-  const cases = await prisma.case.findMany({
-    select: { id: true, clientName: true, product: true, status: true },
-    orderBy: { createdAt: 'desc' },
-  });
-  const revenues = await prisma.revenueRecord.findMany({
-    include: { case: true },
-    orderBy: { createdAt: 'desc' },
-  });
-  const expenses = await prisma.expenseRecord.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
+  const [
+    banks,
+    states,
+    cases,
+    revenues,
+    expenses,
+  ] = await Promise.all([
+    prisma.bankConfig.findMany({ orderBy: { bankName: 'asc' } }),
+    prisma.stateConfig.findMany({
+      include: { cities: { orderBy: { name: 'asc' } } },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.case.findMany({
+      select: { id: true, clientName: true, product: true, status: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.revenueRecord.findMany({
+      include: { case: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.expenseRecord.findMany({ orderBy: { createdAt: 'desc' } }),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -40,7 +42,7 @@ export default async function AdminFunctionalityPage() {
           Add Functionality & Settings Hub
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Configure Banks (salary slip months), States, Revenue records, and Expense entries
+          Configure Bank Salary Slips, States, Cities, and Financial Ledgers
         </p>
       </div>
 

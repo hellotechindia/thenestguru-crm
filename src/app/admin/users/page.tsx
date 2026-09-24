@@ -19,7 +19,12 @@ export default async function AdminUsersPage() {
     where: {
       role: { not: 'SUPER_ADMIN' },
     },
-    include: { team: true },
+    include: {
+      team: true,
+      childChannels: {
+        select: { id: true, name: true, username: true, email: true, phone: true, accessPermission: true, createdAt: true },
+      },
+    },
     orderBy: { createdAt: 'desc' },
   });
 

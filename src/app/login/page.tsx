@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useTheme } from '@/context/ThemeContext';
-import { Lock, Mail, ShieldCheck, UserCheck, ArrowRight, CheckCircle2, Sun, Moon, Eye, EyeOff, AtSign } from 'lucide-react';
+import { Lock, Mail, ShieldCheck, UserCheck, Users2, ArrowRight, CheckCircle2, Sun, Moon, Eye, EyeOff, AtSign } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -35,9 +36,12 @@ export default function LoginPage() {
     }
   };
 
-  const setDemoUser = (userType: 'admin' | 'agent') => {
+  const setDemoUser = (userType: 'admin' | 'staff' | 'channel') => {
     if (userType === 'admin') {
       setEmail('admin');
+      setPassword('admin123');
+    } else if (userType === 'staff') {
+      setEmail('deepstaff');
       setPassword('admin123');
     } else {
       setEmail('channel');
@@ -80,30 +84,35 @@ export default function LoginPage() {
         <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-3.5 border border-slate-200 dark:border-slate-800 space-y-2">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
             <span>Quick Login Presets</span>
-            <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold">Click to fill credentials</span>
+            <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold">Click to fill</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-1.5">
             <button
               type="button"
               onClick={() => setDemoUser('admin')}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-xs font-medium transition-all text-left"
+              className="flex flex-col items-center justify-center p-2 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-xs font-medium transition-all text-center"
             >
-              <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-600" />
-              <div>
-                <div className="font-semibold leading-tight text-slate-900 dark:text-white">Super Admin</div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">Login: admin</div>
-              </div>
+              <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-600 mb-0.5" />
+              <div className="font-bold text-[11px] leading-tight text-slate-900 dark:text-white">Super Admin</div>
+              <div className="text-[9px] text-slate-500 dark:text-slate-400">admin</div>
             </button>
             <button
               type="button"
-              onClick={() => setDemoUser('agent')}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 text-sky-700 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-500/20 text-xs font-medium transition-all text-left"
+              onClick={() => setDemoUser('staff')}
+              className="flex flex-col items-center justify-center p-2 rounded-lg bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 text-sky-700 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-500/20 text-xs font-medium transition-all text-center"
             >
-              <UserCheck className="w-4 h-4 shrink-0 text-sky-600" />
-              <div>
-                <div className="font-semibold leading-tight text-slate-900 dark:text-white">Team Member</div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">Login: channel</div>
-              </div>
+              <UserCheck className="w-3.5 h-3.5 shrink-0 text-sky-600 mb-0.5" />
+              <div className="font-bold text-[11px] leading-tight text-slate-900 dark:text-white">Deepak Staff</div>
+              <div className="text-[9px] text-slate-500 dark:text-slate-400">deepstaff</div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDemoUser('channel')}
+              className="flex flex-col items-center justify-center p-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/20 text-xs font-medium transition-all text-center"
+            >
+              <Users2 className="w-3.5 h-3.5 shrink-0 text-amber-600 mb-0.5" />
+              <div className="font-bold text-[11px] leading-tight text-slate-900 dark:text-white">Channel DSA</div>
+              <div className="text-[9px] text-slate-500 dark:text-slate-400">channel</div>
             </button>
           </div>
         </div>
@@ -152,6 +161,14 @@ export default function LoginPage() {
               >
                 {showPassword ? <EyeOff className="w-4 h-4 text-sky-500" /> : <Eye className="w-4 h-4" />}
               </button>
+            </div>
+            <div className="flex items-center justify-end mt-1.5">
+              <Link
+                href="/forgot-password"
+                className="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:text-sky-500 hover:underline"
+              >
+                Forgot Password?
+              </Link>
             </div>
           </div>
 

@@ -17,6 +17,11 @@ export default async function BirthdaysPage() {
     redirect('/login');
   }
 
+  // Channel accounts have no internal birthdays directory access
+  if ((session.user as any).role === 'CHANNEL') {
+    redirect('/dashboard');
+  }
+
   const res = await getUpcomingBirthdaysAction(true); // includeAll = true for full directory
   const birthdays = res.success && res.birthdays ? (res.birthdays as any) : [];
 

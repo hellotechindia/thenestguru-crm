@@ -26,37 +26,84 @@ import {
   ChevronDown,
   Sparkles,
   Compass,
-  Package,
-  Briefcase,
-  CheckSquare,
-  Settings
+  Package, 
+  Briefcase, 
+  CheckSquare, 
+  Settings,
+  MapPin,
+  DollarSign,
+  Globe,
+  Languages,
+  Shield,
+  Layers,
+  Users2,
+  Contact,
+  Tag,
+  Building2,
 } from 'lucide-react';
 import BirthdayTopWidget from '@/components/BirthdayTopWidget';
 import AttendancePunchTracker from '@/components/AttendancePunchTracker';
+import GoogleTranslateTopBar from '@/components/GoogleTranslateTopBar';
+import NotificationBell from '@/components/NotificationBell';
 import { getCrmBrandingAction } from '@/app/actions';
+import { translations, Locale } from '@/lib/i18n';
 
 interface AppShellProps {
   children: React.ReactNode;
+  initialSession?: any;
 }
 
-export default function AppShell({ children }: AppShellProps) {
+export default function AppShell({ children, initialSession }: AppShellProps) {
   const pathname = usePathname();
-  const { data: session } = useSession();
+  const { data: clientSession } = useSession();
+  const session = clientSession || initialSession;
   const { theme, toggleTheme } = useTheme();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  const isCaseActive =
+    pathname.startsWith('/cases') ||
+    pathname === '/clients' ||
+    pathname.startsWith('/sub-accounts');
   const isChecklistActive =
     pathname.startsWith('/admin/checklist-templates') ||
     pathname.startsWith('/admin/products') ||
-    pathname.startsWith('/admin/profiles');
+    pathname.startsWith('/admin/profiles') ||
+    pathname.startsWith('/admin/customer-types') ||
+    pathname.startsWith('/admin/property-scopes') ||
+    pathname.startsWith('/admin/workflow-stages') ||
+    pathname.startsWith('/admin/case-statuses');
 
+  const isUsersActive = pathname.startsWith('/admin/users');
+  const isHrmsActive = pathname.startsWith('/hrms') || pathname.startsWith('/salary');
+  const [isCaseSubmenuOpen, setIsCaseSubmenuOpen] = useState(true);
   const [isChecklistSubmenuOpen, setIsChecklistSubmenuOpen] = useState(true);
+  const [isUsersSubmenuOpen, setIsUsersSubmenuOpen] = useState(true);
+  const [isHrmsSubmenuOpen, setIsHrmsSubmenuOpen] = useState(true);
   const [crmBranding, setCrmBranding] = useState({
     crmName: 'TheNestGuru',
     crmTagline: 'Loan Processing Desk',
     crmLogoUrl: 'https://thenestguru.com/thenestgurulogo.png',
   });
   const [userAvatar, setUserAvatar] = useState<string | null>(null);
+  const [locale, setLocale] = useState<Locale>('en');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('crm_locale') as Locale;
+      if (saved === 'hi' || saved === 'en') {
+        setLocale(saved);
+      }
+    }
+  }, []);
+
+  const toggleLocale = () => {
+    const next: Locale = locale === 'en' ? 'hi' : 'en';
+    setLocale(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('crm_locale', next);
+      window.dispatchEvent(new CustomEvent('crm_locale_changed', { detail: { locale: next } }));
+    }
+  };
 
   // Fetch CRM branding and listen for live updates
   useEffect(() => {
@@ -93,13 +140,49 @@ export default function AppShell({ children }: AppShellProps) {
     setIsMobileMenuOpen(false);
   }, [pathname]);
 
-  // If on login page, render clean full-screen content without sidebar/header
-  if (pathname === '/login') {
-    return <>{children}</>;
-  }
+  // Persistent role & user fallback cache (synchronously initialized from localStorage on client)
+  const [cachedUser, setCachedUser] = useState<{ role?: string; name?: string; avatarUrl?: string | null }>(() => {
+    let role = initialSession?.user?.role;
+    let name = initialSession?.user?.name;
+    let avatarUrl = (initialSession?.user as any)?.avatarUrl;
 
-  const userRole = (session?.user as any)?.role;
-  const userName = session?.user?.name || 'User';
+    if (typeof window !== 'undefined') {
+      const storedRole = localStorage.getItem('crm_user_role');
+      const storedName = localStorage.getItem('crm_user_name');
+      const storedAvatar = localStorage.getItem('crm_user_avatar');
+      if (storedRole) role = storedRole;
+      if (storedName) name = storedName;
+      if (storedAvatar) avatarUrl = storedAvatar;
+    }
+    return {
+      role: role || 'SUPER_ADMIN',
+      name: name || 'Admin',
+      avatarUrl: avatarUrl || null,
+    };
+  });
+
+  useEffect(() => {
+    const activeRole = (session?.user as any)?.role;
+    const activeName = session?.user?.name;
+    const activeAvatar = (session?.user as any)?.avatarUrl;
+
+    if (activeRole || activeName) {
+      setCachedUser({
+        role: activeRole || 'SUPER_ADMIN',
+        name: activeName || 'Admin',
+        avatarUrl: activeAvatar !== undefined ? activeAvatar : null,
+      });
+      if (typeof window !== 'undefined') {
+        if (activeRole) localStorage.setItem('crm_user_role', activeRole);
+        if (activeName) localStorage.setItem('crm_user_name', activeName);
+        if (activeAvatar) localStorage.setItem('crm_user_avatar', activeAvatar);
+      }
+    }
+  }, [session]);
+
+  const activeSessionRole = (session?.user as any)?.role;
+  const userRole = activeSessionRole || cachedUser.role || initialSession?.user?.role || 'SUPER_ADMIN';
+  const userName = session?.user?.name || cachedUser.name || initialSession?.user?.name || (userRole === 'SUPER_ADMIN' ? 'Super Admin' : 'Staff');
 
   // Navigation route matching logic
   const isItemActive = (href: string) => {
@@ -116,20 +199,25 @@ export default function AppShell({ children }: AppShellProps) {
   };
 
   // Nav Groups
-  const coreNavItems = [
-    { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, badge: null },
-    { label: 'Cases Directory', href: '/cases', icon: FolderCheck, badge: null },
-    { label: 'New Intake', href: '/cases/new', icon: PlusCircle, badge: 'New', badgeColor: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' },
-    ...(userRole !== 'CHANNEL' ? [{ label: 'Task Management', href: '/tasks', icon: CheckSquare, badge: null }] : []),
-    { label: 'HRMS Desk', href: '/hrms', icon: CalendarDays, badge: null },
-    { label: 'Birthdays Hub', href: '/birthdays', icon: PartyPopper, badge: null },
+  const coreNavItems: Array<{
+    label: string;
+    href: string;
+    icon: any;
+    badge?: string | null;
+    badgeColor?: string;
+  }> = [
+    ...(userRole !== 'CHANNEL' ? [
+      { label: locale === 'hi' ? 'कार्य प्रबंधन' : 'Task Management', href: '/tasks', icon: CheckSquare, badge: null, badgeColor: '' },
+      { label: locale === 'hi' ? 'विजिट ट्रैकर' : 'Visit Tracker', href: '/visits', icon: MapPin, badge: null, badgeColor: '' },
+      { label: locale === 'hi' ? 'जन्मदिन केंद्र' : 'Birthdays Hub', href: '/birthdays', icon: PartyPopper, badge: null, badgeColor: '' },
+    ] : []),
   ];
 
-  const adminNavItems = userRole === 'SUPER_ADMIN' ? [
-    { label: 'Add Functionality', href: '/admin/functionality', icon: Sliders, badge: null },
-    { label: 'User & Teams', href: '/admin/users', icon: Users, badge: null },
-    { label: 'Checklist Matrix', href: '/admin/checklist-templates', icon: FileCheck2, badge: null },
-    { label: 'CRM Settings', href: '/admin/settings', icon: Settings, badge: null },
+  const adminNavItems = userRole !== 'CHANNEL' ? [
+    { label: locale === 'hi' ? 'कर्मचारी और टीम' : 'User & Teams', href: '/admin/users', icon: Users, badge: null },
+    { label: locale === 'hi' ? 'चेकलिस्ट मैट्रिक्स' : 'Checklist Matrix', href: '/admin/checklist-templates', icon: FileCheck2, badge: null },
+    { label: locale === 'hi' ? 'सुविधाएं जोड़ें' : 'Add Functionality', href: '/admin/functionality', icon: Sliders, badge: null },
+    { label: locale === 'hi' ? 'सीआरएम सेटिंग्स' : 'CRM Settings', href: '/admin/settings', icon: Settings, badge: null },
   ] : [];
 
   // Breadcrumb / Page Title resolution
@@ -138,15 +226,22 @@ export default function AppShell({ children }: AppShellProps) {
     if (pathname === '/cases/new') return 'New Case Intake Form';
     if (pathname.startsWith('/cases/') && pathname !== '/cases') return 'Case Details & Checklist Engine';
     if (pathname === '/cases') return 'Cases Directory';
+    if (pathname === '/sub-accounts') return 'Child IDs & Sub-Accounts Directory';
+    if (pathname === '/clients') return 'Client & Co-Applicant Directory';
     if (pathname === '/tasks') return 'Task Management Hub';
     if (pathname === '/hrms') return 'HRMS Employee Desk';
     if (pathname === '/birthdays') return 'Celebrations & Birthdays Directory';
     if (pathname === '/admin/settings') return 'CRM Settings & Branding';
     if (pathname === '/admin/functionality') return 'Add Functionality & Settings Hub';
     if (pathname === '/admin/users') return 'User & Team Management';
+    if (pathname === '/admin/users/roles') return 'Roles & Access Permissions Manager';
     if (pathname === '/admin/checklist-templates') return 'Dynamic Checklist Matrix';
     if (pathname === '/admin/products') return 'Loan Products Master';
-    if (pathname === '/admin/profiles') return 'Customer Profiles Master';
+    if (pathname === '/admin/profiles') return 'Income Profiles Master';
+    if (pathname === '/admin/customer-types') return 'Customer Types (Entity Master)';
+    if (pathname === '/admin/property-scopes') return 'Property Scopes Master';
+    if (pathname === '/admin/workflow-stages') return 'Workflow Stages Master';
+    if (pathname === '/admin/case-statuses') return 'Overall Case Statuses Master';
     if (pathname === '/profile') return 'User Profile & Preferences';
     return crmBranding.crmName + ' Workspace';
   };
@@ -193,6 +288,119 @@ export default function AppShell({ children }: AppShellProps) {
               <Compass className="w-3 h-3 text-slate-400" />
             </div>
             <nav className="space-y-1">
+              {/* 1. Dashboard Link */}
+              <Link
+                href="/dashboard"
+                className={`group flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                  isItemActive('/dashboard')
+                    ? 'bg-gradient-to-r from-sky-500/15 via-sky-500/10 to-transparent text-sky-600 dark:text-sky-400 font-bold border-l-4 border-sky-600 dark:border-sky-400 shadow-sm pl-2.5'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <LayoutDashboard className={`w-4 h-4 transition-transform group-hover:scale-110 ${isItemActive('/dashboard') ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                  <span>{locale === 'hi' ? 'डैशबोर्ड' : 'Dashboard'}</span>
+                </div>
+                {isItemActive('/dashboard') && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-600 dark:bg-sky-400" />
+                )}
+              </Link>
+
+              {/* 2. Nested Case Directory Submenu (Includes /cases, /clients, /cases/new) */}
+              <div className="space-y-1 pt-0.5">
+                <div
+                  onClick={() => setIsCaseSubmenuOpen(!isCaseSubmenuOpen)}
+                  className={`w-full group cursor-pointer flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                    isCaseActive
+                      ? 'bg-gradient-to-r from-sky-500/15 via-sky-500/10 to-transparent text-sky-600 dark:text-sky-400 font-bold border-l-4 border-sky-600 dark:border-sky-400 shadow-sm pl-2.5'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Briefcase className={`w-4 h-4 transition-transform group-hover:scale-110 ${isCaseActive ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                    <span>{locale === 'hi' ? 'केस निर्देशिका' : 'Case Directory'}</span>
+                  </div>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isCaseSubmenuOpen ? 'rotate-180 text-sky-500' : 'text-slate-400'}`} />
+                </div>
+
+                {isCaseSubmenuOpen && (
+                  <div className="pl-4 pr-1 py-1 space-y-1 border-l-2 border-slate-200 dark:border-slate-800 ml-5 animate-in slide-in-from-top-1 duration-150">
+                    <Link
+                      href="/cases"
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                        pathname === '/cases'
+                          ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 font-bold'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Briefcase className="w-3.5 h-3.5 shrink-0 text-sky-500" />
+                        <span>{locale === 'hi' ? 'सभी केस पाइपलाइन' : 'All Cases Pipeline'}</span>
+                      </div>
+                      {pathname === '/cases' && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                      )}
+                    </Link>
+
+                    {userRole === 'CHANNEL' ? (
+                      <Link
+                        href="/sub-accounts"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/sub-accounts'
+                            ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Users2 className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                          <span>{locale === 'hi' ? 'चाइल्ड आईडी निर्देशिका' : 'Child IDs Directory'}</span>
+                        </div>
+                        {pathname === '/sub-accounts' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        )}
+                      </Link>
+                    ) : (
+                      <Link
+                        href="/clients"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/clients'
+                            ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Contact className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                          <span>{locale === 'hi' ? 'ग्राहक निर्देशिका' : 'Client Directory'}</span>
+                        </div>
+                        {pathname === '/clients' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                        )}
+                      </Link>
+                    )}
+
+                    {userRole !== 'CHANNEL' && (
+                      <Link
+                        href="/cases/new"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/cases/new'
+                            ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="w-3.5 h-3.5 flex items-center justify-center font-extrabold text-sky-600 dark:text-sky-400">+</span>
+                          <span>{locale === 'hi' ? 'नया केस दर्ज करें' : 'New Case Intake'}</span>
+                        </div>
+                        {pathname === '/cases/new' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                        )}
+                      </Link>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Other Core Items (Tasks, Visits, Birthdays) */}
               {coreNavItems.map((item) => {
                 const Icon = item.icon;
                 const active = isItemActive(item.href);
@@ -222,10 +430,57 @@ export default function AppShell({ children }: AppShellProps) {
                 );
               })}
             </nav>
+
+            {/* Nested HRMS Submenu (Hidden for Channel Accounts) */}
+            {userRole !== 'CHANNEL' && (
+              <div className="space-y-1 pt-1.5">
+                <div
+                  onClick={() => setIsHrmsSubmenuOpen(!isHrmsSubmenuOpen)}
+                  className={`w-full group cursor-pointer flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                    isHrmsActive
+                      ? 'bg-gradient-to-r from-sky-500/15 via-sky-500/10 to-transparent text-sky-600 dark:text-sky-400 font-bold border-l-4 border-sky-600 dark:border-sky-400 shadow-sm pl-2.5'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <CalendarDays className={`w-4 h-4 transition-transform group-hover:scale-110 ${isHrmsActive ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                    <span>{locale === 'hi' ? 'एचआरएमएस' : 'HRMS Desk'}</span>
+                  </div>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isHrmsSubmenuOpen ? 'rotate-180 text-sky-500' : 'text-slate-400'}`} />
+                </div>
+
+                {isHrmsSubmenuOpen && (
+                  <div className="pl-4 pr-1 py-1 space-y-1 border-l-2 border-slate-200 dark:border-slate-800 ml-5 animate-in slide-in-from-top-1 duration-150">
+                    <Link
+                      href="/hrms"
+                      className={`block px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                        pathname === '/hrms'
+                          ? 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 font-bold'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      {locale === 'hi' ? 'एचआरएमएस ओवरव्यू' : 'HRMS Overview'}
+                    </Link>
+                    <Link
+                      href="/salary"
+                      className={`block px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                        pathname === '/salary'
+                          ? 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 font-bold'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      {userRole === 'SUPER_ADMIN'
+                        ? (locale === 'hi' ? 'वेतन रजिस्टर' : 'Salary Register')
+                        : (locale === 'hi' ? 'वेतन पर्ची' : 'Salary Slips')}
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Administration Section (Super Admin Only) */}
-          {userRole === 'SUPER_ADMIN' && (
+          {/* Administration Section (Visible to internal staff & super admins, hidden only for external Channel partners) */}
+          {userRole !== 'CHANNEL' && (
             <div>
               <div className="px-3 mb-2 flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
@@ -252,22 +507,61 @@ export default function AppShell({ children }: AppShellProps) {
                   )}
                 </Link>
 
-                <Link
-                  href="/admin/users"
-                  className={`group flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                    isItemActive('/admin/users')
-                      ? 'bg-gradient-to-r from-sky-500/15 via-sky-500/10 to-transparent text-sky-600 dark:text-sky-400 font-bold border-l-4 border-sky-600 dark:border-sky-400 shadow-sm pl-2.5'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Users className={`w-4 h-4 transition-transform group-hover:scale-110 ${isItemActive('/admin/users') ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'}`} />
-                    <span>User & Teams</span>
+                {/* Nested User & Teams Submenu */}
+                <div className="space-y-1 pt-0.5">
+                  <div
+                    onClick={() => setIsUsersSubmenuOpen(!isUsersSubmenuOpen)}
+                    className={`w-full group cursor-pointer flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                      isUsersActive
+                        ? 'bg-gradient-to-r from-sky-500/15 via-sky-500/10 to-transparent text-sky-600 dark:text-sky-400 font-bold border-l-4 border-sky-600 dark:border-sky-400 shadow-sm pl-2.5'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Users className={`w-4 h-4 transition-transform group-hover:scale-110 ${isUsersActive ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                      <span>User & Teams</span>
+                    </div>
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isUsersSubmenuOpen ? 'rotate-180 text-sky-500' : 'text-slate-400'}`} />
                   </div>
-                  {isItemActive('/admin/users') && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-sky-600 dark:bg-sky-400" />
+
+                  {isUsersSubmenuOpen && (
+                    <div className="pl-4 pr-1 py-1 space-y-1 border-l-2 border-slate-200 dark:border-slate-800 ml-5 animate-in slide-in-from-top-1 duration-150">
+                      <Link
+                        href="/admin/users"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/admin/users'
+                            ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Users className="w-3.5 h-3.5 shrink-0 text-sky-500" />
+                          <span>Staff Directory</span>
+                        </div>
+                        {pathname === '/admin/users' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                        )}
+                      </Link>
+
+                      <Link
+                        href="/admin/users/roles"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/admin/users/roles'
+                            ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                          <span>Roles & Permissions</span>
+                        </div>
+                        {pathname === '/admin/users/roles' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        )}
+                      </Link>
+                    </div>
                   )}
-                </Link>
+                </div>
 
                 {/* Nested Checklist Matrix Submenu */}
                 <div className="space-y-1 pt-0.5">
@@ -332,10 +626,78 @@ export default function AppShell({ children }: AppShellProps) {
                       >
                         <div className="flex items-center gap-2">
                           <Briefcase className="w-3.5 h-3.5 shrink-0 text-purple-500" />
-                          <span>Customer Profiles</span>
+                          <span>Income Profiles</span>
                         </div>
                         {pathname === '/admin/profiles' && (
                           <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                        )}
+                      </Link>
+
+                      <Link
+                        href="/admin/customer-types"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/admin/customer-types'
+                            ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Users2 className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                          <span>Customer Types</span>
+                        </div>
+                        {pathname === '/admin/customer-types' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                        )}
+                      </Link>
+
+                      <Link
+                        href="/admin/property-scopes"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/admin/property-scopes'
+                            ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                          <span>Property Scopes</span>
+                        </div>
+                        {pathname === '/admin/property-scopes' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                        )}
+                      </Link>
+
+                      <Link
+                        href="/admin/workflow-stages"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/admin/workflow-stages'
+                            ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Layers className="w-3.5 h-3.5 shrink-0 text-sky-500" />
+                          <span>Workflow Stages</span>
+                        </div>
+                        {pathname === '/admin/workflow-stages' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                        )}
+                      </Link>
+
+                      <Link
+                        href="/admin/case-statuses"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/admin/case-statuses'
+                            ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Tag className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                          <span>Overall Statuses</span>
+                        </div>
+                        {pathname === '/admin/case-statuses' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                         )}
                       </Link>
                     </div>
@@ -433,7 +795,14 @@ export default function AppShell({ children }: AppShellProps) {
             </Link>
 
             <button
-              onClick={() => signOut({ callbackUrl: '/login' })}
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  localStorage.removeItem('crm_user_role');
+                  localStorage.removeItem('crm_user_name');
+                  localStorage.removeItem('crm_user_avatar');
+                }
+                signOut({ callbackUrl: '/login' });
+              }}
               title="Sign Out"
               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 rounded-lg transition-colors"
             >
@@ -444,6 +813,11 @@ export default function AppShell({ children }: AppShellProps) {
       </div>
     </div>
   );
+
+  // If on login or auth pages, render clean full-screen content without sidebar/header (after all hooks have executed)
+  if (pathname === '/login' || pathname.startsWith('/forgot-password')) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col">
@@ -481,7 +855,9 @@ export default function AppShell({ children }: AppShellProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          {session?.user && (
+          <GoogleTranslateTopBar />
+          <NotificationBell />
+          {userRole !== 'CHANNEL' && (
             <>
               <AttendancePunchTracker variant="header" />
               <BirthdayTopWidget />
@@ -521,12 +897,15 @@ export default function AppShell({ children }: AppShellProps) {
           </div>
 
           <div className="flex items-center gap-2.5">
-            {session?.user && (
+            {userRole !== 'CHANNEL' && (
               <>
                 <AttendancePunchTracker variant="header" />
                 <BirthdayTopWidget />
               </>
             )}
+
+            <GoogleTranslateTopBar />
+            <NotificationBell />
 
             <button
               onClick={toggleTheme}

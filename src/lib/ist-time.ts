@@ -54,7 +54,23 @@ export function evaluateUpcomingBirthday(dob: Date | string): {
   daysRemaining: number;
   formattedBirthday: string;
 } {
+  if (!dob) {
+    return {
+      isWithin30Days: false,
+      isToday: false,
+      daysRemaining: 999,
+      formattedBirthday: '--',
+    };
+  }
   const d = typeof dob === 'string' ? new Date(dob) : dob;
+  if (!d || isNaN(d.getTime())) {
+    return {
+      isWithin30Days: false,
+      isToday: false,
+      daysRemaining: 999,
+      formattedBirthday: '--',
+    };
+  }
   const dobMonth = d.getUTCMonth(); // 0-11
   const dobDay = d.getUTCDate(); // 1-31
 
@@ -95,4 +111,21 @@ export function evaluateUpcomingBirthday(dob: Date | string): {
     daysRemaining,
     formattedBirthday,
   };
+}
+
+/**
+ * Formats date and time in IST (e.g. "19 Sep 2026, 11:45 PM")
+ */
+export function formatISTDate(date: Date | string | null): string {
+  if (!date) return '--';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: IST_TIMEZONE,
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).format(d);
 }

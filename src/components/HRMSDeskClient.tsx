@@ -20,7 +20,9 @@ import {
   Award,
   Trash2,
   UserCheck,
-  Phone
+  Phone,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { 
   getAllStaffAttendanceTodayAction, 
@@ -53,8 +55,12 @@ interface HRMSDeskClientProps {
 export default function HRMSDeskClient({ currentUserId, userName, userRole, staffList = [] }: HRMSDeskClientProps) {
   const isSuperAdmin = userRole === 'SUPER_ADMIN';
 
-  // Tabs: 'attendance' | 'leaves' | 'holidays'
-  const [activeTab, setActiveTab] = useState<'attendance' | 'leaves' | 'holidays'>('attendance');
+  // Tabs: 'attendance' | 'calendar' | 'leaves' | 'holidays'
+  const [activeTab, setActiveTab] = useState<'attendance' | 'calendar' | 'leaves' | 'holidays'>('attendance');
+
+  // Month Calendar View State
+  const [calendarDate, setCalendarDate] = useState(() => new Date());
+  const [calendarStaffFilter, setCalendarStaffFilter] = useState<string>('ALL');
 
   // Live Attendance state
   const [todaySummary, setTodaySummary] = useState<any>(null);
@@ -68,7 +74,7 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
   const [loadingLeaves, setLoadingLeaves] = useState(true);
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
   const [newLeave, setNewLeave] = useState({
-    leaveType: 'CASUAL' as 'CASUAL' | 'SICK' | 'PAID',
+    leaveType: 'CASUAL' as 'CASUAL' | 'SICK' | 'PAID' | 'LWP',
     startDate: '',
     endDate: '',
     reason: '',
@@ -82,7 +88,7 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
     userId: staffList[0]?.id || '',
     manualName: '',
     manualPhone: '',
-    leaveType: 'CASUAL' as 'CASUAL' | 'SICK' | 'PAID',
+    leaveType: 'CASUAL' as 'CASUAL' | 'SICK' | 'PAID' | 'LWP',
     startDate: '',
     endDate: '',
     reason: '',
@@ -298,6 +304,18 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
           >
             <Clock className="w-3.5 h-3.5" />
             <span>Attendance</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('calendar')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'calendar'
+                ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            <span>Month Calendar</span>
           </button>
 
           <button
@@ -534,12 +552,378 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
         </div>
       )}
 
+      {/* TAB: MONTH CALENDAR VIEW */}
+      {activeTab === 'calendar' && (() => {
+        const calYear = calendarDate.getFullYear();
+        const calMonth = calendarDate.getMonth();
+        const firstDayOfWeek = (new Date(calYear, calMonth, 1).getDay() + 6) % 7; // Monday=0..Sunday=6
+        const daysInCurrentMonth = new Date(calYear, calMonth + 1, 0).getDate();
+        const prevMonthTotalDays = new Date(calYear, calMonth, 0).getDate();
+
+        // Month title
+        const monthTitle = calendarDate.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+
+        // Navigation
+        const handlePrevMonth = () => {
+          setCalendarDate(new Date(calYear, calMonth - 1, 1));
+        };
+        const handleNextMonth = () => {
+          setCalendarDate(new Date(calYear, calMonth + 1, 1));
+        };
+        const handleCurrentMonth = () => {
+          setCalendarDate(new Date());
+        };
+
+        // Filter approved leaves relevant to this month
+        const monthStart = new Date(calYear, calMonth, 1, 0, 0, 0);
+        const monthEnd = new Date(calYear, calMonth, daysInCurrentMonth, 23, 59, 59);
+
+        const relevantLeaves = leaves.filter((l) => {
+          if (l.status !== 'APPROVED') return false;
+          if (calendarStaffFilter !== 'ALL') {
+            if (l.isManual) {
+              if (calendarStaffFilter !== 'MANUAL') return false;
+            } else if (l.userId !== calendarStaffFilter) {
+              return false;
+            }
+          }
+          const s = new Date(l.startDate);
+          const e = new Date(l.endDate);
+          return s <= monthEnd && e >= monthStart;
+        });
+
+        // Compute days array
+        const calendarGrid: Array<{
+          dayNumber: number;
+          isCurrentMonth: boolean;
+          dateStr: string;
+          isSunday: boolean;
+          isToday: boolean;
+          holiday?: any;
+          dayLeaves: any[];
+          attendanceRecord?: any;
+        }> = [];
+
+        // Previous month padding
+        for (let i = firstDayOfWeek - 1; i >= 0; i--) {
+          const dNum = prevMonthTotalDays - i;
+          const prevMonthNum = calMonth === 0 ? 12 : calMonth;
+          const prevYearNum = calMonth === 0 ? calYear - 1 : calYear;
+          const dateStr = `${prevYearNum}-${String(prevMonthNum).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+          calendarGrid.push({
+            dayNumber: dNum,
+            isCurrentMonth: false,
+            dateStr,
+            isSunday: false,
+            isToday: false,
+            dayLeaves: [],
+          });
+        }
+
+        const todayObj = new Date();
+        const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+
+        // Current month days
+        let countSundays = 0;
+        let countHolidays = 0;
+        let countLWPInMonth = 0;
+        let countLeavesInMonth = 0;
+
+        for (let day = 1; day <= daysInCurrentMonth; day++) {
+          const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const currentDayObj = new Date(calYear, calMonth, day);
+          const isSunday = currentDayObj.getDay() === 0;
+          if (isSunday) countSundays++;
+
+          const holiday = holidays.find((h) => h.date === dateStr);
+          if (holiday) countHolidays++;
+
+          // Day leaves
+          const curStart = new Date(calYear, calMonth, day, 0, 0, 0);
+          const curEnd = new Date(calYear, calMonth, day, 23, 59, 59);
+
+          const dayLeaves = relevantLeaves.filter((l) => {
+            const s = new Date(l.startDate);
+            const e = new Date(l.endDate);
+            return s <= curEnd && e >= curStart;
+          });
+
+          dayLeaves.forEach((dl) => {
+            if (dl.leaveType === 'LWP') countLWPInMonth++;
+            else countLeavesInMonth++;
+          });
+
+          // Attendance for logged-in user or selected staff
+          const attRecord = personalAttendance.find((a) => a.date === dateStr);
+
+          calendarGrid.push({
+            dayNumber: day,
+            isCurrentMonth: true,
+            dateStr,
+            isSunday,
+            isToday: dateStr === todayStr,
+            holiday,
+            dayLeaves,
+            attendanceRecord: attRecord,
+          });
+        }
+
+        // Remaining padding to complete grid
+        const remainingCells = (7 - (calendarGrid.length % 7)) % 7;
+        for (let i = 1; i <= remainingCells; i++) {
+          const nextMonthNum = calMonth === 11 ? 1 : calMonth + 2;
+          const nextYearNum = calMonth === 11 ? calYear + 1 : calYear;
+          const dateStr = `${nextYearNum}-${String(nextMonthNum).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+          calendarGrid.push({
+            dayNumber: i,
+            isCurrentMonth: false,
+            dateStr,
+            isSunday: false,
+            isToday: false,
+            dayLeaves: [],
+          });
+        }
+
+        const workingDaysCount = Math.max(0, daysInCurrentMonth - countSundays - countHolidays);
+
+        return (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Top Toolbar: Month Navigation & Filter */}
+            <div className="glass-panel p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 border border-indigo-500/20">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">
+                    {monthTitle}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Monthly working calendar, scheduled leaves, LWPs and official bank holidays
+                  </p>
+                </div>
+              </div>
+
+              {/* Month Navigation & Staff Filter */}
+              <div className="flex flex-wrap items-center gap-2">
+                {isSuperAdmin && staffList.length > 0 && (
+                  <select
+                    value={calendarStaffFilter}
+                    onChange={(e) => setCalendarStaffFilter(e.target.value)}
+                    className="glass-input px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold max-w-xs"
+                  >
+                    <option value="ALL">👥 All Staff Leaves</option>
+                    {staffList.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.role})
+                      </option>
+                    ))}
+                    <option value="MANUAL">Manual / External Entries</option>
+                  </select>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handlePrevMonth}
+                  title="Previous Month"
+                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCurrentMonth}
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 transition cursor-pointer"
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNextMonth}
+                  title="Next Month"
+                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition cursor-pointer"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Metrics KPI Row for this Month */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="text-[10px] uppercase font-bold text-slate-400">Total Month Days</div>
+                <div className="text-2xl font-black font-mono text-slate-900 dark:text-white mt-1">
+                  {daysInCurrentMonth} <span className="text-xs font-normal text-slate-400">days</span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">{countSundays} Sundays</div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 shadow-sm">
+                <div className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400">Standard Working Days</div>
+                <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+                  {workingDaysCount} <span className="text-xs font-normal text-emerald-600/70">days</span>
+                </div>
+                <div className="text-[11px] text-emerald-600/80 mt-0.5">Used in salary calculation</div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-purple-500/5 dark:bg-purple-500/10 border border-purple-500/20 shadow-sm">
+                <div className="text-[10px] uppercase font-bold text-purple-600 dark:text-purple-400">Public Holidays</div>
+                <div className="text-2xl font-black font-mono text-purple-600 dark:text-purple-400 mt-1">
+                  {countHolidays} <span className="text-xs font-normal text-purple-600/70">days</span>
+                </div>
+                <div className="text-[11px] text-purple-600/80 mt-0.5">Paid holiday closures</div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-rose-500/5 dark:bg-rose-500/10 border border-rose-500/20 shadow-sm">
+                <div className="text-[10px] uppercase font-bold text-rose-600 dark:text-rose-400">Leaves & LWP Logged</div>
+                <div className="text-2xl font-black font-mono text-rose-600 dark:text-rose-400 mt-1">
+                  {countLWPInMonth} <span className="text-xs font-normal text-rose-500">LWP</span>
+                  <span className="text-xs font-normal text-slate-400 ml-1.5">/ {countLeavesInMonth} Paid</span>
+                </div>
+                <div className="text-[11px] text-rose-500/90 mt-0.5">Deducted on salary register</div>
+              </div>
+            </div>
+
+            {/* Main Interactive Month Calendar Grid */}
+            <div className="glass-panel p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
+              {/* Day Header */}
+              <div className="grid grid-cols-7 gap-1 sm:gap-2 mb-2 text-center text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-400">
+                <div className="p-2">Mon</div>
+                <div className="p-2">Tue</div>
+                <div className="p-2">Wed</div>
+                <div className="p-2">Thu</div>
+                <div className="p-2">Fri</div>
+                <div className="p-2">Sat</div>
+                <div className="p-2 text-rose-500">Sun</div>
+              </div>
+
+              {/* Grid Cells */}
+              <div className="grid grid-cols-7 gap-1 sm:gap-2">
+                {calendarGrid.map((cell, idx) => (
+                  <div
+                    key={`${cell.dateStr}-${idx}`}
+                    className={`min-h-[85px] sm:min-h-[110px] p-2 rounded-2xl border transition-all flex flex-col justify-between ${
+                      !cell.isCurrentMonth
+                        ? 'opacity-30 bg-slate-50/50 dark:bg-slate-900/30 border-transparent text-slate-400'
+                        : cell.isToday
+                        ? 'bg-indigo-50/60 dark:bg-indigo-950/30 border-indigo-400 dark:border-indigo-600 shadow-md ring-2 ring-indigo-500/30'
+                        : cell.isSunday
+                        ? 'bg-rose-50/30 dark:bg-rose-950/10 border-slate-200/60 dark:border-slate-800'
+                        : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                    }`}
+                  >
+                    {/* Top Row: Day Number & Badges */}
+                    <div className="flex items-center justify-between">
+                      <span
+                        className={`text-xs sm:text-sm font-black font-mono ${
+                          cell.isToday
+                            ? 'px-1.5 py-0.5 rounded-md bg-indigo-600 text-white'
+                            : cell.isSunday
+                            ? 'text-rose-500'
+                            : 'text-slate-800 dark:text-slate-200'
+                        }`}
+                      >
+                        {cell.dayNumber}
+                      </span>
+
+                      {cell.isSunday && cell.isCurrentMonth && (
+                        <span className="text-[9px] font-bold text-rose-400 uppercase hidden sm:inline">Sun Off</span>
+                      )}
+                      {cell.isToday && (
+                        <span className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 uppercase">Today</span>
+                      )}
+                    </div>
+
+                    {/* Middle Content: Holidays & Leaves */}
+                    <div className="space-y-1 my-1 overflow-hidden">
+                      {cell.holiday && (
+                        <div
+                          className="px-1.5 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-700 dark:text-purple-300 text-[10px] font-bold truncate flex items-center gap-1"
+                          title={cell.holiday.name}
+                        >
+                          <span>🎉</span>
+                          <span className="truncate">{cell.holiday.name}</span>
+                        </div>
+                      )}
+
+                      {cell.dayLeaves.map((l, lIdx) => {
+                        const isLwp = l.leaveType === 'LWP';
+                        const empName = l.isManual ? l.manualName : (l.user?.name?.split(' ')[0] || 'Staff');
+                        return (
+                          <div
+                            key={l.id || lIdx}
+                            className={`px-1.5 py-0.5 rounded-lg text-[10px] font-bold truncate flex items-center gap-1 border ${
+                              isLwp
+                                ? 'bg-rose-500/15 border-rose-500/40 text-rose-700 dark:text-rose-300 animate-pulse'
+                                : 'bg-sky-500/10 border-sky-500/30 text-sky-700 dark:text-sky-300'
+                            }`}
+                            title={`${l.leaveType}: ${empName} (${l.reason || ''})`}
+                          >
+                            <span>{isLwp ? '🚨' : '🏖️'}</span>
+                            <span className="truncate">
+                              {isLwp ? 'LWP' : l.leaveType}: {empName}
+                            </span>
+                          </div>
+                        );
+                      })}
+
+                      {cell.attendanceRecord && (
+                        <div
+                          className="px-1.5 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold truncate flex items-center gap-0.5"
+                          title={`Punch In: ${formatTimeIST(cell.attendanceRecord.punchIn)} - Duration: ${formatDuration(cell.attendanceRecord.totalMinutes * 60)}`}
+                        >
+                          <span>✓</span>
+                          <span>{formatDuration(cell.attendanceRecord.totalMinutes * 60)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="text-[9px] text-slate-400 text-right">
+                      {cell.dateStr}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Legend Footer */}
+              <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                    <span>Today's Date</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                    <span>Bank / Company Holiday</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                    <span>LWP (Leave Without Pay)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-sky-500" />
+                    <span>Approved Leave (CL/SL/PL)</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    <span>Work Session Punched</span>
+                  </div>
+                </div>
+                <span className="text-[11px] text-slate-400 italic">
+                  * All dates synchronized with Indian Standard Time (IST)
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* TAB 2: LEAVE MANAGEMENT */}
       {activeTab === 'leaves' && (
         <div className="space-y-6 animate-in fade-in duration-200">
           {/* Quota Overview (for employee) or Admin Pending Alert */}
           {!isSuperAdmin && quota && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="glass-panel p-5 rounded-2xl border border-sky-500/30 bg-sky-500/5 shadow-md">
                 <div className="text-xs font-bold text-sky-600 dark:text-sky-400 uppercase tracking-wider">
                   Casual Leave (CL)
@@ -568,6 +952,16 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                   {quota.paidRemaining} <span className="text-xs font-normal text-slate-400">/ {quota.paidTotal} left</span>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">Annual paid vacation days</p>
+              </div>
+
+              <div className="glass-panel p-5 rounded-2xl border border-rose-500/30 bg-rose-500/5 shadow-md">
+                <div className="text-xs font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
+                  Leave Without Pay (LWP)
+                </div>
+                <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
+                  {quota.lwpTotalTaken || 0} <span className="text-xs font-normal text-slate-400">days taken</span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Deducted from monthly salary register</p>
               </div>
             </div>
           )}
@@ -664,8 +1058,16 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                           </td>
                         )}
                         <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
-                            {l.leaveType}
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            l.leaveType === 'LWP'
+                              ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30'
+                              : l.leaveType === 'SICK'
+                              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                              : l.leaveType === 'PAID'
+                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                              : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20'
+                          }`}>
+                            {l.leaveType === 'LWP' ? 'Leave Without Pay (LWP)' : l.leaveType}
                           </span>
                         </td>
                         <td className="py-3 px-4 text-center">
@@ -869,6 +1271,7 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                       <option value="CASUAL">Casual Leave (CL)</option>
                       <option value="SICK">Sick Leave (SL)</option>
                       <option value="PAID">Paid Leave (PL)</option>
+                      <option value="LWP">Leave Without Pay (LWP)</option>
                     </select>
                   </div>
 
@@ -963,6 +1366,7 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                       <option value="CASUAL">Casual Leave (CL)</option>
                       <option value="SICK">Sick Leave (SL)</option>
                       <option value="PAID">Paid Leave (PL)</option>
+                      <option value="LWP">Leave Without Pay (LWP)</option>
                     </select>
                   </div>
 

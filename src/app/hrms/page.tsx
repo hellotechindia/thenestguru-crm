@@ -12,6 +12,11 @@ export default async function HRMSPage() {
     redirect('/login');
   }
 
+  // Channel accounts have no HRMS desk access
+  if ((session.user as any).role === 'CHANNEL') {
+    redirect('/dashboard');
+  }
+
   const currentUserId = (session.user as any).id;
   const userName = session.user.name || 'Staff Member';
   const userRole = (session.user as any).role || 'TEAM_MEMBER';
@@ -21,7 +26,13 @@ export default async function HRMSPage() {
       id: true,
       name: true,
       role: true,
+      jobRole: true,
+      department: true,
+      monthlySalary: true,
+      currentCTC: true,
+      employmentType: true,
       email: true,
+      phone: true,
       team: { select: { name: true } },
     },
     orderBy: { name: 'asc' },

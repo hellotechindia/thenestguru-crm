@@ -9,6 +9,7 @@ generator client {
 
 enum Role {
   SUPER_ADMIN
+  TEAM_LEADER
   TEAM_MEMBER
   CHANNEL
   SALES
@@ -28,15 +29,57 @@ model User {
   passwordHash     String
   role             Role             @default(TEAM_MEMBER)
   accessPermission AccessPermission @default(EDIT)
+  isTeamLeader     Boolean          @default(false)
+  parentChannelId  String?
+  parentChannel    User?            @relation("ChannelHierarchy", fields: [parentChannelId], references: [id], onDelete: SetNull)
+  childChannels    User[]           @relation("ChannelHierarchy")
+  monthlySalary    Float?           @default(0)
+  currentCTC       Float?           @default(0) // Annual Cost to Company (CTC in ₹)
+  jobRole          String?          // Current Job Role / Designation (e.g. Loan Officer, Sales Manager)
+  department       String?          // Department (Operations, Sales, Accounts, etc.)
+  employmentType   String?          // FULL_TIME, PROBATION, CONTRACT, PART_TIME, INTERN
+  workLocation     String?          // Branch / Office Location (e.g. Head Office Noida)
   teamId           String?
   team             Team?            @relation(fields: [teamId], references: [id])
   dob              DateTime?
   avatarUrl        String?          @db.Text
+  photographUrl    String?          @db.Text
+  phone            String?
+  gender           String?          // MALE, FEMALE, OTHER
+  pan              String?
+  panCardUrl       String?          @db.Text
+  aadhaar          String?
+  aadhaarCardUrl   String?          @db.Text
+  maritalStatus    String?          // MARRIED, UNMARRIED, SINGLE
+  marriageAnniversary DateTime?
+  residentialAddress String?        @db.Text
+  permanentAddress String?          @db.Text
+  address          String?          @db.Text
+  emergencyContact String?
+  emergencyContactName1 String?
+  emergencyContactRelation1 String?
+  emergencyContactPhone1 String?
+  emergencyContactName2 String?
+  emergencyContactRelation2 String?
+  emergencyContactPhone2 String?
+  dateOfJoining    DateTime?
+  educationQualification String?
+  pastExperience   String?          @db.Text
+  bankName         String?
+  bankAccountNo    String?
+  bankIfsc         String?
+  bloodGroup       String?
   attendanceRecords AttendanceRecord[]
   leaves           LeaveRequest[]
   assignedTasks    Task[]           @relation("AssignedTasks")
   createdTasks     Task[]           @relation("CreatedTasks")
+  completedTasks   Task[]           @relation("CompletedTasks")
+  taskAssignees    TaskAssignee[]
   taskComments     TaskComment[]
+  taskActivityLogs TaskActivityLog[]
+  salaryRecords    SalaryRecord[]
+  visits           VisitRecord[]
+  notifications    Notification[]
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 }
@@ -91,10 +134,22 @@ model ExpenseRecord {
 }
 
 model ProductMaster {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String             @id @default(cuid())
+  name        String             @unique
+  subProducts SubProductMaster[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+}
+
+model SubProductMaster {
+  id        String        @id @default(cuid())
+  name      String
+  productId String
+  product   ProductMaster @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@unique([productId, name])
 }
 
 model ProfileMaster {
@@ -102,6 +157,51 @@ model ProfileMaster {
   name      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model PropertyScopeMaster {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+}
+
+model TargetCategoryMaster {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+}
+
+model CustomerTypeMaster {
+  id          String   @id @default(cuid())
+  name        String   @unique // Individual, Partnership, Pvt Ltd, Public Ltd, Proprietorship, HUF
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model WorkflowStageMaster {
+  id              String   @id @default(cuid())
+  stageNumber     Int      @unique
+  name            String
+  description     String?
+  color           String?  @default("#3b82f6")
+  incentiveAmount Float    @default(0) // Stage-linked staff incentive in INR
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model CaseStatusMaster {
+  id           String   @id @default(cuid())
+  name         String   @unique // e.g. "Pending Documents", "Ready for Submission", "In Review", "Approved", "Disbursed", "Rejected"
+  color        String?  @default("#3b82f6") // Badge color hex or color name
+  description  String?
+  displayOrder Int      @default(0)
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model ChecklistCategory {
@@ -128,7 +228,13 @@ model ChecklistItemTemplate {
   label                  String
   applicantRequirement   RequirementType   @default(YES)
   coApplicantRequirement RequirementType   @default(IF_APPLICABLE)
-  propertyTypeScope      String?           // null or "RESALE" | "TAKEOVER_SELLER_BT" | "DIRECT_ALLOTMENT"
+  propertyTypeScope      String?           // null or comma-separated scopes or ALL
+  subProduct             String?           // null or comma-separated subProducts or ALL
+  incomeType             String?           // null or comma-separated income profiles or ALL
+  customerType           String?           // null or comma-separated customer types or ALL
+  stages                 String?           // null or comma-separated stages e.g. "1,2" or ALL
+  categoryPart           String?           // "KYC" | "INCOME" | "PERSONAL" | "PROPERTY" | "OTHER"
+  isMandatory            Boolean           @default(true)
   stage                  Int               @default(1)
   requireOnedrive        Boolean           @default(true)
   requireRemark          Boolean           @default(false)
@@ -141,14 +247,19 @@ model Case {
   clientName           String
   mobile               String
   email                String?
+  gender               String?             // "MALE" | "FEMALE" | "OTHER"
   clientState          String?
   clientCity           String?
   clientDob            DateTime?
   product              String
+  subProduct           String?
   customerType         String
   propertyType         String
+  propertyState        String?
+  propertyCity         String?
+  incomeTypes          String?             @db.Text // JSON: array of income types
   coApplicantCount     Int                 @default(0)
-  coApplicantsData     String?             @db.Text // JSON: array of { name, mobile, email, state, incomeRequired }
+  coApplicantsData     String?             @db.Text // JSON: array of { name, mobile, email, state, city, dob, gender, incomeRequired }
   channelUserId        String?
   salesUserId          String?
   operationUserId      String?
@@ -172,32 +283,50 @@ model Case {
   checklistItems       CaseChecklistItem[]
   revenues             RevenueRecord[]
   tasks                Task[]
+  followUps            CaseFollowUp[]
+  visits               VisitRecord[]
 }
 
 model CaseChecklistItem {
-  id            String    @id @default(cuid())
-  caseId        String
-  case          Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  category      String
-  label         String
-  appliesTo     String    // "Applicant" | "Co-Applicant 1" | "Co-Applicant 2" ...
+  id                String    @id @default(cuid())
+  caseId            String
+  case              Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  category          String
+  categoryPart      String?   // "KYC" | "INCOME" | "PERSONAL" | "PROPERTY" | "OTHER"
+  label             String
+  appliesTo         String    // e.g. "Applicant" or "Co-Applicant 1"
+  personName        String?   // Actual name of the person (e.g. "Rahul Sharma")
   status            String    @default("Pending")
+  isMandatory       Boolean   @default(true)
   remark            String?   @db.Text
   documentUrl       String?   @db.Text
   stage             Int       @default(1)
   requireOnedrive   Boolean   @default(true)
   requireRemark     Boolean   @default(false)
   remarkPlaceholder String?
-  bankName      String?
-  monthName     String?
-  financialYear String?
-  documentDate  DateTime?
-  periodDetails String?
-  startDate     DateTime?
-  endDate       DateTime?
-  extraDetails  String?   @db.Text // JSON for additional realistic fields
-  updatedById   String?
-  updatedAt     DateTime  @updatedAt
+  bankName          String?
+  monthName         String?
+  financialYear     String?
+  documentDate      DateTime?
+  periodDetails     String?
+  startDate         DateTime?
+  endDate           DateTime?
+  extraDetails      String?   @db.Text
+  updatedById       String?
+  updatedAt         DateTime  @updatedAt
+}
+
+model CaseFollowUp {
+  id            String   @id @default(cuid())
+  caseId        String
+  case          Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  stage         Int      @default(1)
+  stageName     String?
+  status        String
+  remarks       String   @db.Text
+  createdById   String
+  createdByName String
+  createdAt     DateTime @default(now())
 }
 
 model AttendanceRecord {
@@ -220,6 +349,7 @@ enum LeaveType {
   CASUAL
   SICK
   PAID
+  LWP
 }
 
 enum LeaveStatus {
@@ -260,6 +390,9 @@ model ManualBirthdayEntry {
   id          String    @id @default(cuid())
   name        String
   phone       String?
+  email       String?
+  category    String    @default("CUSTOMER") // STAFF, CUSTOMER, CHANNEL
+  onBehalfOf  String?
   dob         DateTime
   remark      String?
   createdById String?
@@ -283,23 +416,54 @@ enum TaskStatus {
 }
 
 model Task {
-  id           String        @id @default(cuid())
+  id           String         @id @default(cuid())
   title        String
-  description  String?       @db.Text
-  priority     TaskPriority  @default(MEDIUM)
-  status       TaskStatus    @default(PENDING)
+  description  String?        @db.Text
+  priority     TaskPriority   @default(MEDIUM)
+  status       TaskStatus     @default(PENDING)
+  isUrgent     Boolean        @default(false)
+  isImportant  Boolean        @default(false)
+  isSelfTask   Boolean        @default(false)
+  timeSpentMinutes Int        @default(0)
   dueDate      DateTime?
-  assignedAt   DateTime      @default(now())
+  dueTime      String?        // e.g. "15:30"
+  assignedAt   DateTime       @default(now())
   completedAt  DateTime?
+  completedById String?
+  completedBy  User?          @relation("CompletedTasks", fields: [completedById], references: [id], onDelete: SetNull)
   assignedToId String
-  assignedTo   User          @relation("AssignedTasks", fields: [assignedToId], references: [id], onDelete: Cascade)
+  assignedTo   User           @relation("AssignedTasks", fields: [assignedToId], references: [id], onDelete: Cascade)
+  assignees    TaskAssignee[]
   createdById  String
-  createdBy    User          @relation("CreatedTasks", fields: [createdById], references: [id], onDelete: Cascade)
+  createdBy    User           @relation("CreatedTasks", fields: [createdById], references: [id], onDelete: Cascade)
   caseId       String?
-  case         Case?         @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  case         Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
   comments     TaskComment[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  activityLogs TaskActivityLog[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model TaskActivityLog {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String   // STATUS_CHANGE, COMMENT_ADDED, COMMENT_EDITED, CREATED
+  details   String   @db.Text
+  createdAt DateTime @default(now())
+}
+
+model TaskAssignee {
+  id         String   @id @default(cuid())
+  taskId     String
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now())
+
+  @@unique([taskId, userId])
 }
 
 model TaskComment {
@@ -309,17 +473,80 @@ model TaskComment {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   content   String   @db.Text
+  isEdited  Boolean  @default(false)
+  editedAt  DateTime?
   createdAt DateTime @default(now())
 }
 
-model SystemSetting {
-  id          String   @id @default("default")
-  crmName     String   @default("TheNestGuru")
-  crmTagline  String   @default("Loan Processing Desk")
-  crmLogoUrl  String?  @db.Text
-  updatedAt   DateTime @updatedAt
+model SalaryRecord {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  month           String    // e.g. "September 2026"
+  basicSalary     Float
+  allowances      Float     @default(0)
+  deductions      Float     @default(0)
+  netPayable      Float
+  workingDays     Int       @default(26)
+  paidDays        Float     @default(26)
+  lwpDays         Float     @default(0)
+  incentiveEarned Float     @default(0)
+  paymentStatus   String    @default("UNPAID") // UNPAID, PAID, HOLD
+  paidDate        DateTime?
+  remarks         String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
 
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
 
+model VisitRecord {
+  id              String   @id @default(cuid())
+  caseId          String?
+  case            Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  clientName      String
+  clientPhone     String?
+  propertyAddress String?  @db.Text
+  visitDate       DateTime
+  visitTime       String?
+  staffUserId     String
+  staff           User     @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  visitType       String   @default("PROPERTY_VERIFICATION") // PROPERTY_VERIFICATION, CLIENT_MEETING, DOCUMENT_COLLECTION
+  status          String   @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
+  remarks         String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
 
+model SystemSetting {
+  id              String   @id @default("default")
+  crmName         String   @default("TheNestGuru")
+  crmTagline      String   @default("Loan Processing Desk")
+  crmLogoUrl      String?  @db.Text
+  dashboardConfig String?  @db.Text // JSON string for customizable dashboard widgets
+  updatedAt       DateTime @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String?  // Target user, or null for broadcast
+  role      Role?    // Target specific role (optional)
+  title     String
+  message   String   @db.Text
+  type      String   @default("INFO") // INFO, SUCCESS, WARNING, CASE_UPDATE, TASK_UPDATE
+  link      String?  // URL to navigate when clicked
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
 

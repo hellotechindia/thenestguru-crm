@@ -1,17 +1,39 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createCaseAction } from '@/app/actions';
-import { User, Phone, Mail, MapPin, Layers, Users, ArrowRight, Sparkles, UserCheck, Building2, Calendar } from 'lucide-react';
+import {
+  User, Phone, Mail, MapPin, Layers, Users, ArrowRight, Sparkles,
+  UserCheck, Building2, Calendar, ShieldAlert, CheckCircle2, Save, Plus
+} from 'lucide-react';
 import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
+import { INDIAN_STATES, getCitiesForIndianState } from '@/lib/india-data';
+
+export interface CoApplicantEntry {
+  name: string;
+  relationship: string;
+  mobile: string;
+  email: string;
+  gender: string;
+  dob: string;
+  state: string;
+  city: string;
+  customerType: string;
+  incomeTypes: string[];
+  incomeRequired: boolean;
+}
 
 interface Props {
   teams: Array<{ id: string; name: string }>;
   states: Array<{ id: string; name: string; cities?: Array<{ id: string; name: string }> }>;
   users: Array<{ id: string; name: string; role: string; email?: string | null; username?: string | null }>;
-  products?: Array<{ id: string; name: string }>;
+  products?: Array<{ id: string; name: string; subProducts?: Array<{ id: string; name: string }> }>;
   profiles?: Array<{ id: string; name: string }>;
+  subProducts?: Array<{ id: string; name: string; productId: string }>;
+  propertyScopes?: Array<{ id: string; name: string }>;
+  targetCategories?: Array<{ id: string; name: string }>;
+  isSuperAdmin?: boolean;
 }
 
 export default function CaseIntakeForm({
@@ -20,27 +42,38 @@ export default function CaseIntakeForm({
   users,
   products = [],
   profiles = [],
+  subProducts = [],
+  propertyScopes = [],
+  targetCategories = [],
+  isSuperAdmin = false,
 }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [isCustomCity, setIsCustomCity] = useState(false);
+  const [draftSavedTime, setDraftSavedTime] = useState<string | null>(null);
 
-  // Exclude SUPER_ADMIN from operational staff assignment lists
-  const channelUsers = users.filter((u) => u.role === 'CHANNEL');
-  const salesUsers = users.filter((u) => u.role === 'SALES');
-  const operationUsers = users.filter((u) => u.role === 'OPERATION' || u.role === 'TEAM_MEMBER');
+  // Fallback defaults
+  const defaultProduct = products[0]?.name || 'Home Loan';
+  const defaultCustomerType = targetCategories[0]?.name || 'Individual';
+  const defaultPropertyScope = propertyScopes[0]?.name || 'Resale';
+
+  const defaultState = states[0]?.name || 'Uttar Pradesh';
 
   const [formData, setFormData] = useState({
+    product: defaultProduct,
+    subProduct: '',
     clientName: '',
     mobile: '',
     email: '',
-    clientState: states[0]?.name || '',
-    clientCity: '',
+    gender: 'MALE',
     clientDob: '',
-    product: products[0]?.name || 'Home Loan',
-    customerType: profiles[0]?.name || 'Salaried',
-    propertyType: 'Resale',
+    clientState: defaultState,
+    clientCity: '',
+    customerType: defaultCustomerType,
+    incomeTypes: (profiles && profiles.length > 0) ? [profiles[0].name] : ['Salaried'],
+    propertyType: defaultPropertyScope,
+    propertyState: defaultState,
+    propertyCity: '',
     coApplicantCount: 0,
     channelUserId: '',
     salesUserId: '',
@@ -48,43 +81,135 @@ export default function CaseIntakeForm({
     assignedTeamId: teams[0]?.id || '',
   });
 
-  const selectedStateObj = states.find((s) => s.name === formData.clientState);
-  const stateCities = selectedStateObj?.cities || [];
+  // Filter Sub-Products based on selected product
+  const selectedProductObj = products.find(p => p.name.toLowerCase() === formData.product.toLowerCase());
+  const filteredSubProducts = subProducts.filter(sp => {
+    if (!selectedProductObj) return false;
+    return sp.productId === selectedProductObj.id;
+  });
 
-  const [coApplicants, setCoApplicants] = useState<Array<{
-    name: string;
-    mobile: string;
-    email: string;
-    state: string;
-    dob?: string;
-    incomeRequired: boolean;
-  }>>([]);
+  const selectedStateObj = states.find((s) => s.name?.toLowerCase() === formData.clientState?.toLowerCase());
+  const clientDbCities = selectedStateObj?.cities?.map((c) => c.name) || [];
+  const stateCities = Array.from(new Set([...clientDbCities, ...getCitiesForIndianState(formData.clientState)]));
+
+  const selectedPropStateObj = states.find((s) => s.name?.toLowerCase() === formData.propertyState?.toLowerCase());
+  const propDbCities = selectedPropStateObj?.cities?.map((c) => c.name) || [];
+  const propStateCities = Array.from(new Set([...propDbCities, ...getCitiesForIndianState(formData.propertyState)]));
+
+  const [activeCoAppTab, setActiveCoAppTab] = useState<number>(0);
+  const [coApplicants, setCoApplicants] = useState<CoApplicantEntry[]>([]);
+
+  // Auto-Save Draft to LocalStorage
+  useEffect(() => {
+    try {
+      const savedDraft = localStorage.getItem('nestguru_case_draft');
+      if (savedDraft) {
+        const parsed = JSON.parse(savedDraft);
+        if (parsed.formData && (parsed.formData.clientName || parsed.formData.mobile)) {
+          setFormData({
+            ...parsed.formData,
+            incomeTypes: Array.isArray(parsed.formData.incomeTypes) && parsed.formData.incomeTypes.length > 0
+              ? parsed.formData.incomeTypes
+              : ['Salaried'],
+          });
+          if (parsed.coApplicants) setCoApplicants(parsed.coApplicants);
+          setDraftSavedTime('Draft restored');
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load draft:', e);
+    }
+  }, []);
+
+  // Save changes to draft
+  useEffect(() => {
+    if (formData.clientName || formData.mobile || formData.email) {
+      const timer = setTimeout(() => {
+        try {
+          localStorage.setItem('nestguru_case_draft', JSON.stringify({ formData, coApplicants }));
+          setDraftSavedTime('Auto-saved just now');
+        } catch (e) {
+          console.error('Failed to save draft:', e);
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [formData, coApplicants]);
+
+  // Prevent accidental Back / Unload navigation
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (formData.clientName || formData.mobile) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes in lead creation. Are you sure you want to exit?';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [formData]);
+
+  const handleIncomeTypeToggle = (type: string) => {
+    setFormData(prev => {
+      const current = prev.incomeTypes || [];
+      if (current.includes(type)) {
+        if (current.length === 1) return prev; // keep at least one
+        return { ...prev, incomeTypes: current.filter(t => t !== type) };
+      } else {
+        return { ...prev, incomeTypes: [...current, type] };
+      }
+    });
+  };
 
   const handleCoApplicantCountChange = (count: number) => {
     const newCount = Math.max(0, count);
-    setFormData({ ...formData, coApplicantCount: newCount });
+    setFormData(prev => ({ ...prev, coApplicantCount: newCount }));
 
-    const newCoApps = [];
-    for (let i = 0; i < newCount; i++) {
-      if (coApplicants[i]) {
-        newCoApps.push(coApplicants[i]);
+    setCoApplicants(prev => {
+      const updated = [...prev];
+      if (newCount > updated.length) {
+        for (let i = updated.length; i < newCount; i++) {
+          updated.push({
+            name: '',
+            relationship: i === 0 ? 'Spouse' : 'Brother',
+            mobile: '',
+            email: '',
+            gender: 'MALE',
+            dob: '',
+            state: formData.clientState || (states[0]?.name || ''),
+            city: '',
+            customerType: defaultCustomerType,
+            incomeTypes: (profiles && profiles.length > 0) ? [profiles[0].name] : ['Salaried'],
+            incomeRequired: true,
+          });
+        }
       } else {
-        newCoApps.push({
-          name: '',
-          mobile: '',
-          email: '',
-          state: states[0]?.name || '',
-          dob: '',
-          incomeRequired: true,
-        });
+        updated.splice(newCount);
       }
+      return updated;
+    });
+
+    if (activeCoAppTab >= newCount && newCount > 0) {
+      setActiveCoAppTab(newCount - 1);
     }
-    setCoApplicants(newCoApps);
   };
 
-  const handleCoApplicantChange = (index: number, field: string, value: any) => {
+  const handleCoApplicantChange = (index: number, field: keyof CoApplicantEntry, value: any) => {
     const updated = [...coApplicants];
     updated[index] = { ...updated[index], [field]: value };
+    setCoApplicants(updated);
+  };
+
+  const handleCoApplicantIncomeToggle = (index: number, incomeType: string) => {
+    const updated = [...coApplicants];
+    const co = updated[index];
+    const current = co.incomeTypes || [];
+    if (current.includes(incomeType)) {
+      if (current.length === 1) return;
+      updated[index] = { ...co, incomeTypes: current.filter(t => t !== incomeType) };
+    } else {
+      updated[index] = { ...co, incomeTypes: [...current, incomeType] };
+    }
     setCoApplicants(updated);
   };
 
@@ -94,29 +219,31 @@ export default function CaseIntakeForm({
 
     // Strict Name, Phone & Email Validations
     if (!isValidName(formData.clientName)) {
-      setError('Client Full Name must contain only alphabetic characters and spaces (numbers and special characters are not allowed).');
+      setError('Client Full Name must contain only alphabetic characters and spaces.');
       return;
     }
     if (!isValid10DigitPhone(formData.mobile)) {
-      setError('Client Mobile Number must be exactly 10 digits.');
+      setError('Client mobile number must be exactly 10 digits.');
       return;
     }
-    if (!isValidEmail(formData.email)) {
-      setError('Please enter a valid Client Email Address (e.g. client@example.com).');
+    if (formData.email && !isValidEmail(formData.email)) {
+      setError('Please enter a valid client email address.');
       return;
     }
+
+    // Validate Co-Applicants
     for (let i = 0; i < coApplicants.length; i++) {
-      const coApp = coApplicants[i];
-      if (coApp.name && !isValidName(coApp.name)) {
-        setError(`Co-Applicant ${i + 1} Name must contain only alphabetic characters and spaces (numbers and special characters are not allowed).`);
+      const co = coApplicants[i];
+      if (!co.name || !isValidName(co.name)) {
+        setError(`Co-Applicant ${i + 1} Name must contain only alphabetic characters and spaces.`);
         return;
       }
-      if (coApp.mobile && !isValid10DigitPhone(coApp.mobile)) {
-        setError(`Co-Applicant ${i + 1} (${coApp.name || 'Co-Applicant'}) mobile number must be exactly 10 digits.`);
+      if (co.mobile && !isValid10DigitPhone(co.mobile)) {
+        setError(`Co-Applicant ${i + 1} Mobile number must be exactly 10 digits.`);
         return;
       }
-      if (coApp.email && !isValidEmail(coApp.email)) {
-        setError(`Co-Applicant ${i + 1} (${coApp.name || 'Co-Applicant'}) email address is invalid.`);
+      if (co.email && !isValidEmail(co.email)) {
+        setError(`Co-Applicant ${i + 1} Email is invalid.`);
         return;
       }
     }
@@ -125,472 +252,817 @@ export default function CaseIntakeForm({
 
     try {
       const res = await createCaseAction({
-        ...formData,
+        clientName: formData.clientName.trim(),
+        mobile: formData.mobile.trim(),
+        email: formData.email ? formData.email.trim() : undefined,
+        gender: formData.gender,
+        clientState: formData.clientState,
+        clientCity: formData.clientCity || undefined,
+        clientDob: formData.clientDob || null,
+        product: formData.product,
+        subProduct: formData.subProduct || undefined,
+        customerType: formData.customerType,
+        propertyType: formData.propertyType,
+        propertyState: formData.propertyState || undefined,
+        propertyCity: formData.propertyCity ? formData.propertyCity.trim() : undefined,
+        incomeTypes: formData.incomeTypes,
+        coApplicantCount: formData.coApplicantCount,
         coApplicantsData: coApplicants,
+        channelUserId: formData.channelUserId || undefined,
+        salesUserId: formData.salesUserId || undefined,
+        operationUserId: formData.operationUserId || undefined,
+        assignedTeamId: formData.assignedTeamId || undefined,
       });
 
-      if (res.success && res.caseId) {
+      if (res?.success && res.caseId) {
+        localStorage.removeItem('nestguru_case_draft');
         router.push(`/cases/${res.caseId}`);
-        router.refresh();
       } else {
-        setError('Failed to create case.');
-        setLoading(false);
+        setError('Failed to create case intake. Please verify your inputs.');
       }
     } catch (err: any) {
-      setError(err.message || 'Error creating case');
+      setError(err?.message || 'Server error occurred while creating case.');
+    } finally {
       setLoading(false);
     }
   };
 
+  const channelUsers = users.filter((u) => u.role === 'CHANNEL');
+  const salesUsers = users.filter((u) => u.role === 'SALES');
+  const operationUsers = users.filter((u) => u.role === 'OPERATION' || u.role === 'TEAM_MEMBER');
+
   return (
-    <form onSubmit={handleSubmit} className="glass-panel p-8 rounded-2xl space-y-6 shadow-2xl">
+    <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
-        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-medium flex items-center gap-2">
-          <span>⚠️</span> {error}
+        <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 rounded-xl text-sm flex items-center gap-2">
+          <ShieldAlert className="w-5 h-5 flex-shrink-0" />
+          <span>{error}</span>
         </div>
       )}
 
-      {/* 1. Client Contact Details */}
-      <div className="space-y-4">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400 flex items-center gap-2">
-          <User className="w-4 h-4" /> 1. Client Contact Details
-        </h3>
+      {draftSavedTime && (
+        <div className="flex items-center justify-between px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg text-xs font-medium">
+          <span className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {draftSavedTime}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              localStorage.removeItem('nestguru_case_draft');
+              setDraftSavedTime(null);
+            }}
+            className="hover:underline opacity-80"
+          >
+            Clear Draft
+          </button>
+        </div>
+      )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* SECTION 1: LOAN & SUB-PRODUCT (Top First Dropdown as requested) */}
+      <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <Layers className="w-5 h-5 text-indigo-500" />
+          <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
+            1. Loan Product & Sub-Product
+          </h2>
+          <span className="ml-auto text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 font-semibold px-2 py-0.5 rounded-full">
+            Mandatory First Step
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Client Full Name <span className="text-rose-500">*</span>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+              Loan Product *
+            </label>
+            <select
+              value={formData.product}
+              onChange={(e) => setFormData({ ...formData, product: e.target.value, subProduct: '' })}
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            >
+              {products.map((p) => (
+                <option key={p.id} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+              Sub Product (If Applicable)
+            </label>
+            <select
+              value={formData.subProduct}
+              onChange={(e) => setFormData({ ...formData, subProduct: e.target.value })}
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            >
+              <option value="">-- Standard / No Sub-Product --</option>
+              {filteredSubProducts.map((sp) => (
+                <option key={sp.id} value={sp.name}>
+                  {sp.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 2: APPLICANT DETAILS & PROFILE */}
+      <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <User className="w-5 h-5 text-indigo-500" />
+          <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
+            2. Applicant Profile & KYC Details
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Applicant Full Name (Alphabets Only) *
             </label>
             <div className="relative">
-              <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
               <input
                 type="text"
                 required
-                placeholder="e.g. Ramesh Kumar"
                 value={formData.clientName}
                 onChange={(e) => setFormData({ ...formData, clientName: sanitizeToAlphabetsOnly(e.target.value) })}
-                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
+                placeholder="e.g. Rahul Sharma"
+                className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
               />
             </div>
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Mobile Number <span className="text-rose-500">* (10 Digits)</span>
-              </label>
-              <span className={`text-[10px] font-mono font-bold ${formData.mobile.length === 10 ? 'text-emerald-500' : 'text-slate-400'}`}>
-                {formData.mobile.length}/10 digits
-              </span>
-            </div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Mobile Number (10 Digits) *
+            </label>
             <div className="relative">
-              <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
               <input
                 type="tel"
                 required
                 maxLength={10}
-                placeholder="e.g. 9876543210"
                 value={formData.mobile}
                 onChange={(e) => setFormData({ ...formData, mobile: sanitizeTo10Digits(e.target.value) })}
-                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm font-mono tracking-wider"
+                placeholder="9876543210"
+                className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
               />
             </div>
           </div>
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Email Address <span className="text-rose-500">* (Valid Email)</span>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Email Address
             </label>
             <div className="relative">
-              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
               <input
                 type="email"
-                required
-                placeholder="e.g. ramesh@example.com"
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value.trim() })}
-                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                placeholder="rahul.sharma@example.com"
+                className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Client Date of Birth (DOB) <span className="text-slate-400 font-normal">(Optional - For Birthday wishes)</span>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Client Sex / Gender *
+            </label>
+            <select
+              value={formData.gender}
+              onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            >
+              <option value="MALE">Male</option>
+              <option value="FEMALE">Female</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Date of Birth (Birthday)
             </label>
             <div className="relative">
-              <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <Calendar className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
               <input
                 type="date"
                 value={formData.clientDob}
                 onChange={(e) => setFormData({ ...formData, clientDob: e.target.value })}
-                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
+                className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
               />
             </div>
           </div>
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Client State
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Customer Type / Entity *
             </label>
-            <div className="relative">
-              <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-              <select
-                value={formData.clientState}
-                onChange={(e) => {
-                  const newState = e.target.value;
-                  setIsCustomCity(false);
-                  setFormData({
-                    ...formData,
-                    clientState: newState,
-                    clientCity: '',
-                  });
-                }}
-                className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-900 font-semibold"
-              >
-                {states.map((s) => (
-                  <option key={s.id} value={s.name}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Client City <span className="text-slate-400 font-normal">(Optional)</span>
-            </label>
-            {stateCities.length > 0 ? (
-              <div className="space-y-1.5">
-                <div className="relative">
-                  <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <select
-                    value={
-                      isCustomCity
-                        ? '__other__'
-                        : stateCities.some((c) => c.name === formData.clientCity)
-                        ? formData.clientCity
-                        : formData.clientCity
-                        ? '__other__'
-                        : ''
-                    }
-                    onChange={(e) => {
-                      if (e.target.value === '__other__') {
-                        setIsCustomCity(true);
-                        setFormData({ ...formData, clientCity: '' });
-                      } else {
-                        setIsCustomCity(false);
-                        setFormData({ ...formData, clientCity: e.target.value });
-                      }
-                    }}
-                    className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-900 font-medium"
-                  >
-                    <option value="">-- Select City ({formData.clientState}) --</option>
-                    {stateCities.map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                    <option value="__other__">+ Other / Enter Manually</option>
-                  </select>
-                </div>
-                {isCustomCity && (
-                  <input
-                    type="text"
-                    placeholder="Enter city name..."
-                    value={formData.clientCity}
-                    onChange={(e) => setFormData({ ...formData, clientCity: e.target.value })}
-                    className="w-full glass-input px-3 py-2 rounded-xl text-xs font-medium"
-                    autoFocus
-                  />
-                )}
-              </div>
-            ) : (
-              <div className="relative">
-                <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  placeholder="e.g. Mumbai, Pune"
-                  value={formData.clientCity}
-                  onChange={(e) => setFormData({ ...formData, clientCity: e.target.value })}
-                  className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <hr className="border-slate-200 dark:border-slate-800" />
-
-      {/* 2. Co-Applicants Details with Income Required Yes/No */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-2">
-            <Users className="w-4 h-4" /> 2. Co-Applicant Details
-          </h3>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">Number of Co-Applicants:</span>
-            <input
-              type="number"
-              min="0"
-              max="5"
-              value={formData.coApplicantCount}
-              onChange={(e) => handleCoApplicantCountChange(parseInt(e.target.value) || 0)}
-              className="w-16 glass-input px-2 py-1 rounded-lg text-xs font-bold text-center"
-            />
-          </div>
-        </div>
-
-        {coApplicants.map((coApp, idx) => (
-          <div key={idx} className="p-4 rounded-xl bg-slate-100/70 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white pb-2 border-b border-slate-200 dark:border-slate-800">
-              <span>Co-Applicant {idx + 1}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-slate-500 font-medium">Income Details Required:</span>
-                <select
-                  value={coApp.incomeRequired ? 'YES' : 'NO'}
-                  onChange={(e) => handleCoApplicantChange(idx, 'incomeRequired', e.target.value === 'YES')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold border ${
-                    coApp.incomeRequired
-                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/40'
-                      : 'bg-slate-200 dark:bg-slate-800 text-slate-500 border-slate-300 dark:border-slate-700'
-                  }`}
-                >
-                  <option value="YES">YES (Include Income Docs)</option>
-                  <option value="NO">NO (Skip Income Docs)</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Name</label>
-                <input
-                  type="text"
-                  placeholder={`Co-Applicant ${idx + 1} Name`}
-                  value={coApp.name}
-                  onChange={(e) => handleCoApplicantChange(idx, 'name', sanitizeToAlphabetsOnly(e.target.value))}
-                  className="w-full glass-input px-3 py-2 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300">Mobile Number (10 Digits)</label>
-                  <span className={`text-[10px] font-mono ${coApp.mobile?.length === 10 ? 'text-emerald-500 font-bold' : 'text-slate-400'}`}>
-                    {coApp.mobile?.length || 0}/10
-                  </span>
-                </div>
-                <input
-                  type="tel"
-                  maxLength={10}
-                  placeholder="10-digit mobile"
-                  value={coApp.mobile}
-                  onChange={(e) => handleCoApplicantChange(idx, 'mobile', sanitizeTo10Digits(e.target.value))}
-                  className="w-full glass-input px-3 py-2 rounded-xl font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Email ID</label>
-                <input
-                  type="email"
-                  placeholder="coapplicant@example.com"
-                  value={coApp.email}
-                  onChange={(e) => handleCoApplicantChange(idx, 'email', e.target.value.trim())}
-                  className="w-full glass-input px-3 py-2 rounded-xl"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">State</label>
-                <select
-                  value={coApp.state}
-                  onChange={(e) => handleCoApplicantChange(idx, 'state', e.target.value)}
-                  className="w-full glass-input px-3 py-2 rounded-xl bg-white dark:bg-slate-900"
-                >
-                  {states.map((s) => (
-                    <option key={s.id} value={s.name}>{s.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Date of Birth (DOB) <span className="text-slate-400 font-normal">(Optional)</span>
-                </label>
-                <input
-                  type="date"
-                  value={coApp.dob || ''}
-                  onChange={(e) => handleCoApplicantChange(idx, 'dob', e.target.value)}
-                  className="w-full glass-input px-3 py-2 rounded-xl"
-                />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <hr className="border-slate-200 dark:border-slate-800" />
-
-      {/* 3. Product & Source Assignment Details */}
-      <div className="space-y-4">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-2">
-          <Layers className="w-4 h-4" /> 3. Product & Source User Assignments
-        </h3>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Loan Product</label>
-            <select
-              value={formData.product}
-              onChange={(e) => setFormData({ ...formData, product: e.target.value })}
-              className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 font-semibold"
-            >
-              {products.length > 0 ? (
-                products.map((p) => (
-                  <option key={p.id} value={p.name}>
-                    {p.name}
-                  </option>
-                ))
-              ) : (
-                <>
-                  <option value="Home Loan">Home Loan</option>
-                  <option value="Loan Against Property">Loan Against Property</option>
-                  <option value="MSME Business Loan">MSME Business Loan</option>
-                </>
-              )}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Customer Profile</label>
             <select
               value={formData.customerType}
               onChange={(e) => setFormData({ ...formData, customerType: e.target.value })}
-              className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
             >
-              {profiles.length > 0 ? (
-                profiles.map((pr) => (
-                  <option key={pr.id} value={pr.name}>
-                    {pr.name}
-                  </option>
-                ))
-              ) : (
-                <>
-                  <option value="Salaried">Salaried</option>
-                  <option value="Professional">Professional</option>
-                  <option value="Business">Business / Self-Employed</option>
-                </>
-              )}
+              {targetCategories.map((tc) => (
+                <option key={tc.id} value={tc.name}>
+                  {tc.name}
+                </option>
+              ))}
             </select>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Property Scope</label>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Client State *
+            </label>
+            <select
+              value={formData.clientState}
+              onChange={(e) => setFormData({ ...formData, clientState: e.target.value, clientCity: '' })}
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            >
+              <option value="">-- Select State --</option>
+              {INDIAN_STATES.map((stateName) => (
+                <option key={stateName} value={stateName}>
+                  {stateName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Client City
+            </label>
+            <input
+              type="text"
+              list="clientCityList"
+              value={formData.clientCity}
+              onChange={(e) => setFormData({ ...formData, clientCity: e.target.value })}
+              placeholder="e.g. Mumbai, Bengaluru, Noida..."
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            />
+            <datalist id="clientCityList">
+              {stateCities.map((cityName) => (
+                <option key={cityName} value={cityName} />
+              ))}
+            </datalist>
+          </div>
+        </div>
+
+        {/* Multi-Income Types Checkboxes (Pointer 1.4 & 18) */}
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+          <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-2">
+            Income Profile (Select Multiple if Applicable) *
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {((profiles && profiles.length > 0)
+              ? profiles.map((p) => p.name)
+              : ['Salaried', 'Self Employed Professional', 'Business / Non-Professional', 'Rental Income']
+            ).map((inc) => {
+              const checked = (formData.incomeTypes || []).includes(inc);
+              return (
+                <label
+                  key={inc}
+                  className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all ${
+                    checked
+                      ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-500 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                      : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => handleIncomeTypeToggle(inc)}
+                    className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                  />
+                  <span>{inc}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 3: PROPERTY DETAILS & SCOPE */}
+      <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <Building2 className="w-5 h-5 text-indigo-500" />
+          <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
+            3. Property Type & Location Scope
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Property Scope *
+            </label>
             <select
               value={formData.propertyType}
               onChange={(e) => setFormData({ ...formData, propertyType: e.target.value })}
-              className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 font-semibold"
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
             >
-              <option value="Resale">Resale Property</option>
-              <option value="Takeover / Seller BT">Takeover / Seller BT</option>
-              <option value="Direct Allotment (Under Construction)">
-                Direct Allotment (Under Construction)
-              </option>
+              {propertyScopes.map((ps) => (
+                <option key={ps.id} value={ps.name}>
+                  {ps.name}
+                </option>
+              ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Property State *
+            </label>
+            <select
+              value={formData.propertyState}
+              onChange={(e) => setFormData({ ...formData, propertyState: e.target.value, propertyCity: '' })}
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            >
+              <option value="">-- Select Property State --</option>
+              {INDIAN_STATES.map((stateName) => (
+                <option key={stateName} value={stateName}>
+                  {stateName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Property City
+            </label>
+            <input
+              type="text"
+              list="propertyCityList"
+              value={formData.propertyCity}
+              onChange={(e) => setFormData({ ...formData, propertyCity: e.target.value })}
+              placeholder="e.g. Noida, Gurugram, Mumbai..."
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            />
+            <datalist id="propertyCityList">
+              {propStateCities.map((cityName) => (
+                <option key={cityName} value={cityName} />
+              ))}
+            </datalist>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION 4: CO-APPLICANTS (COMPREHENSIVE ALL-FIELDS PROCESS) */}
+      <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-indigo-500" />
+            <div>
+              <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                4. Co-Applicants Information
+                {coApplicants.length > 0 && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold border border-indigo-500/20">
+                    {coApplicants.length} Added
+                  </span>
+                )}
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Capture complete contact, KYC, relation & income profiles for all co-borrowers
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                handleCoApplicantCountChange(coApplicants.length + 1);
+                setActiveCoAppTab(coApplicants.length);
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Co-Applicant</span>
+            </button>
           </div>
         </div>
 
-        {/* Source User Dropdowns */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Channel Partner User
-            </label>
-            <select
-              value={formData.channelUserId}
-              onChange={(e) => setFormData({ ...formData, channelUserId: e.target.value })}
-              className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900"
+        {coApplicants.length === 0 ? (
+          <div className="p-6 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 text-center space-y-2">
+            <Users className="w-8 h-8 text-slate-400 mx-auto" />
+            <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Sole Applicant File (No Co-Applicants Added)
+            </p>
+            <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+              If the client has co-borrowers or family members contributing to income, click &quot;Add Co-Applicant&quot; above.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                handleCoApplicantCountChange(1);
+                setActiveCoAppTab(0);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 text-xs font-bold hover:bg-indigo-100 transition-colors"
             >
-              <option value="">-- Unassigned Channel --</option>
-              {channelUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name.replace(/\s*\([^)]*\)/g, '').trim()}</option>
-              ))}
-            </select>
+              <Plus className="w-3.5 h-3.5" /> Add Co-Applicant 1
+            </button>
           </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Tabs for Co-Applicants */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-100 dark:border-slate-800">
+              {coApplicants.map((co, idx) => {
+                const isActive = activeCoAppTab === idx;
+                return (
+                  <div
+                    key={idx}
+                    className={`flex items-center rounded-xl border text-xs font-bold transition-all shrink-0 ${
+                      isActive
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-600/20'
+                        : 'bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setActiveCoAppTab(idx)}
+                      className="px-3.5 py-2 flex items-center gap-1.5"
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      <span>{co.name || `Co-Applicant #${idx + 1}`}</span>
+                      {co.relationship && (
+                        <span className="text-[10px] font-normal opacity-80">
+                          ({co.relationship})
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      title="Remove this Co-Applicant"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`Remove Co-Applicant #${idx + 1} (${co.name || 'Co-Applicant'})?`)) {
+                          const updated = coApplicants.filter((_, i) => i !== idx);
+                          setCoApplicants(updated);
+                          setFormData((prev) => ({ ...prev, coApplicantCount: updated.length }));
+                          if (activeCoAppTab >= updated.length) {
+                            setActiveCoAppTab(Math.max(0, updated.length - 1));
+                          }
+                        }
+                      }}
+                      className="px-2 py-2 hover:text-rose-400 opacity-70 hover:opacity-100 border-l border-white/20 transition-opacity"
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Sales Lead User
-            </label>
-            <select
-              value={formData.salesUserId}
-              onChange={(e) => setFormData({ ...formData, salesUserId: e.target.value })}
-              className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900"
-            >
-              <option value="">-- Unassigned Sales --</option>
-              {salesUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name.replace(/\s*\([^)]*\)/g, '').trim()}</option>
-              ))}
-            </select>
-          </div>
+              <button
+                type="button"
+                onClick={() => {
+                  handleCoApplicantCountChange(coApplicants.length + 1);
+                  setActiveCoAppTab(coApplicants.length);
+                }}
+                className="px-3 py-2 rounded-xl border border-dashed border-indigo-300 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 text-xs font-bold shrink-0 flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" /> + Add Another
+              </button>
+            </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Operation Lead User
-            </label>
-            <select
-              value={formData.operationUserId}
-              onChange={(e) => setFormData({ ...formData, operationUserId: e.target.value })}
-              className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900"
-            >
-              <option value="">-- Unassigned Operation --</option>
-              {operationUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name.replace(/\s*\([^)]*\)/g, '').trim()}</option>
-              ))}
-            </select>
-          </div>
-        </div>
+            {/* Active Co-Applicant Form Details */}
+            {(() => {
+              const activeIdx = Math.min(activeCoAppTab, coApplicants.length - 1);
+              const activeCo = coApplicants[activeIdx];
+              if (!activeCo) return null;
 
-        {teams.length > 0 && (
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Assign to Operations Team
-            </label>
-            <select
-              value={formData.assignedTeamId}
-              onChange={(e) => setFormData({ ...formData, assignedTeamId: e.target.value })}
-              className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900"
-            >
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
+              const activeCoState = activeCo.state || formData.clientState;
+              const coDbCities = states.find((s) => s.name?.toLowerCase() === activeCoState?.toLowerCase())?.cities?.map((c) => c.name) || [];
+              const coStateCities = Array.from(new Set([...coDbCities, ...getCitiesForIndianState(activeCoState)]));
+              const coCityListId = `coCityList_${activeIdx}`;
+
+              const availableIncomeProfiles = (profiles && profiles.length > 0)
+                ? profiles.map((p) => p.name)
+                : ['Salaried', 'Self Employed Professional', 'Business / Non-Professional', 'Rental Income'];
+
+              return (
+                <div className="p-5 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-4">
+                  {/* Top Bar for Active Co-Applicant */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-200/80 dark:border-slate-700">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-extrabold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                        Co-Applicant #{activeIdx + 1} Profile & Details
+                      </span>
+                      {activeCo.name && (
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                          — {activeCo.name}
+                        </span>
+                      )}
+                    </div>
+
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer bg-white dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={activeCo.incomeRequired}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'incomeRequired', e.target.checked)}
+                        className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                      />
+                      <span>Income Required for Loan Eligibility</span>
+                    </label>
+                  </div>
+
+                  {/* Section A: Personal & Contact (Equivalent to Applicant) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                        Full Name *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={activeCo.name}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'name', sanitizeToAlphabetsOnly(e.target.value))}
+                        placeholder="e.g. Ramesh Sharma"
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                        Relationship with Applicant *
+                      </label>
+                      <select
+                        value={activeCo.relationship || 'Spouse'}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'relationship', e.target.value)}
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
+                      >
+                        <option value="Spouse">Spouse (Pati / Patni)</option>
+                        <option value="Father">Father (Pita)</option>
+                        <option value="Mother">Mother (Mata)</option>
+                        <option value="Brother">Brother (Bhai)</option>
+                        <option value="Sister">Sister (Behen)</option>
+                        <option value="Son">Son (Beta)</option>
+                        <option value="Daughter">Daughter (Beti)</option>
+                        <option value="Business Partner">Business Partner</option>
+                        <option value="Director">Company Director</option>
+                        <option value="Other">Other Guarantor / Relative</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          Mobile Number * (10 Digits)
+                        </label>
+                        <span className={`text-[10px] font-mono font-bold ${activeCo.mobile.length === 10 ? 'text-emerald-500' : 'text-slate-400'}`}>
+                          {activeCo.mobile.length}/10
+                        </span>
+                      </div>
+                      <input
+                        type="tel"
+                        maxLength={10}
+                        value={activeCo.mobile}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'mobile', sanitizeTo10Digits(e.target.value))}
+                        placeholder="9876543210"
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        value={activeCo.email}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'email', e.target.value.trim())}
+                        placeholder="coapplicant@example.com"
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                        Sex / Gender *
+                      </label>
+                      <select
+                        value={activeCo.gender || 'MALE'}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'gender', e.target.value)}
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
+                      >
+                        <option value="MALE">Male</option>
+                        <option value="FEMALE">Female</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                        Date of Birth (Birthday)
+                      </label>
+                      <input
+                        type="date"
+                        value={activeCo.dob}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'dob', e.target.value)}
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                        State *
+                      </label>
+                      <select
+                        value={activeCo.state || formData.clientState}
+                        onChange={(e) => {
+                          const updated = [...coApplicants];
+                          updated[activeIdx] = { ...updated[activeIdx], state: e.target.value, city: '' };
+                          setCoApplicants(updated);
+                        }}
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
+                      >
+                        <option value="">-- Select State --</option>
+                        {INDIAN_STATES.map((stateName) => (
+                          <option key={stateName} value={stateName}>
+                            {stateName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                        City
+                      </label>
+                      <input
+                        type="text"
+                        list={coCityListId}
+                        value={activeCo.city}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'city', e.target.value)}
+                        placeholder="e.g. Mumbai, Pune..."
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                      <datalist id={coCityListId}>
+                        {coStateCities.map((cityName) => (
+                          <option key={cityName} value={cityName} />
+                        ))}
+                      </datalist>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                        Customer Type / Entity *
+                      </label>
+                      <select
+                        value={activeCo.customerType || defaultCustomerType}
+                        onChange={(e) => handleCoApplicantChange(activeIdx, 'customerType', e.target.value)}
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
+                      >
+                        {targetCategories.map((tc) => (
+                          <option key={tc.id} value={tc.name}>
+                            {tc.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Section B: Income Profiles Checkboxes (if financial co-applicant) */}
+                  <div className="pt-3 border-t border-slate-200/80 dark:border-slate-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                        Co-Applicant Income Profile(s) *
+                      </label>
+                      {!activeCo.incomeRequired && (
+                        <span className="text-[11px] text-amber-500 font-medium">
+                          (Non-financial co-borrower - KYC only)
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {availableIncomeProfiles.map((inc) => {
+                        const checked = (activeCo.incomeTypes || []).includes(inc);
+                        return (
+                          <label
+                            key={inc}
+                            className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all ${
+                              checked
+                                ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-500 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                                : 'bg-white dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => handleCoApplicantIncomeToggle(activeIdx, inc)}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                            />
+                            <span>{inc}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
 
-      <div className="pt-4">
+      {/* SECTION 5: SOURCE & ASSIGNMENTS */}
+      <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <UserCheck className="w-5 h-5 text-indigo-500" />
+          <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
+            5. Source Assignment & Operations Desk
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Pointer 5: Channel Partner visible ONLY to Super Admin */}
+          {isSuperAdmin && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                Channel Partner (Super Admin View Only)
+              </label>
+              <select
+                value={formData.channelUserId}
+                onChange={(e) => setFormData({ ...formData, channelUserId: e.target.value })}
+                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+              >
+                <option value="">-- Direct Lead / None --</option>
+                {channelUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} ({u.email || 'Channel'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Sales Executive
+            </label>
+            <select
+              value={formData.salesUserId}
+              onChange={(e) => setFormData({ ...formData, salesUserId: e.target.value })}
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            >
+              <option value="">-- Unassigned --</option>
+              {salesUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+              Operations Executive
+            </label>
+            <select
+              value={formData.operationUserId}
+              onChange={(e) => setFormData({ ...formData, operationUserId: e.target.value })}
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            >
+              <option value="">-- Unassigned --</option>
+              {operationUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* SUBMIT BUTTON */}
+      <div className="flex items-center justify-end gap-3 pt-2">
+        <button
+          type="button"
+          onClick={() => {
+            if (window.confirm('Are you sure you want to cancel lead creation? Unsaved entries will be discarded.')) {
+              localStorage.removeItem('nestguru_case_draft');
+              router.push('/cases');
+            }
+          }}
+          className="px-5 py-2.5 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition"
+        >
+          Cancel
+        </button>
         <button
           type="submit"
           disabled={loading}
-          className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-sm shadow-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+          className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-md hover:shadow-lg transition flex items-center gap-2 disabled:opacity-50"
         >
-          {loading ? (
-            <span>Generating Dynamic Checklist...</span>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>Create Case & Auto-Generate Dynamic Checklist</span>
-              <ArrowRight className="w-4 h-4" />
-            </>
-          )}
+          {loading ? 'Creating Case...' : 'Create Case Intake'}
+          <ArrowRight className="w-4 h-4" />
         </button>
       </div>
     </form>

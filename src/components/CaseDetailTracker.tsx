@@ -27,6 +27,13 @@ import {
   MapPin,
   Building,
   Plus,
+  Users,
+  Calendar,
+  Clock,
+  Sparkles,
+  BadgeCheck,
+  History,
+  X,
 } from 'lucide-react';
 import { exportToCSV } from '@/lib/excel-export';
 import { isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
@@ -36,6 +43,7 @@ interface ChecklistItem {
   category: string;
   label: string;
   appliesTo: string;
+  personName?: string;
   status: string;
   remark: string;
   documentUrl: string;
@@ -65,6 +73,8 @@ interface CaseDetailProps {
     product: string;
     customerType: string;
     propertyType: string;
+    propertyState?: string | null;
+    propertyCity?: string | null;
     coApplicantCount: number;
     coApplicantsData?: any[];
     motherName?: string;
@@ -77,6 +87,9 @@ interface CaseDetailProps {
     stage: number;
     status: string;
     assignedTeamName?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    incomeTypes?: string[];
     checklistItems: ChecklistItem[];
   };
   userRole: string;
@@ -95,6 +108,44 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
 
   // Applicant Filter state: "ALL" | "Applicant" | "Co-Applicant 1" | "Co-Applicant 2" ...
   const [applicantFilter, setApplicantFilter] = useState<string>('ALL');
+
+  // History Note / Reason Prompt State
+  const [historyModalItem, setHistoryModalItem] = useState<ChecklistItem | null>(null);
+  const [historyRemarkInput, setHistoryRemarkInput] = useState('');
+  const [autoLogWithoutPrompt, setAutoLogWithoutPrompt] = useState(false);
+
+  // Dynamic Person Badge Resolver: Always shows real names for Applicant and all Co-Applicants
+  const getPersonBadgeLabel = (item: ChecklistItem) => {
+    const applies = (item.appliesTo || '').trim();
+    const person = (item.personName || '').trim();
+
+    if (!applies || applies.toLowerCase() === 'applicant') {
+      return `${person || caseData.clientName || 'Applicant'} (Applicant)`;
+    }
+    if (applies.toLowerCase().includes('(applicant)')) {
+      return applies;
+    }
+
+    const coMatch = applies.match(/co-applicant\s*(\d+)/i);
+    if (coMatch) {
+      const idx = parseInt(coMatch[1], 10);
+      const coApp = (caseData.coApplicantsData || [])[idx - 1];
+      const resolvedName = person || coApp?.name?.trim() || `Co-Applicant ${idx}`;
+      return `${resolvedName} (Co-Applicant ${idx})`;
+    }
+
+    if (applies.toLowerCase() === 'co-applicant') {
+      const coApp = (caseData.coApplicantsData || [])[0];
+      const resolvedName = person || coApp?.name?.trim() || 'Co-Applicant 1';
+      return `${resolvedName} (Co-Applicant 1)`;
+    }
+
+    if (person && !applies.toLowerCase().includes(person.toLowerCase())) {
+      return `${person} (${applies})`;
+    }
+
+    return applies;
+  };
 
   // Personal Information State
   const [personalInfo, setPersonalInfo] = useState({
@@ -122,16 +173,48 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
   // Filter items by Applicant filter
   const filteredItems = items.filter((item) => {
     if (applicantFilter === 'ALL') return true;
+    const applies = (item.appliesTo || '').toLowerCase();
+    const person = (item.personName || '').toLowerCase();
+
+    if (applicantFilter === 'APPLICANT') {
+      return applies.includes('applicant') && !applies.includes('co-applicant');
+    }
+
+    if (applicantFilter.startsWith('CO_APP_')) {
+      const idx = parseInt(applicantFilter.replace('CO_APP_', ''), 10);
+      const coApp = (caseData.coApplicantsData || [])[idx - 1];
+      const matchesIdx = applies.includes(`co-applicant ${idx}`);
+      const matchesName = coApp?.name && (applies.includes(coApp.name.toLowerCase()) || person.includes(coApp.name.toLowerCase()));
+      return matchesIdx || matchesName;
+    }
+
     return item.appliesTo === applicantFilter;
   });
 
+  const applicantItemsCount = items.filter((item) => {
+    const applies = (item.appliesTo || '').toLowerCase();
+    return applies.includes('applicant') && !applies.includes('co-applicant');
+  }).length;
+
+  const getCoAppItemsCount = (idx: number) => {
+    const coApp = (caseData.coApplicantsData || [])[idx - 1];
+    return items.filter((item) => {
+      const applies = (item.appliesTo || '').toLowerCase();
+      const person = (item.personName || '').toLowerCase();
+      const matchesIdx = applies.includes(`co-applicant ${idx}`);
+      const matchesName = coApp?.name && (applies.includes(coApp.name.toLowerCase()) || person.includes(coApp.name.toLowerCase()));
+      return matchesIdx || matchesName;
+    }).length;
+  };
+
   // Group filtered items by category - ignore dummy "Personal Information" checklist category
   const categoriesMap = filteredItems.reduce((acc, item) => {
-    if (item.category.toLowerCase().includes('personal information')) {
+    const cat = item.category || 'General';
+    if (cat.toLowerCase().includes('personal information')) {
       return acc;
     }
-    if (!acc[item.category]) acc[item.category] = [];
-    acc[item.category].push(item);
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(item);
     return acc;
   }, {} as Record<string, ChecklistItem[]>);
 
@@ -153,11 +236,11 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
   };
 
   const validatePAN = (pan: string): boolean => {
-    return /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan.trim());
+    return /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test((pan || '').trim());
   };
 
   const validateAadhar = (aadhar: string): boolean => {
-    const digitsOnly = aadhar.replace(/\D/g, '');
+    const digitsOnly = (aadhar || '').replace(/\D/g, '');
     return digitsOnly.length === 12;
   };
 
@@ -213,18 +296,31 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
     );
   };
 
-  // Individual Row Save
-  const handleSaveItem = async (item: ChecklistItem) => {
+  // Individual Row Save Handler: prompts for history note or auto-logs
+  const handleSaveItem = (item: ChecklistItem) => {
     if (isReadOnly) {
       setErrorMessage('Read-only access: Cannot modify document items.');
       return;
     }
+    if (autoLogWithoutPrompt) {
+      executeSaveItem(item, item.remark || '');
+    } else {
+      setHistoryModalItem(item);
+      setHistoryRemarkInput(item.remark || '');
+    }
+  };
+
+  const executeSaveItem = async (item: ChecklistItem, historyRemark?: string) => {
     setSavingId(item.id);
     setErrorMessage('');
     setSuccessMessage('');
+    setHistoryModalItem(null);
     try {
-      await updateChecklistItemAction(item.id, caseData.id, item);
-      setSuccessMessage(`Saved "${item.label}"!`);
+      await updateChecklistItemAction(item.id, caseData.id, {
+        ...item,
+        historyRemark: historyRemark || undefined,
+      });
+      setSuccessMessage(`Saved "${item.label}" & recorded to history!`);
       router.refresh();
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to update document status');
@@ -239,17 +335,18 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
       setErrorMessage('Read-only access: Cannot modify document items.');
       return;
     }
+    const note = window.prompt(`Enter optional history update note for category "${categoryName}":`, '') || undefined;
     setSavingCategory(categoryName);
     setErrorMessage('');
     setSuccessMessage('');
 
-    const res = await saveSectionChecklistItemsAction(caseData.id, categoryItems);
+    const res = await saveSectionChecklistItemsAction(caseData.id, categoryItems, note);
     setSavingCategory(null);
 
     if (!res.success) {
       setErrorMessage(res.error || 'Failed to save section.');
     } else {
-      setSuccessMessage(`Section "${categoryName}" saved successfully!`);
+      setSuccessMessage(`Section "${categoryName}" saved & recorded to history!`);
       router.refresh();
     }
   };
@@ -353,11 +450,11 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
       )}
 
       {/* Case Overview Header */}
-      <div className="glass-panel p-6 rounded-2xl space-y-6 shadow-2xl relative overflow-hidden">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-3">
+      <div className="glass-panel p-6 rounded-2xl space-y-5 shadow-2xl relative overflow-hidden">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+          <div className="space-y-3 flex-1">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center border border-slate-200 shrink-0 overflow-hidden">
+              <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center border border-slate-200 shrink-0 overflow-hidden shadow-sm">
                 <img
                   src="https://thenestguru.com/thenestgurulogo.png"
                   alt="TheNestGuru Logo"
@@ -365,18 +462,32 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                 />
               </div>
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400">TheNestGuru Loan Desk</span>
-                <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">{caseData.clientName}</h1>
+                <span className="text-xs font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                  TheNestGuru Loan Desk • File #{caseData.id.slice(-6).toUpperCase()}
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+                    {caseData.clientName}
+                  </h1>
+                  <span className="px-2.5 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 font-bold text-xs">
+                    Primary Applicant
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               <span className="px-3 py-1 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 font-bold text-xs">
                 {caseData.product}
               </span>
               <span className="px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30 font-bold text-xs">
                 {caseData.customerType}
               </span>
+              {caseData.incomeTypes && caseData.incomeTypes.length > 0 && (
+                <span className="px-3 py-1 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/30 font-bold text-xs">
+                  Income: {caseData.incomeTypes.join(', ')}
+                </span>
+              )}
               {(caseData.clientCity || caseData.clientState) && (
                 <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-bold text-xs flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> {caseData.clientCity ? `${caseData.clientCity}, ${caseData.clientState || ''}` : caseData.clientState}
@@ -385,41 +496,54 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
             </div>
 
             <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 dark:text-slate-300">
-              <span className="flex items-center gap-1.5 font-mono text-slate-500 dark:text-slate-400">
+              <span className="flex items-center gap-1.5 font-mono text-slate-600 dark:text-slate-400">
                 <Phone className="w-3.5 h-3.5 text-sky-500" /> {caseData.mobile}
               </span>
               {caseData.email && (
-                <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
                   <Mail className="w-3.5 h-3.5 text-sky-500" /> {caseData.email}
                 </span>
               )}
               <span className="flex items-center gap-1.5 font-medium text-indigo-600 dark:text-indigo-300">
-                <Building2 className="w-3.5 h-3.5 text-indigo-500" /> {caseData.propertyType}
+                <Building2 className="w-3.5 h-3.5 text-indigo-500" />
+                <span>{caseData.propertyType}</span>
+                {(caseData.propertyCity || caseData.propertyState) && (
+                  <span className="text-slate-400 dark:text-slate-500 font-normal">
+                    ({[caseData.propertyCity, caseData.propertyState].filter(Boolean).join(', ')})
+                  </span>
+                )}
               </span>
             </div>
+
+            {/* Timeline & Case Age Info */}
+            {caseData.createdAt && (
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                <span className="flex items-center gap-1 font-medium">
+                  <Calendar className="w-3.5 h-3.5 text-sky-500" />
+                  Intake Date: <strong className="text-slate-700 dark:text-slate-200 font-semibold">{new Date(caseData.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</strong>
+                </span>
+                {(() => {
+                  const created = new Date(caseData.createdAt);
+                  const now = new Date();
+                  const diffDays = Math.floor(Math.abs(now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+                  return (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-500/30">
+                      ⏱ {diffDays === 0 ? 'Intake: Today (Fresh)' : `${diffDays} Days Old`}
+                    </span>
+                  );
+                })()}
+                {caseData.updatedAt && (
+                  <span className="flex items-center gap-1 text-[11px] text-slate-400 ml-2">
+                    <Clock className="w-3 h-3 text-slate-400" />
+                    Last Updated: {new Date(caseData.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}, {new Date(caseData.updatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Controls: Applicant Filter, Print & Export */}
-          <div className="flex flex-wrap items-center gap-3 no-print">
-            {/* Applicant-wise Filter Dropdown */}
-            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900/90 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-              <Filter className="w-4 h-4 text-sky-500" />
-              <span className="text-slate-500 dark:text-slate-400 font-medium">Filter Applicant:</span>
-              <select
-                value={applicantFilter}
-                onChange={(e) => setApplicantFilter(e.target.value)}
-                className="bg-transparent font-bold text-sky-600 dark:text-sky-400 focus:outline-none"
-              >
-                <option value="ALL" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">All Applicants</option>
-                <option value="Applicant" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Main Client Only</option>
-                {Array.from({ length: caseData.coApplicantCount }).map((_, idx) => (
-                  <option key={idx} value={`Co-Applicant ${idx + 1}`} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                    Co-Applicant {idx + 1}
-                  </option>
-                ))}
-              </select>
-            </div>
-
+          {/* Action Buttons */}
+          <div className="flex flex-wrap items-center gap-3 no-print shrink-0">
             <button
               onClick={handleExportPendingDocs}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-all shadow-sm"
@@ -427,6 +551,14 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
             >
               <Download className="w-4 h-4" /> Export Pending Docs
             </button>
+
+            <a
+              href="#case-history-timeline"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30 text-xs font-semibold transition-all shadow-sm"
+              title="View Case Follow-Up & History Audit Trail"
+            >
+              <History className="w-4 h-4" /> History Log
+            </a>
 
             <button
               onClick={() => window.print()}
@@ -437,12 +569,57 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
           </div>
         </div>
 
+        {/* Co-Applicants on File Banner */}
+        {caseData.coApplicantsData && caseData.coApplicantsData.length > 0 && (
+          <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-1.5 mb-2.5">
+              <Users className="w-3.5 h-3.5" /> Co-Applicants on File ({caseData.coApplicantsData.length})
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {caseData.coApplicantsData.map((co: any, idx: number) => (
+                <div
+                  key={idx}
+                  className="p-3 rounded-xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200/70 dark:border-purple-800/40 text-xs flex flex-col justify-between gap-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-purple-500" />
+                      {co.name || `Co-Applicant ${idx + 1}`}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 font-bold">
+                      {co.relationship || `Co-Applicant ${idx + 1}`}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono">
+                    {co.mobile && <span>📞 {co.mobile}</span>}
+                    {(co.city || co.state) && <span>📍 {co.city ? `${co.city}, ${co.state || ''}` : co.state}</span>}
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-1.5 border-t border-purple-100 dark:border-purple-900/40 text-[10px]">
+                    <span
+                      className={`px-2 py-0.5 rounded-full font-bold ${
+                        co.incomeRequired !== false
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      {co.incomeRequired !== false ? 'Financial (Income Contributor)' : 'Non-Financial'}
+                    </span>
+                    {co.customerType && (
+                      <span className="text-slate-500 font-medium">({co.customerType})</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Progress Bar Header */}
         <div className="bg-slate-100 dark:bg-slate-900/80 p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
           <div className="flex items-center justify-between text-xs font-bold">
             <span className="text-slate-700 dark:text-slate-300 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-sky-500" />
-              Document Collection Progress ({applicantFilter})
+              Document Collection Progress ({applicantFilter === 'ALL' ? 'All Applicants' : applicantFilter === 'APPLICANT' ? `${caseData.clientName} (Applicant)` : applicantFilter})
             </span>
             <span className="text-sky-600 dark:text-sky-400">
               {receivedCount} of {totalCount} Completed ({progressPct}%)
@@ -458,6 +635,70 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
               style={{ width: `${progressPct}%` }}
             />
           </div>
+        </div>
+
+        {/* Smart Applicant Filter Tabs */}
+        <div className="flex items-center gap-2 overflow-x-auto pt-2 pb-1 border-t border-slate-200 dark:border-slate-800 no-print">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 flex items-center gap-1 mr-1">
+            <Filter className="w-3.5 h-3.5 text-sky-500" /> Filter Person:
+          </span>
+
+          {/* All Documents Tab */}
+          <button
+            type="button"
+            onClick={() => setApplicantFilter('ALL')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${
+              applicantFilter === 'ALL'
+                ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20'
+                : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            <span>All Documents</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${applicantFilter === 'ALL' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'}`}>
+              {items.length}
+            </span>
+          </button>
+
+          {/* Main Applicant Tab */}
+          <button
+            type="button"
+            onClick={() => setApplicantFilter('APPLICANT')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${
+              applicantFilter === 'APPLICANT'
+                ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20'
+                : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            <User className="w-3.5 h-3.5" />
+            <span>{caseData.clientName} (Applicant)</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${applicantFilter === 'APPLICANT' ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'}`}>
+              {applicantItemsCount}
+            </span>
+          </button>
+
+          {/* Co-Applicants Tabs */}
+          {(caseData.coApplicantsData || []).map((co: any, idx: number) => {
+            const tabKey = `CO_APP_${idx + 1}`;
+            const count = getCoAppItemsCount(idx + 1);
+            return (
+              <button
+                key={tabKey}
+                type="button"
+                onClick={() => setApplicantFilter(tabKey)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${
+                  applicantFilter === tabKey
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
+                    : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>{co.name || `Co-Applicant ${idx + 1}`} ({co.relationship || `Co-App ${idx + 1}`})</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${applicantFilter === tabKey ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -503,7 +744,7 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
               {/* Items List */}
               <div className="space-y-4">
                 {catItems.map((item) => {
-                  const labelLower = item.label.toLowerCase();
+                  const labelLower = (item.label || '').toLowerCase();
                   const isPANCard = labelLower.includes('pan card') || labelLower === 'pan';
                   const isAadharCard = labelLower.includes('aadhar') || labelLower.includes('aadhaar');
                   const isSalarySlip = labelLower.includes('salary slip');
@@ -549,13 +790,14 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                           <div className="font-bold text-xs text-slate-900 dark:text-white leading-snug">{item.label}</div>
                           <div className="flex items-center gap-2 flex-wrap">
                             <span
-                              className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                                item.appliesTo === 'Applicant'
-                                  ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30'
-                                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                              className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1 shadow-sm ${
+                                (item.appliesTo || '').toLowerCase().includes('co-applicant')
+                                  ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800'
+                                  : 'bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-300 dark:border-sky-800'
                               }`}
                             >
-                              {item.appliesTo}
+                              <User className="w-3 h-3 shrink-0" />
+                              <span>{getPersonBadgeLabel(item)}</span>
                             </span>
                             <span className="text-[10px] text-slate-500 font-mono">Stage {item.stage}</span>
                             {currentCount && (
@@ -1276,6 +1518,103 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
           ))}
         </div>
       </div>
+
+      {/* Save & History Remark Modal */}
+      {historyModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Record Case History Update
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Will be permanently logged into Case History & Timeline Log
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setHistoryModalItem(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Document:</span>
+                <span className="font-bold text-slate-900 dark:text-white">{historyModalItem.label}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Person:</span>
+                <span className="font-bold text-purple-600 dark:text-purple-400">{getPersonBadgeLabel(historyModalItem)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Status:</span>
+                <span className={`px-2 py-0.5 rounded font-bold text-[11px] ${
+                  historyModalItem.status === 'Received'
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                    : historyModalItem.status === 'Rejected'
+                    ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                }`}>
+                  {historyModalItem.status}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                History Update Note / Follow-Up Reason:
+              </label>
+              <textarea
+                rows={3}
+                value={historyRemarkInput}
+                onChange={(e) => setHistoryRemarkInput(e.target.value)}
+                placeholder="e.g. Physical documents collected, Bank statement verified, Query answered by client..."
+                className="w-full glass-input px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Logged with your staff username and Indian Standard Time (IST).
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-500 select-none">
+                <input
+                  type="checkbox"
+                  checked={autoLogWithoutPrompt}
+                  onChange={(e) => setAutoLogWithoutPrompt(e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                />
+                <span>Auto-save without prompt this session</span>
+              </label>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setHistoryModalItem(null)}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeSaveItem(historyModalItem, historyRemarkInput)}
+                  className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" /> Save & Record History
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

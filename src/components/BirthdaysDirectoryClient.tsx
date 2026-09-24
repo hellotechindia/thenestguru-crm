@@ -32,7 +32,13 @@ import {
 } from 'lucide-react';
 import { BIRTHDAY_TEMPLATES, getCustomWish } from '@/lib/birthday-wishes';
 import { isValid10DigitPhone, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
-import { createManualBirthdayAction, updateManualBirthdayAction, deleteManualBirthdayAction } from '@/app/actions';
+import { 
+  createManualBirthdayAction, 
+  createManualBirthdayWithCategoryAction,
+  checkDuplicateBirthdayPhoneAction,
+  updateManualBirthdayAction, 
+  deleteManualBirthdayAction 
+} from '@/app/actions';
 
 export interface BirthdayItem {
   id: string;
@@ -82,11 +88,28 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
   const [addForm, setAddForm] = useState({
     name: '',
     phone: '',
+    email: '',
     dob: '',
+    category: 'CUSTOMER',
+    onBehalfOf: 'TheNestGuru Management',
     remark: '',
   });
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [addError, setAddError] = useState('');
+
+  const checkDuplicatePhone = async (phoneStr: string) => {
+    if (phoneStr.length === 10) {
+      const res = await checkDuplicateBirthdayPhoneAction(phoneStr);
+      if (res?.exists) {
+        setDuplicateWarning(`Warning: Contact number already exists in CRM for "${res.name}" (${res.category}).`);
+      } else {
+        setDuplicateWarning(null);
+      }
+    } else {
+      setDuplicateWarning(null);
+    }
+  };
 
   // Edit Manual Entry Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -111,37 +134,39 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
   const coAppCount = useMemo(() => birthdays.filter((b) => b.category === 'CO_APPLICANT').length, [birthdays]);
   const manualCount = useMemo(() => birthdays.filter((b) => b.category === 'MANUAL').length, [birthdays]);
 
-  // Filtered List
+  // Filtered List - Auto sorted name-wise (Pointer 6)
   const filteredList = useMemo(() => {
-    return birthdays.filter((b) => {
-      // Category filter
-      if (categoryFilter !== 'ALL' && b.category !== categoryFilter) {
-        return false;
-      }
+    return birthdays
+      .filter((b) => {
+        // Category filter
+        if (categoryFilter !== 'ALL' && b.category !== categoryFilter) {
+          return false;
+        }
 
-      // Timeline filter
-      if (timelineFilter === 'today' && !b.isToday) return false;
-      if (timelineFilter === 'week' && !(b.daysRemaining >= 0 && b.daysRemaining <= 7)) return false;
-      if (timelineFilter === 'upcoming30' && !b.isWithin30Days) return false;
+        // Timeline filter
+        if (timelineFilter === 'today' && !b.isToday) return false;
+        if (timelineFilter === 'week' && !(b.daysRemaining >= 0 && b.daysRemaining <= 7)) return false;
+        if (timelineFilter === 'upcoming30' && !b.isWithin30Days) return false;
 
-      // Search filter
-      if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
-        const matches =
-          b.name.toLowerCase().includes(term) ||
-          (b.username && b.username.toLowerCase().includes(term)) ||
-          (b.phone && b.phone.includes(term)) ||
-          (b.email && b.email.toLowerCase().includes(term)) ||
-          (b.role && b.role.toLowerCase().includes(term)) ||
-          (b.association && b.association.toLowerCase().includes(term)) ||
-          (b.remark && b.remark.toLowerCase().includes(term)) ||
-          b.categoryLabel.toLowerCase().includes(term);
+        // Search filter
+        if (searchTerm.trim()) {
+          const term = searchTerm.toLowerCase();
+          const matches =
+            (b.name || '').toLowerCase().includes(term) ||
+            (b.username && b.username.toLowerCase().includes(term)) ||
+            (b.phone && b.phone.includes(term)) ||
+            (b.email && b.email.toLowerCase().includes(term)) ||
+            (b.role && b.role.toLowerCase().includes(term)) ||
+            (b.association && b.association.toLowerCase().includes(term)) ||
+            (b.remark && b.remark.toLowerCase().includes(term)) ||
+            (b.categoryLabel && b.categoryLabel.toLowerCase().includes(term));
 
-        if (!matches) return false;
-      }
+          if (!matches) return false;
+        }
 
-      return true;
-    });
+        return true;
+      })
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [birthdays, searchTerm, timelineFilter, categoryFilter]);
 
   const handleOpenWishModal = (user: BirthdayItem) => {
@@ -186,8 +211,9 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
       return;
     }
 
-    if (addForm.phone && !isValid10DigitPhone(addForm.phone)) {
-      setAddError('Phone number must be a valid 10-digit number.');
+    // Pointer 22: Birthday wish Mobile number field must be mandatory
+    if (!addForm.phone || !isValid10DigitPhone(addForm.phone)) {
+      setAddError('Mobile number is mandatory and must be exactly 10 digits.');
       return;
     }
 
@@ -195,11 +221,28 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
     setAddError('');
 
     try {
-      const res = await createManualBirthdayAction(addForm);
+      const res = await createManualBirthdayWithCategoryAction({
+        name: addForm.name.trim(),
+        phone: addForm.phone.trim(),
+        email: addForm.email?.trim() || null,
+        dob: addForm.dob,
+        category: addForm.category,
+        onBehalfOf: addForm.onBehalfOf?.trim() || null,
+        remark: addForm.remark?.trim() || null,
+      });
       setIsAdding(false);
       if (res.success) {
         setIsAddModalOpen(false);
-        setAddForm({ name: '', phone: '', dob: '', remark: '' });
+        setAddForm({
+          name: '',
+          phone: '',
+          email: '',
+          dob: '',
+          category: 'CUSTOMER',
+          onBehalfOf: 'TheNestGuru Management',
+          remark: '',
+        });
+        setDuplicateWarning(null);
         router.refresh();
       } else {
         setAddError(res.error || 'Failed to save birthday entry.');
@@ -294,7 +337,7 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
           <button
             onClick={() => {
               setAddError('');
-              setAddForm({ name: '', phone: '', dob: '', remark: '' });
+              setAddForm({ name: '', phone: '', email: '', dob: '', category: 'CUSTOMER', onBehalfOf: '', remark: '' });
               setIsAddModalOpen(true);
             }}
             className="px-4 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white text-xs font-bold transition-all shadow-md hover:shadow-lg flex items-center gap-1.5 shrink-0"
@@ -892,6 +935,13 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                 </div>
               )}
 
+              {duplicateWarning && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{duplicateWarning}</span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Full Name <span className="text-rose-500">*</span>
@@ -909,7 +959,7 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Phone / WhatsApp Number (10 Digits)
+                    Phone / Mobile Number (10 Digits) <span className="text-rose-500">*</span>
                   </label>
                   <span className={`text-[10px] font-mono ${addForm.phone.length === 10 ? 'text-emerald-500 font-bold' : 'text-slate-400'}`}>
                     {addForm.phone.length}/10
@@ -919,16 +969,64 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                   <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
                     type="tel"
+                    required
                     maxLength={10}
                     placeholder="e.g. 9876543210"
                     value={addForm.phone}
-                    onChange={(e) => setAddForm({ ...addForm, phone: sanitizeTo10Digits(e.target.value) })}
+                    onChange={(e) => {
+                      const clean = sanitizeTo10Digits(e.target.value);
+                      setAddForm({ ...addForm, phone: clean });
+                      checkDuplicatePhone(clean);
+                    }}
                     className="w-full glass-input pl-9 pr-3.5 py-2.5 rounded-xl text-xs font-mono tracking-wider"
                   />
                 </div>
                 <span className="text-[10px] text-slate-400 mt-1 block">
-                  Used for 1-click direct WhatsApp birthday wishes.
+                  Mandatory for 1-click personalized WhatsApp birthday greetings.
                 </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="ramesh@example.com"
+                    value={addForm.email}
+                    onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+                    className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Category *
+                  </label>
+                  <select
+                    value={addForm.category}
+                    onChange={(e) => setAddForm({ ...addForm, category: e.target.value })}
+                    className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900"
+                  >
+                    <option value="CUSTOMER">Customer / Lead</option>
+                    <option value="STAFF">Staff Member</option>
+                    <option value="CHANNEL">Channel Partner</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Wish On Behalf Of
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. TheNestGuru Leadership / Management"
+                  value={addForm.onBehalfOf}
+                  onChange={(e) => setAddForm({ ...addForm, onBehalfOf: e.target.value })}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs"
+                />
               </div>
 
               <div>
@@ -953,7 +1051,7 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                 </label>
                 <textarea
                   rows={2}
-                  placeholder="e.g. Key Channel Partner, Direct Client, Friend"
+                  placeholder="e.g. Key Channel Partner, Direct Client, Associate"
                   value={addForm.remark}
                   onChange={(e) => setAddForm({ ...addForm, remark: e.target.value })}
                   className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs"
