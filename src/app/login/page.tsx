@@ -5,7 +5,7 @@ import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTheme } from '@/context/ThemeContext';
-import { Lock, Mail, ShieldCheck, UserCheck, Users2, ArrowRight, CheckCircle2, Sun, Moon, Eye, EyeOff, AtSign } from 'lucide-react';
+import { Lock, Mail, ArrowRight, CheckCircle2, Sun, Moon, Eye, EyeOff, AtSign } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -33,19 +33,6 @@ export default function LoginPage() {
     } else {
       router.push('/dashboard');
       router.refresh();
-    }
-  };
-
-  const setDemoUser = (userType: 'admin' | 'staff' | 'channel') => {
-    if (userType === 'admin') {
-      setEmail('admin');
-      setPassword('admin123');
-    } else if (userType === 'staff') {
-      setEmail('deepstaff');
-      setPassword('admin123');
-    } else {
-      setEmail('channel');
-      setPassword('agent123');
     }
   };
 
@@ -78,43 +65,6 @@ export default function LoginPage() {
           </div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">TheNestGuru Loan Desk</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Multi-Tenant Dynamic Checklist & Case Processing</p>
-        </div>
-
-        {/* Demo Account Quick Select */}
-        <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-3.5 border border-slate-200 dark:border-slate-800 space-y-2">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
-            <span>Quick Login Presets</span>
-            <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold">Click to fill</span>
-          </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            <button
-              type="button"
-              onClick={() => setDemoUser('admin')}
-              className="flex flex-col items-center justify-center p-2 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-xs font-medium transition-all text-center"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-600 mb-0.5" />
-              <div className="font-bold text-[11px] leading-tight text-slate-900 dark:text-white">Super Admin</div>
-              <div className="text-[9px] text-slate-500 dark:text-slate-400">admin</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => setDemoUser('staff')}
-              className="flex flex-col items-center justify-center p-2 rounded-lg bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 text-sky-700 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-500/20 text-xs font-medium transition-all text-center"
-            >
-              <UserCheck className="w-3.5 h-3.5 shrink-0 text-sky-600 mb-0.5" />
-              <div className="font-bold text-[11px] leading-tight text-slate-900 dark:text-white">Deepak Staff</div>
-              <div className="text-[9px] text-slate-500 dark:text-slate-400">deepstaff</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => setDemoUser('channel')}
-              className="flex flex-col items-center justify-center p-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/20 text-xs font-medium transition-all text-center"
-            >
-              <Users2 className="w-3.5 h-3.5 shrink-0 text-amber-600 mb-0.5" />
-              <div className="font-bold text-[11px] leading-tight text-slate-900 dark:text-white">Channel DSA</div>
-              <div className="text-[9px] text-slate-500 dark:text-slate-400">channel</div>
-            </button>
-          </div>
         </div>
 
         {error && (
@@ -188,12 +138,6 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div className="border-t border-slate-200 dark:border-slate-800 pt-4 text-center text-xs text-slate-500 space-y-1">
-          <p className="flex items-center justify-center gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5 text-sky-500" />
-            Extensible to Multi-Tenant SSO & Bank Integrations
-          </p>
-        </div>
       </div>
     </div>
   );
