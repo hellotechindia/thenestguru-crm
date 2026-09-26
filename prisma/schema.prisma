@@ -507,21 +507,35 @@ model PasswordResetToken {
 }
 
 model VisitRecord {
-  id              String   @id @default(cuid())
+  id              String          @id @default(cuid())
   caseId          String?
-  case            Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  case            Case?           @relation(fields: [caseId], references: [id], onDelete: SetNull)
   clientName      String
   clientPhone     String?
-  propertyAddress String?  @db.Text
+  projectName     String?
+  projectPrice    Float?
+  propertyAddress String?         @db.Text
   visitDate       DateTime
   visitTime       String?
   staffUserId     String
-  staff           User     @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
-  visitType       String   @default("PROPERTY_VERIFICATION") // PROPERTY_VERIFICATION, CLIENT_MEETING, DOCUMENT_COLLECTION
-  status          String   @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
-  remarks         String?  @db.Text
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  staff           User            @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  visitType       String          @default("PROPERTY_VERIFICATION") // PROPERTY_VERIFICATION, CLIENT_MEETING, DOCUMENT_COLLECTION
+  status          String          @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
+  remarks         String?         @db.Text
+  lastRemarkAt    DateTime?
+  followUps       VisitFollowUp[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model VisitFollowUp {
+  id         String      @id @default(cuid())
+  visitId    String
+  visit      VisitRecord @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  remark     String      @db.Text
+  authorName String
+  authorRole String?
+  createdAt  DateTime    @default(now())
 }
 
 model SystemSetting {

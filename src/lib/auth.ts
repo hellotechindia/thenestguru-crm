@@ -33,12 +33,16 @@ export const authOptions: NextAuthOptions = {
 
         const identifier = credentials.email.trim();
 
-        // Support login by username or by email
+        // Support login by username, email, or common aliases
         const user = await prisma.user.findFirst({
           where: {
             OR: [
               { username: identifier },
               { email: identifier },
+              ...(identifier.toLowerCase() === 'admin' ? [{ username: 'super_admin' }, { email: 'admin@nestguru.com' }] : []),
+              ...(identifier.toLowerCase() === 'channel' ? [{ username: 'dsc' }, { email: 'channel@nestguru.com' }] : []),
+              ...(identifier.toLowerCase() === 'sales' ? [{ email: 'sales@nestguru.com' }] : []),
+              ...(identifier.toLowerCase() === 'ops' ? [{ username: 'pooja_nair' }, { email: 'ops@nestguru.com' }] : []),
             ],
           },
         });

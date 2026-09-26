@@ -31,6 +31,7 @@ export default async function VisitsPage() {
       include: {
         staff: { select: { id: true, name: true, role: true } },
         case: { select: { id: true, clientName: true, product: true } },
+        followUps: { orderBy: { createdAt: 'desc' } },
       },
       orderBy: { visitDate: 'asc' },
     }),

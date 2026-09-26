@@ -132,6 +132,14 @@ export async function createCaseAction(formData: {
 
   revalidatePath('/cases');
   revalidatePath('/dashboard');
+
+  await recordSystemNotification({
+    title: 'New Lead Created',
+    message: `${newCase.clientName} (${newCase.product}) registered by ${user.name || 'Staff'}.`,
+    type: 'CASE_UPDATE',
+    link: `/cases/${newCase.id}`,
+  });
+
   return { success: true, caseId: newCase.id };
 }
 
@@ -360,6 +368,14 @@ export async function updateCaseIntakeDetailsAction(
   revalidatePath('/cases');
   revalidatePath(`/cases/${caseId}`);
   revalidatePath('/dashboard');
+
+  await recordSystemNotification({
+    title: 'Case Details Updated',
+    message: `${data.clientName} details modified by ${user.name || 'Staff'}.`,
+    type: 'CASE_UPDATE',
+    link: `/cases/${caseId}`,
+  });
+
   return { success: true };
 }
 
@@ -464,6 +480,17 @@ export async function updateChecklistItemAction(
   revalidatePath(`/cases/${caseId}`);
   revalidatePath('/cases');
   revalidatePath('/dashboard');
+
+  if (existing && data.status && data.status !== existing.status) {
+    const matchedCase = await prisma.case.findUnique({ where: { id: caseId }, select: { clientName: true } });
+    await recordSystemNotification({
+      title: 'Document Checklist Updated',
+      message: `${matchedCase?.clientName || 'Lead'}: "${existing.label}" marked as ${data.status} by ${user.name || 'Staff'}.`,
+      type: 'INFO',
+      link: `/cases/${caseId}`,
+    });
+  }
+
   return { success: true };
 }
 
@@ -651,6 +678,17 @@ export async function updateCaseStatusAction(caseId: string, status: string, sta
   revalidatePath(`/cases/${caseId}`);
   revalidatePath('/cases');
   revalidatePath('/dashboard');
+
+  if (currentCase) {
+    const stageInfo = stage && stage !== currentCase.stage ? ` (Moved to Stage ${stage})` : '';
+    await recordSystemNotification({
+      title: 'Case Status Updated',
+      message: `${currentCase.clientName}: Status changed to "${status}"${stageInfo} by ${user.name || 'Staff'}.`,
+      type: 'CASE_UPDATE',
+      link: `/cases/${caseId}`,
+    });
+  }
+
   return { success: true };
 }
 
@@ -2558,6 +2596,15 @@ export async function updateTaskStatusAction(
   });
 
   revalidatePath('/tasks');
+  revalidatePath('/dashboard');
+
+  await recordSystemNotification({
+    title: isCompleted ? 'Task Completed' : 'Task Status Updated',
+    message: `"${task.title}": ${isCompleted ? 'marked COMPLETED' : `status updated to ${status}`} by ${staffName}.`,
+    type: 'TASK_UPDATE',
+    link: `/tasks`,
+  });
+
   return { success: true, task: updated };
 }
 
@@ -2842,6 +2889,15 @@ export async function addCaseFollowUpAction(data: {
 
   revalidatePath(`/cases/${data.caseId}`);
   revalidatePath('/cases');
+
+  const matchedCase = await prisma.case.findUnique({ where: { id: data.caseId }, select: { clientName: true } });
+  await recordSystemNotification({
+    title: 'Case Follow-Up Logged',
+    message: `${matchedCase?.clientName || 'Lead'}: "${data.remarks.slice(0, 70)}" by ${userName}.`,
+    type: 'CASE_UPDATE',
+    link: `/cases/${data.caseId}`,
+  });
+
   return { success: true, followUp };
 }
 
@@ -2924,6 +2980,14 @@ export async function createTaskWithMultipleAssigneesAction(data: {
 
   revalidatePath('/tasks');
   revalidatePath('/dashboard');
+
+  await recordSystemNotification({
+    title: 'New Task Assigned',
+    message: `"${task.title}" (Priority: ${task.priority}) created and assigned by ${staffName}.`,
+    type: 'TASK_UPDATE',
+    link: `/tasks`,
+  });
+
   return { success: true, task };
 }
 
@@ -3246,6 +3310,8 @@ export async function createVisitRecordAction(data: {
   caseId?: string | null;
   clientName: string;
   clientPhone?: string | null;
+  projectName?: string | null;
+  projectPrice?: number | null;
   propertyAddress?: string | null;
   visitDate: string;
   visitTime?: string | null;
@@ -3256,44 +3322,220 @@ export async function createVisitRecordAction(data: {
   const user = await getAuthUser();
   if (!user) return { success: false, error: 'Unauthorized' };
 
-  const staffUser = await prisma.user.findUnique({
-    where: { id: data.staffUserId },
-    select: { name: true },
-  });
+  const hasInitialRemark = !!data.remarks?.trim();
+  const now = new Date();
 
   const visit = await prisma.visitRecord.create({
     data: {
       caseId: data.caseId || null,
       clientName: data.clientName.trim(),
       clientPhone: data.clientPhone?.trim() || null,
+      projectName: data.projectName?.trim() || null,
+      projectPrice: data.projectPrice !== undefined && data.projectPrice !== null && !isNaN(Number(data.projectPrice)) ? Number(data.projectPrice) : null,
       propertyAddress: data.propertyAddress?.trim() || null,
       visitDate: new Date(data.visitDate),
       visitTime: data.visitTime || null,
       staffUserId: data.staffUserId,
       visitType: data.visitType || 'PROPERTY_VERIFICATION',
-      remarks: data.remarks?.trim() || null,
+      remarks: hasInitialRemark ? data.remarks!.trim() : null,
+      lastRemarkAt: hasInitialRemark ? now : null,
+      ...(hasInitialRemark
+        ? {
+            followUps: {
+              create: {
+                remark: data.remarks!.trim(),
+                authorName: user.name || 'Staff Member',
+                authorRole: user.role || 'STAFF',
+                createdAt: now,
+              },
+            },
+          }
+        : {}),
+    },
+    include: {
+      staff: { select: { id: true, name: true, role: true } },
+      case: { select: { id: true, clientName: true, product: true } },
+      followUps: { orderBy: { createdAt: 'desc' } },
     },
   });
 
   revalidatePath('/visits');
   revalidatePath('/dashboard');
+
+  await recordSystemNotification({
+    title: 'New Visit Scheduled',
+    message: `Visit for ${data.clientName} (${data.projectName || data.propertyAddress || 'Property'}) on ${data.visitDate} by ${user.name || 'Staff'}.`,
+    type: 'INFO',
+    link: `/visits`,
+  });
+
   return { success: true, visit };
+}
+
+export async function addVisitFollowUpAction(data: {
+  visitId: string;
+  remark: string;
+  markCompleted?: boolean;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (!data.remark?.trim()) {
+    return { success: false, error: 'Remark is required' };
+  }
+
+  const trimmedRemark = data.remark.trim();
+  const now = new Date();
+
+  // Create follow-up item
+  const followUp = await prisma.visitFollowUp.create({
+    data: {
+      visitId: data.visitId,
+      remark: trimmedRemark,
+      authorName: user.name || 'Staff Member',
+      authorRole: user.role || 'STAFF',
+      createdAt: now,
+    },
+  });
+
+  // Update visit record: lastRemarkAt = now, remarks = latest remark, status if markCompleted
+  const updatedVisit = await prisma.visitRecord.update({
+    where: { id: data.visitId },
+    data: {
+      remarks: trimmedRemark,
+      lastRemarkAt: now,
+      ...(data.markCompleted ? { status: 'COMPLETED' } : {}),
+    },
+    include: {
+      staff: { select: { id: true, name: true, role: true } },
+      case: { select: { id: true, clientName: true, product: true } },
+      followUps: { orderBy: { createdAt: 'desc' } },
+    },
+  });
+
+  revalidatePath('/visits');
+  revalidatePath('/dashboard');
+
+  await recordSystemNotification({
+    title: 'Visit Follow-Up Logged',
+    message: `Follow-up on ${updatedVisit.clientName}: "${trimmedRemark.slice(0, 70)}" (3-day timer refreshed).`,
+    type: 'SUCCESS',
+    link: `/visits`,
+  });
+
+  return { success: true, followUp, visit: updatedVisit };
 }
 
 export async function updateVisitStatusAction(id: string, status: string, remarks?: string) {
   const user = await getAuthUser();
   if (!user) return { success: false, error: 'Unauthorized' };
 
+  const now = new Date();
+  const hasRemark = !!remarks?.trim();
+
+  if (hasRemark) {
+    await prisma.visitFollowUp.create({
+      data: {
+        visitId: id,
+        remark: remarks!.trim(),
+        authorName: user.name || 'Staff Member',
+        authorRole: user.role || 'STAFF',
+        createdAt: now,
+      },
+    });
+  }
+
   const updated = await prisma.visitRecord.update({
     where: { id },
     data: {
       status,
-      remarks: remarks !== undefined ? remarks.trim() : undefined,
+      remarks: hasRemark ? remarks!.trim() : undefined,
+      lastRemarkAt: hasRemark ? now : undefined,
+    },
+    include: {
+      staff: { select: { id: true, name: true, role: true } },
+      case: { select: { id: true, clientName: true, product: true } },
+      followUps: { orderBy: { createdAt: 'desc' } },
     },
   });
 
   revalidatePath('/visits');
+
+  await recordSystemNotification({
+    title: 'Visit Status Changed',
+    message: `Visit for ${updated.clientName} status marked as ${status}.`,
+    type: 'SUCCESS',
+    link: `/visits`,
+  });
+
   return { success: true, visit: updated };
+}
+
+export async function updateVisitRecordAction(data: {
+  id: string;
+  caseId?: string | null;
+  clientName: string;
+  clientPhone?: string | null;
+  projectName?: string | null;
+  projectPrice?: number | null;
+  propertyAddress?: string | null;
+  visitDate: string;
+  visitTime?: string | null;
+  staffUserId: string;
+  visitType?: string;
+  status?: string;
+  remarks?: string | null;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const updated = await prisma.visitRecord.update({
+    where: { id: data.id },
+    data: {
+      caseId: data.caseId || null,
+      clientName: data.clientName.trim(),
+      clientPhone: data.clientPhone?.trim() || null,
+      projectName: data.projectName?.trim() || null,
+      projectPrice: data.projectPrice !== undefined && data.projectPrice !== null && !isNaN(Number(data.projectPrice)) ? Number(data.projectPrice) : null,
+      propertyAddress: data.propertyAddress?.trim() || null,
+      visitDate: new Date(data.visitDate),
+      visitTime: data.visitTime || null,
+      staffUserId: data.staffUserId,
+      visitType: data.visitType || 'PROPERTY_VERIFICATION',
+      status: data.status || undefined,
+      remarks: data.remarks?.trim() || null,
+    },
+    include: {
+      staff: { select: { id: true, name: true, role: true } },
+      case: { select: { id: true, clientName: true, product: true } },
+      followUps: { orderBy: { createdAt: 'desc' } },
+    },
+  });
+
+  revalidatePath('/visits');
+  revalidatePath('/dashboard');
+
+  await recordSystemNotification({
+    title: 'Visit Details Updated',
+    message: `Visit for ${data.clientName} (${data.projectName || 'Property'}) modified by ${user.name || 'Staff'}.`,
+    type: 'INFO',
+    link: `/visits`,
+  });
+
+  return { success: true, visit: updated };
+}
+
+export async function deleteVisitRecordAction(id: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  await prisma.visitRecord.delete({
+    where: { id },
+  });
+
+  revalidatePath('/visits');
+  revalidatePath('/dashboard');
+  return { success: true };
 }
 
 // 19. Dynamic Masters & Target Category Actions
@@ -4921,27 +5163,35 @@ export async function markNotificationAsReadAction(id?: string, all?: boolean) {
   return { success: true };
 }
 
-export async function createNotificationAction(data: {
-  userId?: string | null;
-  role?: any;
+export async function recordSystemNotification({
+  title,
+  message,
+  type = 'INFO',
+  link,
+  userId,
+  role,
+}: {
   title: string;
   message: string;
   type?: 'INFO' | 'SUCCESS' | 'WARNING' | 'CASE_UPDATE' | 'TASK_UPDATE';
   link?: string | null;
+  userId?: string | null;
+  role?: any;
 }) {
   try {
     const notification = await prisma.notification.create({
       data: {
-        userId: data.userId || null,
-        role: data.role || null,
-        title: data.title,
-        message: data.message,
-        type: data.type || 'INFO',
-        link: data.link || null,
+        userId: userId || null,
+        role: role || null,
+        title,
+        message,
+        type: type || 'INFO',
+        link: link || null,
       },
     });
     return { success: true, notification };
   } catch (e: any) {
+    console.warn('Notification log error:', e.message);
     return { success: false, error: e.message };
   }
 }
