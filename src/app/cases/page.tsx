@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import CaseListTable from '@/components/CaseListTable';
+import { getScopedCaseWhere } from '@/lib/case-filter';
 import Link from 'next/link';
 import { PlusCircle } from 'lucide-react';
 
@@ -17,28 +18,7 @@ export default async function CasesPage() {
   const userRole = (session.user as any).role;
   const userId = (session.user as any).id;
 
-  // Filter cases strictly for Channel users (only assigned to this channel or its child accounts)
-  let casesWhere: any = {};
-  if (userRole === 'CHANNEL') {
-    const userRecord = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { childChannels: { select: { id: true } } },
-    });
-    const channelIds = [userId];
-    if (userRecord?.parentChannelId) {
-      channelIds.push(userRecord.parentChannelId);
-    }
-    if (userRecord?.childChannels?.length) {
-      channelIds.push(...userRecord.childChannels.map((c) => c.id));
-    }
-
-    casesWhere = {
-      OR: [
-        { channelUserId: { in: channelIds } },
-        { createdById: { in: channelIds } },
-      ],
-    };
-  }
+  const casesWhere = await getScopedCaseWhere(userId, userRole);
 
   const [teams, states, users, cases, products, profiles, caseStatuses] = await Promise.all([
     prisma.team.findMany({ orderBy: { name: 'asc' } }),

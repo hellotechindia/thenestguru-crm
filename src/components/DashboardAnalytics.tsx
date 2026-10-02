@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import {
   BarChart,
@@ -143,6 +143,7 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
   const [selectedState, setSelectedState] = useState<string>('ALL');
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
   const [pivotDimension, setPivotDimension] = useState<'propertyType' | 'customerType' | 'product' | 'clientState' | 'status' | 'stage'>('propertyType');
 
   // Modal View
@@ -157,6 +158,14 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
         .filter(Boolean)
     )
   ).sort((a, b) => b.localeCompare(a));
+
+  const availableCaseStatuses = useMemo(() => {
+    const set = new Set<string>();
+    cases.forEach((c) => {
+      if (c.status) set.add(c.status);
+    });
+    return Array.from(set);
+  }, [cases]);
 
   const monthsList = [
     { value: 'ALL', label: 'All Months' },
@@ -174,8 +183,8 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
     { value: '12', label: 'December' },
   ];
 
-  // Filter cases by State, Year, and Month
-  const filteredCases = cases.filter((c) => {
+  // Base filtered cases by State, Year, and Month (used for persistent KPI tile totals)
+  const baseFilteredCases = cases.filter((c) => {
     const matchesState = selectedState === 'ALL' || c.clientState === selectedState;
     const caseDate = c.createdAt ? new Date(c.createdAt) : null;
     const matchesYear = selectedYear === 'ALL' || (caseDate && caseDate.getFullYear().toString() === selectedYear);
@@ -186,20 +195,37 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
     return matchesState && matchesYear && matchesMonth;
   });
 
-  // KPI Calculations across filtered cases
-  const totalCases = filteredCases.length;
-  const pendingDocsCases = filteredCases.filter(
+  // KPI Calculations across base filtered cases
+  const totalCases = baseFilteredCases.length;
+  const pendingDocsCases = baseFilteredCases.filter(
     (c) => c.status === 'Pending Documents' || c.receivedCount < c.checklistCount
   ).length;
-  const readyForSubmissionCases = filteredCases.filter(
+  const readyForSubmissionCases = baseFilteredCases.filter(
     (c) =>
       c.status === 'Ready for Submission' ||
       (c.checklistCount > 0 && c.receivedCount === c.checklistCount)
   ).length;
-  const approvedCases = filteredCases.filter((c) => c.status === 'Approved').length;
-  const inReviewCases = filteredCases.filter(
+  const approvedCases = baseFilteredCases.filter((c) => c.status === 'Approved').length;
+  const inReviewCases = baseFilteredCases.filter(
     (c) => c.status !== 'Pending Documents' && c.status !== 'Ready for Submission' && c.status !== 'Approved'
   ).length;
+
+  // Filter cases further by selectedStatus (e.g. ALL, PENDING, READY, IN_REVIEW, or specific status)
+  const filteredCases = baseFilteredCases.filter((c) => {
+    if (selectedStatus === 'PENDING') {
+      return c.status === 'Pending Documents' || c.receivedCount < c.checklistCount;
+    }
+    if (selectedStatus === 'READY') {
+      return c.status === 'Ready for Submission' || (c.checklistCount > 0 && c.receivedCount === c.checklistCount);
+    }
+    if (selectedStatus === 'IN_REVIEW') {
+      return c.status !== 'Pending Documents' && c.status !== 'Ready for Submission' && c.status !== 'Approved';
+    }
+    if (selectedStatus !== 'ALL') {
+      return c.status === selectedStatus;
+    }
+    return true;
+  });
 
   // Stage-wise Speed Calculations
   const calcStageAvgDays = (stageNum: number) => {
@@ -260,7 +286,7 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
       'Customer Profile': c.customerType,
       'Property Scope': c.propertyType,
       'Processing Stage': `Stage ${c.stage}`,
-      'Overall Status': c.status,
+      'Case Filing Status': c.status,
       'Documents Received': `${c.receivedCount}/${c.checklistCount}`,
       'Checklist Progress (%)': c.checklistCount > 0 ? `${Math.round((c.receivedCount / c.checklistCount) * 100)}%` : '0%',
       'Created Date': c.createdAt.slice(0, 10),
@@ -349,13 +375,37 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
             </select>
           </div>
 
+          {/* Status & Pending Filter */}
+          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+            <Filter className="w-3.5 h-3.5 text-amber-500" />
+            <span className="text-slate-500 font-medium">Status:</span>
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="bg-transparent font-bold text-amber-600 dark:text-amber-400 focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="PENDING">⚠️ Pending Cases (All)</option>
+              <option value="READY">Ready for Submission (100% Done)</option>
+              <option value="IN_REVIEW">In Review / Process</option>
+              {availableCaseStatuses
+                .filter((st) => st !== 'Pending Documents' && st !== 'Ready for Submission' && st !== 'In Review')
+                .map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+            </select>
+          </div>
+
           {/* Reset Filters */}
-          {(selectedState !== 'ALL' || selectedYear !== 'ALL' || selectedMonth !== 'ALL') && (
+          {(selectedState !== 'ALL' || selectedYear !== 'ALL' || selectedMonth !== 'ALL' || selectedStatus !== 'ALL') && (
             <button
               onClick={() => {
                 setSelectedState('ALL');
                 setSelectedYear('ALL');
                 setSelectedMonth('ALL');
+                setSelectedStatus('ALL');
               }}
               className="text-xs text-rose-500 hover:text-rose-600 font-semibold px-2 py-1 underline"
             >
@@ -383,7 +433,15 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
       {config.showKpis && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Cases */}
-        <div className="glass-panel p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 space-y-1">
+        <div
+          onClick={() => setSelectedStatus('ALL')}
+          title="Click to view all cases in dashboard"
+          className={`glass-panel p-5 rounded-2xl shadow-sm border transition-all cursor-pointer space-y-1 ${
+            selectedStatus === 'ALL'
+              ? 'ring-2 ring-sky-500 bg-sky-50/20 dark:bg-sky-950/20 border-sky-400'
+              : 'border-slate-200 dark:border-slate-800 hover:border-sky-400 hover:scale-[1.01]'
+          }`}
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Total Loan Cases
@@ -401,7 +459,15 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
         </div>
 
         {/* Pending Documents */}
-        <div className="glass-panel p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 space-y-1">
+        <div
+          onClick={() => setSelectedStatus(selectedStatus === 'PENDING' ? 'ALL' : 'PENDING')}
+          title="Click to filter dashboard by Pending Cases"
+          className={`glass-panel p-5 rounded-2xl shadow-sm border transition-all cursor-pointer space-y-1 ${
+            selectedStatus === 'PENDING'
+              ? 'ring-2 ring-amber-500 bg-amber-50/20 dark:bg-amber-950/20 border-amber-400'
+              : 'border-slate-200 dark:border-slate-800 hover:border-amber-400 hover:scale-[1.01]'
+          }`}
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
               Pending Documents
@@ -413,13 +479,24 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
           <div className="text-3xl font-extrabold text-amber-600 dark:text-amber-400 mt-1">
             {pendingDocsCases}
           </div>
-          <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-1">
+          <div className="text-[11px] text-slate-500 font-medium flex items-center justify-between mt-1">
             <span>Awaiting applicant checklist uploads</span>
+            {selectedStatus === 'PENDING' && (
+              <span className="text-[10px] font-bold text-amber-600">Active Filter</span>
+            )}
           </div>
         </div>
 
         {/* Ready For Submission */}
-        <div className="glass-panel p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 space-y-1">
+        <div
+          onClick={() => setSelectedStatus(selectedStatus === 'READY' ? 'ALL' : 'READY')}
+          title="Click to filter dashboard by Ready for Submission cases"
+          className={`glass-panel p-5 rounded-2xl shadow-sm border transition-all cursor-pointer space-y-1 ${
+            selectedStatus === 'READY'
+              ? 'ring-2 ring-emerald-500 bg-emerald-50/20 dark:bg-emerald-950/20 border-emerald-400'
+              : 'border-slate-200 dark:border-slate-800 hover:border-emerald-400 hover:scale-[1.01]'
+          }`}
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
               Ready for Submission
@@ -431,13 +508,24 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
           <div className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">
             {readyForSubmissionCases}
           </div>
-          <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-1">
+          <div className="text-[11px] text-slate-500 font-medium flex items-center justify-between mt-1">
             <span>100% complete — ready for bank login</span>
+            {selectedStatus === 'READY' && (
+              <span className="text-[10px] font-bold text-emerald-600">Active Filter</span>
+            )}
           </div>
         </div>
 
         {/* In Review / Under Process */}
-        <div className="glass-panel p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 space-y-1">
+        <div
+          onClick={() => setSelectedStatus(selectedStatus === 'IN_REVIEW' ? 'ALL' : 'IN_REVIEW')}
+          title="Click to filter dashboard by In Review cases"
+          className={`glass-panel p-5 rounded-2xl shadow-sm border transition-all cursor-pointer space-y-1 ${
+            selectedStatus === 'IN_REVIEW'
+              ? 'ring-2 ring-indigo-500 bg-indigo-50/20 dark:bg-indigo-950/20 border-indigo-400'
+              : 'border-slate-200 dark:border-slate-800 hover:border-indigo-400 hover:scale-[1.01]'
+          }`}
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
               In Review / Process
@@ -449,11 +537,42 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
           <div className="text-3xl font-extrabold text-indigo-600 dark:text-indigo-400 mt-1">
             {inReviewCases}
           </div>
-          <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-1">
+          <div className="text-[11px] text-slate-500 font-medium flex items-center justify-between mt-1">
             <span>Under operations & bank verification</span>
+            {selectedStatus === 'IN_REVIEW' && (
+              <span className="text-[10px] font-bold text-indigo-600">Active Filter</span>
+            )}
           </div>
         </div>
       </div>
+      )}
+
+      {/* Active Filter Notification Banner */}
+      {selectedStatus !== 'ALL' && (
+        <div className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200 font-medium">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+            <span>
+              Active Status Filter:{' '}
+              <strong className="font-extrabold underline">
+                {selectedStatus === 'PENDING'
+                  ? 'Pending Cases (Awaiting Documents / Incomplete)'
+                  : selectedStatus === 'READY'
+                  ? 'Ready for Submission (100% Completed)'
+                  : selectedStatus === 'IN_REVIEW'
+                  ? 'In Review / Processing Files'
+                  : `Status: "${selectedStatus}"`}
+              </strong>{' '}
+              — Displaying {filteredCases.length} case{filteredCases.length === 1 ? '' : 's'} across all widgets below.
+            </span>
+          </div>
+          <button
+            onClick={() => setSelectedStatus('ALL')}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-200/80 dark:bg-amber-900/60 hover:bg-amber-300 dark:hover:bg-amber-800 text-amber-950 dark:text-amber-100 font-bold transition-all shadow-sm"
+          >
+            Clear Filter (Show All) <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       )}
 
       {/* 2. Revenue & Expense Tiles (Super Admin Only) */}
@@ -715,10 +834,17 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <FolderCheck className="w-5 h-5 text-sky-600 dark:text-sky-400" /> Top Active Cases
+              <FolderCheck className="w-5 h-5 text-sky-600 dark:text-sky-400" />
+              {selectedStatus === 'PENDING'
+                ? 'Pending Loan Cases'
+                : selectedStatus === 'READY'
+                ? 'Ready for Submission Cases'
+                : selectedStatus === 'IN_REVIEW'
+                ? 'In Review / Verification Cases'
+                : 'Top Active Cases'}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Showing top cases filtered by State, Year, and Month ({filteredCases.length} total matched)
+              Showing {filteredCases.length} case{filteredCases.length === 1 ? '' : 's'} matching current Status, State, Year, and Month filters
             </p>
           </div>
 
@@ -758,7 +884,7 @@ export default function DashboardAnalytics({ cases, revenues, expenses, states, 
               {topCases.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-slate-500 font-medium">
-                    No cases match the selected State, Year, and Month filters.
+                    No cases match the selected Status, State, Year, and Month filters.
                   </td>
                 </tr>
               ) : (

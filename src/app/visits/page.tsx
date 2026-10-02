@@ -22,16 +22,23 @@ export default async function VisitsPage() {
 
   const isSuperAdmin = userRole === 'SUPER_ADMIN';
 
-  // Role-based visits query: Super Admin sees all, Staff sees their own assigned visits
-  const whereCondition = isSuperAdmin ? {} : { staffUserId: userId };
+  const userRecord = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isTeamLeader: true, role: true },
+  });
+  const isTeamLeader = Boolean(userRecord?.isTeamLeader);
 
-  const [visits, staffUsers, activeCases] = await Promise.all([
+  // Role-based visits query: Super Admin and Team Leader can see all sales visits to combine by builder
+  const whereCondition = (isSuperAdmin || isTeamLeader) ? {} : { staffUserId: userId };
+
+  let [visits, staffUsers, activeCases, builders] = await Promise.all([
     prisma.visitRecord.findMany({
       where: whereCondition,
       include: {
         staff: { select: { id: true, name: true, role: true } },
         case: { select: { id: true, clientName: true, product: true } },
         followUps: { orderBy: { createdAt: 'desc' } },
+        builder: true,
       },
       orderBy: { visitDate: 'asc' },
     }),
@@ -45,7 +52,40 @@ export default async function VisitsPage() {
       orderBy: { createdAt: 'desc' },
       take: 50,
     }),
+    prisma.builder.findMany({
+      orderBy: { name: 'asc' },
+      include: {
+        _count: { select: { visits: true } },
+      },
+    }),
   ]);
+
+  // Auto seed default reputed builders if table is empty
+  if (builders.length === 0) {
+    const defaultBuilders = [
+      { name: 'DLF Limited', contactPerson: 'Sales Desk', phone: '011-45678900', approvedBanks: 'SBI, HDFC, ICICI, Axis Bank' },
+      { name: 'Godrej Properties', contactPerson: 'Corporate Sales', phone: '022-68888888', approvedBanks: 'HDFC, SBI, ICICI, Kotak' },
+      { name: 'ATS Homekraft', contactPerson: 'Project Coordinator', phone: '0120-7111111', approvedBanks: 'SBI, HDFC, PNB' },
+      { name: 'Tata Housing', contactPerson: 'Customer Relations', phone: '1800-209-6660', approvedBanks: 'SBI, HDFC, ICICI, BoB' },
+      { name: 'Prestige Group', contactPerson: 'Sales Operations', phone: '080-25591080', approvedBanks: 'HDFC, ICICI, SBI' },
+      { name: 'M3M India', contactPerson: 'Site Incharge', phone: '0124-4777333', approvedBanks: 'ICICI, Axis, HDFC, SBI' },
+      { name: 'Sobha Developers', contactPerson: 'Sales Office', phone: '080-49320000', approvedBanks: 'SBI, HDFC, Canara Bank' },
+      { name: 'Gaursons India', contactPerson: 'Helpdesk', phone: '0120-4343333', approvedBanks: 'SBI, HDFC, PNB, BoB' },
+    ];
+    for (const b of defaultBuilders) {
+      await prisma.builder.upsert({
+        where: { name: b.name },
+        update: {},
+        create: b,
+      });
+    }
+    builders = await prisma.builder.findMany({
+      orderBy: { name: 'asc' },
+      include: {
+        _count: { select: { visits: true } },
+      },
+    });
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -62,8 +102,10 @@ export default async function VisitsPage() {
         initialVisits={visits as any}
         staffUsers={staffUsers}
         activeCases={activeCases}
+        builders={builders as any}
         currentUserId={userId}
         isSuperAdmin={isSuperAdmin}
+        isTeamLeader={isTeamLeader}
       />
     </div>
   );

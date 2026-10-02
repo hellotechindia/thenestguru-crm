@@ -241,7 +241,7 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
     if (pathname === '/admin/customer-types') return 'Customer Types (Entity Master)';
     if (pathname === '/admin/property-scopes') return 'Property Scopes Master';
     if (pathname === '/admin/workflow-stages') return 'Workflow Stages Master';
-    if (pathname === '/admin/case-statuses') return 'Overall Case Statuses Master';
+    if (pathname === '/admin/case-statuses') return 'Case Filing Statuses Master';
     if (pathname === '/profile') return 'User Profile & Preferences';
     return crmBranding.crmName + ' Workspace';
   };
@@ -479,8 +479,8 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
             )}
           </div>
 
-          {/* Administration Section (Visible to internal staff & super admins, hidden only for external Channel partners) */}
-          {userRole !== 'CHANNEL' && (
+          {/* Administration Section (Visible strictly to Super Admin only) */}
+          {userRole === 'SUPER_ADMIN' && (
             <div>
               <div className="px-3 mb-2 flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
@@ -694,7 +694,7 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
                       >
                         <div className="flex items-center gap-2">
                           <Tag className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                          <span>Overall Statuses</span>
+                          <span>Case Filing Statuses</span>
                         </div>
                         {pathname === '/admin/case-statuses' && (
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />

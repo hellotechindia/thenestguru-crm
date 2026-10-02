@@ -133,12 +133,30 @@ export async function createCaseAction(formData: {
   revalidatePath('/cases');
   revalidatePath('/dashboard');
 
-  await recordSystemNotification({
-    title: 'New Lead Created',
-    message: `${newCase.clientName} (${newCase.product}) registered by ${user.name || 'Staff'}.`,
-    type: 'CASE_UPDATE',
-    link: `/cases/${newCase.id}`,
-  });
+  if (user.role === 'CHANNEL') {
+    await recordSystemNotification({
+      title: 'New Lead Submitted by Channel',
+      message: `${newCase.clientName} (${newCase.product}) submitted by ${user.name || 'Channel Partner'}.`,
+      type: 'CASE_UPDATE',
+      link: `/cases/${newCase.id}`,
+      role: 'OPERATION',
+    });
+    await recordSystemNotification({
+      title: 'Lead Registered Successfully',
+      message: `Your file for ${newCase.clientName} (${newCase.product}) has been registered in the system.`,
+      type: 'SUCCESS',
+      link: `/cases/${newCase.id}`,
+      userId: user.id,
+    });
+  } else {
+    await recordSystemNotification({
+      title: 'New Lead Created',
+      message: `${newCase.clientName} (${newCase.product}) registered by ${user.name || 'Staff'}.`,
+      type: 'CASE_UPDATE',
+      link: `/cases/${newCase.id}`,
+      role: 'OPERATION',
+    });
+  }
 
   return { success: true, caseId: newCase.id };
 }
@@ -250,7 +268,8 @@ export async function updateCaseIntakeDetailsAction(
     const newItemsToCreate: any[] = [];
     for (let i = existingCase.coApplicantCount + 1; i <= data.coApplicantCount; i++) {
       const coAppData = data.coApplicantsData && data.coApplicantsData[i - 1];
-      const incomeRequired = coAppData ? coAppData.incomeRequired !== false : true;
+      const isHousewife = (coAppData?.incomeTypes && Array.isArray(coAppData.incomeTypes) && coAppData.incomeTypes.some((t: string) => t.toLowerCase().includes('housewife'))) || (coAppData?.customerType && coAppData.customerType.toLowerCase().includes('housewife'));
+      const incomeRequired = isHousewife ? false : (coAppData ? coAppData.incomeRequired === true : false);
       const coAppName = coAppData?.name?.trim() || `Co-Applicant ${i}`;
       const appliesToLabel = `${coAppName} (Co-Applicant ${i})`;
 
@@ -1196,6 +1215,63 @@ export async function createTemplateCategoryAction(name: string, product: string
   return { success: true };
 }
 
+export async function createTemplateCategoriesBatchAction(data: {
+  name: string;
+  products: string[];
+  customerTypes: string[];
+}) {
+  const user = await getAuthUser();
+  if (!user || !can(user, 'manage_templates', 'template')) {
+    return { success: false, error: 'Permission denied' };
+  }
+
+  const cleanName = data.name.trim();
+  if (!cleanName) return { success: false, error: 'Category name is required' };
+  if (!data.products || data.products.length === 0) {
+    return { success: false, error: 'Please select at least one Product' };
+  }
+  if (!data.customerTypes || data.customerTypes.length === 0) {
+    return { success: false, error: 'Please select at least one Profile' };
+  }
+
+  let createdCount = 0;
+  let alreadyExistCount = 0;
+
+  for (const prod of data.products) {
+    const cleanProd = prod.trim();
+    if (!cleanProd) continue;
+
+    for (const profile of data.customerTypes) {
+      const cleanProfile = profile.trim();
+      if (!cleanProfile) continue;
+
+      const existing = await prisma.checklistCategory.findFirst({
+        where: {
+          name: cleanName,
+          product: cleanProd,
+          customerType: cleanProfile,
+        },
+      });
+
+      if (!existing) {
+        await prisma.checklistCategory.create({
+          data: {
+            name: cleanName,
+            product: cleanProd,
+            customerType: cleanProfile,
+          },
+        });
+        createdCount++;
+      } else {
+        alreadyExistCount++;
+      }
+    }
+  }
+
+  revalidatePath('/admin/checklist-templates');
+  return { success: true, createdCount, alreadyExistCount };
+}
+
 export async function updateTemplateCategoryAction(id: string, name: string, product: string, customerType: string) {
   const user = await getAuthUser();
   if (!user || !can(user, 'manage_templates', 'template')) {
@@ -1329,7 +1405,13 @@ export async function deleteTemplateItemAction(templateId: string) {
 }
 
 // 5. User Self Profile Update Action
-export async function updateUserProfileAction(data: { name: string; password?: string; avatarUrl?: string | null }) {
+export async function updateUserProfileAction(data: {
+  name: string;
+  username?: string;
+  email?: string;
+  password?: string;
+  avatarUrl?: string | null;
+}) {
   const user = await getAuthUser();
   if (!user) return { success: false, error: 'Unauthorized' };
 
@@ -1338,6 +1420,31 @@ export async function updateUserProfileAction(data: { name: string; password?: s
   }
 
   const updateData: any = { name: data.name.trim() };
+
+  if (data.username !== undefined) {
+    const cleanUsername = data.username.trim().toLowerCase();
+    if (cleanUsername) {
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          username: cleanUsername,
+          NOT: { id: user.id },
+        },
+      });
+      if (existingUser) {
+        return { success: false, error: 'Username is already taken by another user.' };
+      }
+      updateData.username = cleanUsername;
+    }
+  }
+
+  if (data.email !== undefined) {
+    const cleanEmail = data.email && data.email.trim() !== '' ? data.email.trim().toLowerCase() : null;
+    if (cleanEmail && !isValidEmail(cleanEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    updateData.email = cleanEmail;
+  }
+
   if (data.password && data.password.trim().length > 0) {
     updateData.passwordHash = await bcrypt.hash(data.password, 10);
   }
@@ -1370,6 +1477,7 @@ export async function updateUserProfileAction(data: { name: string; password?: s
 
   revalidatePath('/profile');
   revalidatePath('/admin/settings');
+  revalidatePath('/admin/users');
   return { success: true };
 }
 
@@ -2154,6 +2262,110 @@ export async function getHolidaysAction() {
   return { success: true, holidays: upcomingHolidays };
 }
 
+function getDayNameFromDate(dateStr: string): string {
+  try {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const d = new Date(Date.UTC(year, month, day, 12, 0, 0));
+      return days[d.getUTCDay()] || 'Holiday';
+    }
+  } catch (err) {
+    // fallback
+  }
+  return 'Holiday';
+}
+
+export async function createHolidayAction(data: {
+  name: string;
+  date: string;
+  isOptional?: boolean;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Only Super Admin can add official company holidays.' };
+  }
+
+  const cleanName = data.name.trim();
+  const cleanDate = data.date.trim();
+
+  if (!cleanName) return { success: false, error: 'Holiday name is required.' };
+  if (!cleanDate) return { success: false, error: 'Holiday date is required.' };
+
+  const dayName = getDayNameFromDate(cleanDate);
+
+  const holiday = await prisma.holidayConfig.create({
+    data: {
+      name: cleanName,
+      date: cleanDate,
+      dayName,
+      isOptional: Boolean(data.isOptional),
+    },
+  });
+
+  revalidatePath('/hrms');
+
+  return { success: true, holiday };
+}
+
+export async function updateHolidayAction(data: {
+  id: string;
+  name: string;
+  date: string;
+  isOptional?: boolean;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Only Super Admin can edit official company holidays.' };
+  }
+
+  const cleanName = data.name.trim();
+  const cleanDate = data.date.trim();
+
+  if (!cleanName) return { success: false, error: 'Holiday name is required.' };
+  if (!cleanDate) return { success: false, error: 'Holiday date is required.' };
+
+  const dayName = getDayNameFromDate(cleanDate);
+
+  const holiday = await prisma.holidayConfig.update({
+    where: { id: data.id },
+    data: {
+      name: cleanName,
+      date: cleanDate,
+      dayName,
+      isOptional: Boolean(data.isOptional),
+    },
+  });
+
+  revalidatePath('/hrms');
+
+  return { success: true, holiday };
+}
+
+export async function deleteHolidayAction(id: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Only Super Admin can delete official company holidays.' };
+  }
+
+  await prisma.holidayConfig.delete({
+    where: { id },
+  });
+
+  revalidatePath('/hrms');
+
+  return { success: true };
+}
+
 // 10. Product Master Actions
 export async function getProductsAction() {
   let products = await prisma.productMaster.findMany({
@@ -2423,35 +2635,74 @@ export async function getTasksAction(filters?: {
     return { success: false, error: 'Unauthorized', tasks: [] };
   }
 
-  const where: any = {};
+  const andConditions: any[] = [];
 
-  if (filters?.view === 'my') {
-    where.assignedToId = user.id;
-  } else if (filters?.view === 'assigned_by_me') {
-    where.createdById = user.id;
+  // Role Isolation: non-super-admins can ONLY view tasks assigned to them or created by them
+  if (user.role !== 'SUPER_ADMIN') {
+    if (filters?.view === 'assigned_by_me') {
+      andConditions.push({ createdById: user.id });
+    } else if (filters?.view === 'my') {
+      andConditions.push({
+        OR: [
+          { assignedToId: user.id },
+          { assignees: { some: { userId: user.id } } },
+        ],
+      });
+    } else {
+      // Default / 'all' for non-super-admin
+      andConditions.push({
+        OR: [
+          { assignedToId: user.id },
+          { assignees: { some: { userId: user.id } } },
+          { createdById: user.id },
+        ],
+      });
+    }
+  } else {
+    // Super Admin view filters
+    if (filters?.view === 'my') {
+      andConditions.push({
+        OR: [
+          { assignedToId: user.id },
+          { assignees: { some: { userId: user.id } } },
+        ],
+      });
+    } else if (filters?.view === 'assigned_by_me') {
+      andConditions.push({ createdById: user.id });
+    }
   }
 
   if (filters?.status && filters.status !== 'ALL') {
-    where.status = filters.status;
+    andConditions.push({ status: filters.status });
   }
 
   if (filters?.priority && filters.priority !== 'ALL') {
-    where.priority = filters.priority;
+    andConditions.push({ priority: filters.priority });
   }
 
   if (filters?.assignedToId && filters.assignedToId !== 'ALL') {
-    where.assignedToId = filters.assignedToId;
+    andConditions.push({
+      OR: [
+        { assignedToId: filters.assignedToId },
+        { assignees: { some: { userId: filters.assignedToId } } },
+      ],
+    });
   }
 
   if (filters?.search && filters.search.trim().length > 0) {
     const q = filters.search.trim();
-    where.OR = [
-      { title: { contains: q } },
-      { description: { contains: q } },
-      { case: { clientName: { contains: q } } },
-      { assignedTo: { name: { contains: q } } },
-    ];
+    andConditions.push({
+      OR: [
+        { title: { contains: q } },
+        { description: { contains: q } },
+        { case: { clientName: { contains: q } } },
+        { assignedTo: { name: { contains: q } } },
+        { assignees: { some: { user: { name: { contains: q } } } } },
+      ],
+    });
   }
+
+  const where: any = andConditions.length > 0 ? { AND: andConditions } : {};
 
   const tasks = await prisma.task.findMany({
     where,
@@ -2489,7 +2740,6 @@ export async function getTasksAction(filters?: {
       },
     },
     orderBy: [
-      { priority: 'desc' },
       { createdAt: 'desc' },
     ],
   });
@@ -2543,6 +2793,15 @@ export async function createTaskAction(data: {
   });
 
   revalidatePath('/tasks');
+  if (data.assignedToId !== user.id) {
+    await recordSystemNotification({
+      title: 'New Task Assigned to You',
+      message: `"${task.title}" (Priority: ${task.priority}) assigned to you by ${user.name || 'Admin'}.`,
+      type: 'TASK_UPDATE',
+      link: `/tasks`,
+      userId: data.assignedToId,
+    });
+  }
   return { success: true, task };
 }
 
@@ -2598,12 +2857,32 @@ export async function updateTaskStatusAction(
   revalidatePath('/tasks');
   revalidatePath('/dashboard');
 
-  await recordSystemNotification({
-    title: isCompleted ? 'Task Completed' : 'Task Status Updated',
-    message: `"${task.title}": ${isCompleted ? 'marked COMPLETED' : `status updated to ${status}`} by ${staffName}.`,
-    type: 'TASK_UPDATE',
-    link: `/tasks`,
+  const targetUserIds = new Set<string>();
+  if (task.createdById && task.createdById !== user.id) targetUserIds.add(task.createdById);
+  if (task.assignedToId && task.assignedToId !== user.id) targetUserIds.add(task.assignedToId);
+  task.assignees?.forEach((a) => {
+    if (a.userId !== user.id) targetUserIds.add(a.userId);
   });
+
+  for (const tUserId of targetUserIds) {
+    await recordSystemNotification({
+      title: isCompleted ? 'Task Completed' : 'Task Status Updated',
+      message: `"${task.title}": ${isCompleted ? 'marked COMPLETED' : `status updated to ${status}`} by ${staffName}.`,
+      type: 'TASK_UPDATE',
+      link: `/tasks`,
+      userId: tUserId,
+    });
+  }
+
+  if (targetUserIds.size === 0) {
+    await recordSystemNotification({
+      title: isCompleted ? 'Task Completed' : 'Task Status Updated',
+      message: `"${task.title}": ${isCompleted ? 'marked COMPLETED' : `status updated to ${status}`} by ${staffName}.`,
+      type: 'TASK_UPDATE',
+      link: `/tasks`,
+      userId: user.id,
+    });
+  }
 
   return { success: true, task: updated };
 }
@@ -2788,6 +3067,29 @@ export async function addTaskCommentAction(taskId: string, content: string) {
     },
   });
 
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: { assignees: true },
+  });
+  if (task) {
+    const notifyUserIds = new Set<string>();
+    if (task.createdById && task.createdById !== user.id) notifyUserIds.add(task.createdById);
+    if (task.assignedToId && task.assignedToId !== user.id) notifyUserIds.add(task.assignedToId);
+    task.assignees?.forEach((a) => {
+      if (a.userId !== user.id) notifyUserIds.add(a.userId);
+    });
+
+    for (const targetUid of notifyUserIds) {
+      await recordSystemNotification({
+        title: 'New Comment on Task',
+        message: `${staffName} commented on "${task.title}": "${trimmed.slice(0, 60)}${trimmed.length > 60 ? '...' : ''}"`,
+        type: 'TASK_UPDATE',
+        link: `/tasks`,
+        userId: targetUid,
+      });
+    }
+  }
+
   revalidatePath('/tasks');
   return { success: true, comment };
 }
@@ -2890,13 +3192,35 @@ export async function addCaseFollowUpAction(data: {
   revalidatePath(`/cases/${data.caseId}`);
   revalidatePath('/cases');
 
-  const matchedCase = await prisma.case.findUnique({ where: { id: data.caseId }, select: { clientName: true } });
-  await recordSystemNotification({
-    title: 'Case Follow-Up Logged',
-    message: `${matchedCase?.clientName || 'Lead'}: "${data.remarks.slice(0, 70)}" by ${userName}.`,
-    type: 'CASE_UPDATE',
-    link: `/cases/${data.caseId}`,
+  const matchedCase = await prisma.case.findUnique({
+    where: { id: data.caseId },
+    select: { clientName: true, channelUserId: true, createdById: true },
   });
+  if (matchedCase) {
+    const notifyUids = new Set<string>();
+    if (matchedCase.channelUserId && matchedCase.channelUserId !== user.id) {
+      notifyUids.add(matchedCase.channelUserId);
+    }
+    if (matchedCase.createdById && matchedCase.createdById !== user.id) {
+      notifyUids.add(matchedCase.createdById);
+    }
+    for (const uid of notifyUids) {
+      await recordSystemNotification({
+        title: 'Case Follow-Up Logged',
+        message: `${matchedCase.clientName}: "${data.remarks.slice(0, 70)}" by ${userName}.`,
+        type: 'CASE_UPDATE',
+        link: `/cases/${data.caseId}`,
+        userId: uid,
+      });
+    }
+    await recordSystemNotification({
+      title: 'Case Follow-Up Logged',
+      message: `${matchedCase.clientName}: "${data.remarks.slice(0, 70)}" by ${userName}.`,
+      type: 'CASE_UPDATE',
+      link: `/cases/${data.caseId}`,
+      role: 'OPERATION',
+    });
+  }
 
   return { success: true, followUp };
 }
@@ -2926,21 +3250,44 @@ export async function createTaskWithMultipleAssigneesAction(data: {
 
   // Pointer 32: Only Super Admin or Team Leader can assign tasks
   const isSuperAdmin = user.role === 'SUPER_ADMIN';
-  const isTeamLeader = user.role === 'OPERATION' || user.role === 'SALES'; // Team leads
+  const isTeamLeader = user.role === 'OPERATION' || user.role === 'SALES' || (user.role as any) === 'TEAM_LEADER'; // Team leads
   if (!isSuperAdmin && !isTeamLeader) {
     return { success: false, error: 'Permission denied: Only Team Leaders or Super Admin can assign tasks.' };
   }
 
   if (!data.title?.trim()) {
-    return { success: false, error: 'Task title is required.' };
+    return { success: false, error: 'Task Title is required.' };
+  }
+
+  if (!data.description?.trim()) {
+    return { success: false, error: 'Detailed Instructions / Remarks are required.' };
+  }
+
+  if (!data.priority) {
+    return { success: false, error: 'Priority Level is required.' };
   }
 
   if (!data.assigneeIds || data.assigneeIds.length === 0) {
     return { success: false, error: 'Please select at least one staff member.' };
   }
 
+  if (!data.dueDate) {
+    return { success: false, error: 'Due Date is required.' };
+  }
+
+  if (!data.dueTime) {
+    return { success: false, error: 'Due Time is required.' };
+  }
+
+  if (!data.caseId) {
+    const activeCaseCount = await prisma.case.count();
+    if (activeCaseCount > 0) {
+      return { success: false, error: 'Link to Loan Case is required.' };
+    }
+  }
+
   const primaryAssigneeId = data.assigneeIds[0];
-  const dueDateTime = data.dueDate ? new Date(data.dueDate) : null;
+  const dueDateTime = new Date(data.dueDate);
 
   const task = await prisma.task.create({
     data: {
@@ -2981,12 +3328,27 @@ export async function createTaskWithMultipleAssigneesAction(data: {
   revalidatePath('/tasks');
   revalidatePath('/dashboard');
 
-  await recordSystemNotification({
-    title: 'New Task Assigned',
-    message: `"${task.title}" (Priority: ${task.priority}) created and assigned by ${staffName}.`,
-    type: 'TASK_UPDATE',
-    link: `/tasks`,
-  });
+  for (const assigneeId of data.assigneeIds) {
+    if (assigneeId !== user.id) {
+      await recordSystemNotification({
+        title: 'New Task Assigned to You',
+        message: `"${task.title}" (Priority: ${task.priority}) assigned to you by ${staffName}.`,
+        type: 'TASK_UPDATE',
+        link: `/tasks`,
+        userId: assigneeId,
+      });
+    }
+  }
+
+  if (data.assigneeIds.length === 1 && data.assigneeIds[0] === user.id) {
+    await recordSystemNotification({
+      title: 'Task Created',
+      message: `"${task.title}" created.`,
+      type: 'TASK_UPDATE',
+      link: `/tasks`,
+      userId: user.id,
+    });
+  }
 
   return { success: true, task };
 }
@@ -3088,10 +3450,110 @@ export async function createManualBirthdayWithCategoryAction(data: {
   return { success: true, entry };
 }
 
+export async function bulkUploadBirthdaysAction(entries: Array<{
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  dob: string;
+  category?: string | null;
+  onBehalfOf?: string | null;
+  remark?: string | null;
+}>) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (!entries || entries.length === 0) {
+    return { success: false, error: 'No entries provided for upload.' };
+  }
+
+  const validRecords: any[] = [];
+  const errors: string[] = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    const row = entries[i];
+    const rowNum = i + 1;
+
+    if (!row.name || !row.name.trim()) {
+      errors.push(`Row #${rowNum}: Name is required`);
+      continue;
+    }
+
+    // Parse DOB (supports DD/MM/YYYY, DD-MM-YYYY, or YYYY-MM-DD)
+    let parsedDob: Date | null = null;
+    const rawDob = (row.dob || '').trim();
+    if (rawDob) {
+      const dmyMatch = rawDob.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+      if (dmyMatch) {
+        const day = parseInt(dmyMatch[1], 10);
+        const month = parseInt(dmyMatch[2], 10) - 1;
+        const year = parseInt(dmyMatch[3], 10);
+        const d = new Date(year, month, day);
+        if (!isNaN(d.getTime())) parsedDob = d;
+      } else {
+        const d = new Date(rawDob);
+        if (!isNaN(d.getTime())) parsedDob = d;
+      }
+    }
+
+    if (!parsedDob) {
+      errors.push(`Row #${rowNum} (${row.name}): Invalid Date of Birth "${rawDob}". Format must be DD/MM/YYYY.`);
+      continue;
+    }
+
+    const phoneDigits = row.phone ? String(row.phone).replace(/\D/g, '') : '';
+    const validPhone = phoneDigits.length === 10 ? phoneDigits : (row.phone ? String(row.phone).trim() : null);
+
+    const rawCat = (row.category || '').toUpperCase().trim();
+    const category = ['STAFF', 'CHANNEL', 'CUSTOMER'].includes(rawCat) ? rawCat : 'CUSTOMER';
+
+    validRecords.push({
+      name: row.name.trim(),
+      phone: validPhone,
+      email: row.email ? String(row.email).trim() : null,
+      dob: parsedDob,
+      category,
+      onBehalfOf: row.onBehalfOf ? String(row.onBehalfOf).trim() : 'TheNestGuru Management',
+      remark: row.remark ? String(row.remark).trim() : null,
+      createdById: user.id,
+    });
+  }
+
+  if (validRecords.length === 0) {
+    return {
+      success: false,
+      error: 'No valid birthday records found to upload. Please review errors.',
+      errors,
+    };
+  }
+
+  await prisma.manualBirthdayEntry.createMany({
+    data: validRecords,
+  });
+
+  revalidatePath('/birthdays');
+  revalidatePath('/dashboard');
+
+  await recordSystemNotification({
+    title: 'Bulk Birthdays Uploaded',
+    message: `Successfully uploaded ${validRecords.length} birthday records by ${user.name || 'Staff'}.`,
+    type: 'SUCCESS',
+    link: `/birthdays`,
+  });
+
+  return {
+    success: true,
+    count: validRecords.length,
+    totalSubmitted: entries.length,
+    errors,
+  };
+}
+
 // 17. Staff Personal Profile & Salary Register Actions
 export async function updateStaffPersonalDetailsAction(userId: string, data: {
   name?: string;
+  username?: string;
   email?: string;
+  password?: string;
   phone?: string;
   gender?: string;
   dob?: string | null;
@@ -3135,46 +3597,68 @@ export async function updateStaffPersonalDetailsAction(userId: string, data: {
     return { success: false, error: 'Permission denied: You can only edit your own personal details.' };
   }
 
+  if (data.username !== undefined) {
+    const cleanUsername = data.username.trim().toLowerCase();
+    if (cleanUsername) {
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          username: cleanUsername,
+          NOT: { id: userId },
+        },
+      });
+      if (existingUser) {
+        return { success: false, error: 'Username is already taken by another user.' };
+      }
+    }
+  }
+
+  const updatePayload: any = {
+    name: data.name ? data.name.trim() : undefined,
+    username: data.username !== undefined ? (data.username.trim().toLowerCase() || null) : undefined,
+    email: data.email !== undefined ? (data.email.trim().toLowerCase() || null) : undefined,
+    phone: data.phone ? data.phone.trim() : undefined,
+    gender: data.gender || undefined,
+    dob: data.dob ? new Date(data.dob) : null,
+    pan: data.pan ? data.pan.trim().toUpperCase() : undefined,
+    panCardUrl: data.panCardUrl !== undefined ? data.panCardUrl : undefined,
+    aadhaar: data.aadhaar ? data.aadhaar.trim() : undefined,
+    aadhaarCardUrl: data.aadhaarCardUrl !== undefined ? data.aadhaarCardUrl : undefined,
+    maritalStatus: data.maritalStatus || undefined,
+    marriageAnniversary: data.marriageAnniversary ? new Date(data.marriageAnniversary) : null,
+    residentialAddress: data.residentialAddress ? data.residentialAddress.trim() : undefined,
+    permanentAddress: data.permanentAddress ? data.permanentAddress.trim() : undefined,
+    address: data.residentialAddress || data.address ? (data.residentialAddress || data.address || '').trim() : undefined,
+    emergencyContactName1: data.emergencyContactName1 ? data.emergencyContactName1.trim() : undefined,
+    emergencyContactRelation1: data.emergencyContactRelation1 ? data.emergencyContactRelation1.trim() : undefined,
+    emergencyContactPhone1: data.emergencyContactPhone1 ? data.emergencyContactPhone1.trim() : undefined,
+    emergencyContactName2: data.emergencyContactName2 ? data.emergencyContactName2.trim() : undefined,
+    emergencyContactRelation2: data.emergencyContactRelation2 ? data.emergencyContactRelation2.trim() : undefined,
+    emergencyContactPhone2: data.emergencyContactPhone2 ? data.emergencyContactPhone2.trim() : undefined,
+    emergencyContact: data.emergencyContactPhone1 || data.emergencyContact ? (data.emergencyContactPhone1 || data.emergencyContact || '').trim() : undefined,
+    dateOfJoining: data.dateOfJoining ? new Date(data.dateOfJoining) : null,
+    educationQualification: data.educationQualification || undefined,
+    pastExperience: data.pastExperience !== undefined ? data.pastExperience : undefined,
+    photographUrl: data.photographUrl !== undefined ? data.photographUrl : undefined,
+    avatarUrl: data.photographUrl || data.avatarUrl || undefined,
+    bankName: data.bankName ? data.bankName.trim() : undefined,
+    bankAccountNo: data.bankAccountNo ? data.bankAccountNo.trim() : undefined,
+    bankIfsc: data.bankIfsc ? data.bankIfsc.trim().toUpperCase() : undefined,
+    bloodGroup: data.bloodGroup || undefined,
+    monthlySalary: data.monthlySalary !== undefined ? Number(data.monthlySalary) || 0 : undefined,
+    currentCTC: data.currentCTC !== undefined ? Number(data.currentCTC) || 0 : undefined,
+    jobRole: data.jobRole !== undefined ? data.jobRole.trim() : undefined,
+    department: data.department !== undefined ? data.department.trim() : undefined,
+    employmentType: data.employmentType !== undefined ? data.employmentType.trim() : undefined,
+    workLocation: data.workLocation !== undefined ? data.workLocation.trim() : undefined,
+  };
+
+  if (data.password && data.password.trim() !== '') {
+    updatePayload.passwordHash = await bcrypt.hash(data.password, 10);
+  }
+
   const updated = await prisma.user.update({
     where: { id: userId },
-    data: {
-      name: data.name ? data.name.trim() : undefined,
-      email: data.email ? data.email.trim() : undefined,
-      phone: data.phone ? data.phone.trim() : undefined,
-      gender: data.gender || undefined,
-      dob: data.dob ? new Date(data.dob) : null,
-      pan: data.pan ? data.pan.trim().toUpperCase() : undefined,
-      panCardUrl: data.panCardUrl !== undefined ? data.panCardUrl : undefined,
-      aadhaar: data.aadhaar ? data.aadhaar.trim() : undefined,
-      aadhaarCardUrl: data.aadhaarCardUrl !== undefined ? data.aadhaarCardUrl : undefined,
-      maritalStatus: data.maritalStatus || undefined,
-      marriageAnniversary: data.marriageAnniversary ? new Date(data.marriageAnniversary) : null,
-      residentialAddress: data.residentialAddress ? data.residentialAddress.trim() : undefined,
-      permanentAddress: data.permanentAddress ? data.permanentAddress.trim() : undefined,
-      address: data.residentialAddress || data.address ? (data.residentialAddress || data.address || '').trim() : undefined,
-      emergencyContactName1: data.emergencyContactName1 ? data.emergencyContactName1.trim() : undefined,
-      emergencyContactRelation1: data.emergencyContactRelation1 ? data.emergencyContactRelation1.trim() : undefined,
-      emergencyContactPhone1: data.emergencyContactPhone1 ? data.emergencyContactPhone1.trim() : undefined,
-      emergencyContactName2: data.emergencyContactName2 ? data.emergencyContactName2.trim() : undefined,
-      emergencyContactRelation2: data.emergencyContactRelation2 ? data.emergencyContactRelation2.trim() : undefined,
-      emergencyContactPhone2: data.emergencyContactPhone2 ? data.emergencyContactPhone2.trim() : undefined,
-      emergencyContact: data.emergencyContactPhone1 || data.emergencyContact ? (data.emergencyContactPhone1 || data.emergencyContact || '').trim() : undefined,
-      dateOfJoining: data.dateOfJoining ? new Date(data.dateOfJoining) : null,
-      educationQualification: data.educationQualification || undefined,
-      pastExperience: data.pastExperience !== undefined ? data.pastExperience : undefined,
-      photographUrl: data.photographUrl !== undefined ? data.photographUrl : undefined,
-      avatarUrl: data.photographUrl || data.avatarUrl || undefined,
-      bankName: data.bankName ? data.bankName.trim() : undefined,
-      bankAccountNo: data.bankAccountNo ? data.bankAccountNo.trim() : undefined,
-      bankIfsc: data.bankIfsc ? data.bankIfsc.trim().toUpperCase() : undefined,
-      bloodGroup: data.bloodGroup || undefined,
-      monthlySalary: data.monthlySalary !== undefined ? Number(data.monthlySalary) || 0 : undefined,
-      currentCTC: data.currentCTC !== undefined ? Number(data.currentCTC) || 0 : undefined,
-      jobRole: data.jobRole !== undefined ? data.jobRole.trim() : undefined,
-      department: data.department !== undefined ? data.department.trim() : undefined,
-      employmentType: data.employmentType !== undefined ? data.employmentType.trim() : undefined,
-      workLocation: data.workLocation !== undefined ? data.workLocation.trim() : undefined,
-    },
+    data: updatePayload,
   });
 
   revalidatePath('/admin/users');
@@ -3318,12 +3802,44 @@ export async function createVisitRecordAction(data: {
   staffUserId: string;
   visitType?: string;
   remarks?: string | null;
+
+  // Client's Additional Visit Data Fields:
+  builderId?: string | null;
+  builderName?: string | null;
+  projectType?: string | null;
+  projectLaunchDate?: string | null;
+  reraStatus?: string | null;
+  approvedBanks?: string | null;
+  priceRange?: string | null;
+  totalUnits?: string | null;
+  unitsSold?: string | null;
+  paymentPlan?: string | null;
+  concernedPersonName?: string | null;
+  concernedPersonDesignation?: string | null;
+  concernedPersonContact?: string | null;
+  officeAddress?: string | null;
+  cpName?: string | null;
+  cpContact?: string | null;
+  cpAddress?: string | null;
+  visitFrequency?: string | null;
+  nextFollowUpDate?: string | null;
+  leadType?: string | null;
 }) {
   const user = await getAuthUser();
   if (!user) return { success: false, error: 'Unauthorized' };
 
   const hasInitialRemark = !!data.remarks?.trim();
   const now = new Date();
+
+  // If builderId is not provided but builderName is, try to match builder
+  let resolvedBuilderId = data.builderId || null;
+  if (!resolvedBuilderId && data.builderName?.trim()) {
+    const matchedBuilder = await prisma.builder.findUnique({
+      where: { name: data.builderName.trim() },
+      select: { id: true },
+    });
+    if (matchedBuilder) resolvedBuilderId = matchedBuilder.id;
+  }
 
   const visit = await prisma.visitRecord.create({
     data: {
@@ -3339,6 +3855,29 @@ export async function createVisitRecordAction(data: {
       visitType: data.visitType || 'PROPERTY_VERIFICATION',
       remarks: hasInitialRemark ? data.remarks!.trim() : null,
       lastRemarkAt: hasInitialRemark ? now : null,
+
+      // Additional specifications:
+      builderId: resolvedBuilderId,
+      builderName: data.builderName?.trim() || null,
+      projectType: data.projectType?.trim() || null,
+      projectLaunchDate: data.projectLaunchDate?.trim() || null,
+      reraStatus: data.reraStatus?.trim() || null,
+      approvedBanks: data.approvedBanks?.trim() || null,
+      priceRange: data.priceRange?.trim() || null,
+      totalUnits: data.totalUnits?.trim() || null,
+      unitsSold: data.unitsSold?.trim() || null,
+      paymentPlan: data.paymentPlan?.trim() || null,
+      concernedPersonName: data.concernedPersonName?.trim() || null,
+      concernedPersonDesignation: data.concernedPersonDesignation?.trim() || null,
+      concernedPersonContact: data.concernedPersonContact?.trim() || null,
+      officeAddress: data.officeAddress?.trim() || null,
+      cpName: data.cpName?.trim() || null,
+      cpContact: data.cpContact?.trim() || null,
+      cpAddress: data.cpAddress?.trim() || null,
+      visitFrequency: data.visitFrequency?.trim() || null,
+      nextFollowUpDate: data.nextFollowUpDate ? new Date(data.nextFollowUpDate) : null,
+      leadType: data.leadType?.trim() || 'Warm',
+
       ...(hasInitialRemark
         ? {
             followUps: {
@@ -3362,12 +3901,23 @@ export async function createVisitRecordAction(data: {
   revalidatePath('/visits');
   revalidatePath('/dashboard');
 
-  await recordSystemNotification({
-    title: 'New Visit Scheduled',
-    message: `Visit for ${data.clientName} (${data.projectName || data.propertyAddress || 'Property'}) on ${data.visitDate} by ${user.name || 'Staff'}.`,
-    type: 'INFO',
-    link: `/visits`,
-  });
+  if (data.staffUserId !== user.id) {
+    await recordSystemNotification({
+      title: 'New Visit Scheduled for You',
+      message: `Visit for ${data.clientName} (${data.projectName || data.propertyAddress || 'Property'}) assigned to you on ${data.visitDate} by ${user.name || 'Staff'}.`,
+      type: 'INFO',
+      link: `/visits`,
+      userId: data.staffUserId,
+    });
+  } else {
+    await recordSystemNotification({
+      title: 'Visit Scheduled',
+      message: `Visit for ${data.clientName} (${data.projectName || data.propertyAddress || 'Property'}) scheduled on ${data.visitDate}.`,
+      type: 'INFO',
+      link: `/visits`,
+      userId: user.id,
+    });
+  }
 
   return { success: true, visit };
 }
@@ -3485,9 +4035,40 @@ export async function updateVisitRecordAction(data: {
   visitType?: string;
   status?: string;
   remarks?: string | null;
+
+  // Additional specifications:
+  builderId?: string | null;
+  builderName?: string | null;
+  projectType?: string | null;
+  projectLaunchDate?: string | null;
+  reraStatus?: string | null;
+  approvedBanks?: string | null;
+  priceRange?: string | null;
+  totalUnits?: string | null;
+  unitsSold?: string | null;
+  paymentPlan?: string | null;
+  concernedPersonName?: string | null;
+  concernedPersonDesignation?: string | null;
+  concernedPersonContact?: string | null;
+  officeAddress?: string | null;
+  cpName?: string | null;
+  cpContact?: string | null;
+  cpAddress?: string | null;
+  visitFrequency?: string | null;
+  nextFollowUpDate?: string | null;
+  leadType?: string | null;
 }) {
   const user = await getAuthUser();
   if (!user) return { success: false, error: 'Unauthorized' };
+
+  let resolvedBuilderId = data.builderId;
+  if (resolvedBuilderId === undefined && data.builderName?.trim()) {
+    const matchedBuilder = await prisma.builder.findUnique({
+      where: { name: data.builderName.trim() },
+      select: { id: true },
+    });
+    if (matchedBuilder) resolvedBuilderId = matchedBuilder.id;
+  }
 
   const updated = await prisma.visitRecord.update({
     where: { id: data.id },
@@ -3504,6 +4085,28 @@ export async function updateVisitRecordAction(data: {
       visitType: data.visitType || 'PROPERTY_VERIFICATION',
       status: data.status || undefined,
       remarks: data.remarks?.trim() || null,
+
+      // Additional specifications:
+      builderId: resolvedBuilderId !== undefined ? (resolvedBuilderId || null) : undefined,
+      builderName: data.builderName !== undefined ? (data.builderName?.trim() || null) : undefined,
+      projectType: data.projectType !== undefined ? (data.projectType?.trim() || null) : undefined,
+      projectLaunchDate: data.projectLaunchDate !== undefined ? (data.projectLaunchDate?.trim() || null) : undefined,
+      reraStatus: data.reraStatus !== undefined ? (data.reraStatus?.trim() || null) : undefined,
+      approvedBanks: data.approvedBanks !== undefined ? (data.approvedBanks?.trim() || null) : undefined,
+      priceRange: data.priceRange !== undefined ? (data.priceRange?.trim() || null) : undefined,
+      totalUnits: data.totalUnits !== undefined ? (data.totalUnits?.trim() || null) : undefined,
+      unitsSold: data.unitsSold !== undefined ? (data.unitsSold?.trim() || null) : undefined,
+      paymentPlan: data.paymentPlan !== undefined ? (data.paymentPlan?.trim() || null) : undefined,
+      concernedPersonName: data.concernedPersonName !== undefined ? (data.concernedPersonName?.trim() || null) : undefined,
+      concernedPersonDesignation: data.concernedPersonDesignation !== undefined ? (data.concernedPersonDesignation?.trim() || null) : undefined,
+      concernedPersonContact: data.concernedPersonContact !== undefined ? (data.concernedPersonContact?.trim() || null) : undefined,
+      officeAddress: data.officeAddress !== undefined ? (data.officeAddress?.trim() || null) : undefined,
+      cpName: data.cpName !== undefined ? (data.cpName?.trim() || null) : undefined,
+      cpContact: data.cpContact !== undefined ? (data.cpContact?.trim() || null) : undefined,
+      cpAddress: data.cpAddress !== undefined ? (data.cpAddress?.trim() || null) : undefined,
+      visitFrequency: data.visitFrequency !== undefined ? (data.visitFrequency?.trim() || null) : undefined,
+      nextFollowUpDate: data.nextFollowUpDate !== undefined ? (data.nextFollowUpDate ? new Date(data.nextFollowUpDate) : null) : undefined,
+      leadType: data.leadType !== undefined ? (data.leadType?.trim() || 'Warm') : undefined,
     },
     include: {
       staff: { select: { id: true, name: true, role: true } },
@@ -3802,7 +4405,7 @@ export async function deleteCustomerTypeAction(id: string) {
 }
 
 // ==========================================
-// 23. OVERALL CASE STATUSES MASTER ACTIONS
+// 23. CASE FILING STATUSES MASTER ACTIONS
 // ==========================================
 export async function getCaseStatusMastersAction() {
   try {
@@ -5077,23 +5680,31 @@ export async function getNotificationsAction() {
   const user = await getAuthUser();
   if (!user) return { success: false, notifications: [], unreadCount: 0 };
 
-  // Fetch notifications targeted to user or broadcast
+  const isSuperAdmin = user.role === 'SUPER_ADMIN';
+
+  // Strict Notification Routing:
+  // - Super Admin receives ALL notifications in the entire system without restriction
+  // - Specific users/roles receive ONLY notifications targeted to their account (userId), their role, or general broadcast
+  const where: any = isSuperAdmin
+    ? {}
+    : {
+        OR: [
+          { userId: user.id },
+          {
+            userId: null,
+            OR: [{ role: null }, { role: user.role }],
+          },
+        ],
+      };
+
   const notifications = await prisma.notification.findMany({
-    where: {
-      OR: [
-        { userId: user.id },
-        {
-          userId: null,
-          OR: [{ role: null }, { role: user.role }],
-        },
-      ],
-    },
+    where,
     orderBy: { createdAt: 'desc' },
-    take: 40,
+    take: 50,
   });
 
   // If no notifications exist in DB at all, auto-seed a welcoming/live notification from recent cases
-  if (notifications.length === 0) {
+  if (notifications.length === 0 && isSuperAdmin) {
     const recentCase = await prisma.case.findFirst({
       orderBy: { updatedAt: 'desc' },
       select: { id: true, clientName: true, product: true, stage: true },
@@ -5110,17 +5721,8 @@ export async function getNotificationsAction() {
       });
 
       const seeded = await prisma.notification.findMany({
-        where: {
-          OR: [
-            { userId: user.id },
-            {
-              userId: null,
-              OR: [{ role: null }, { role: user.role }],
-            },
-          ],
-        },
         orderBy: { createdAt: 'desc' },
-        take: 40,
+        take: 50,
       });
 
       return {
@@ -5140,19 +5742,26 @@ export async function markNotificationAsReadAction(id?: string, all?: boolean) {
   if (!user) return { success: false, error: 'Unauthorized' };
 
   if (all) {
-    await prisma.notification.updateMany({
-      where: {
-        OR: [
-          { userId: user.id },
-          {
-            userId: null,
-            OR: [{ role: null }, { role: user.role }],
-          },
-        ],
-        isRead: false,
-      },
-      data: { isRead: true },
-    });
+    if (user.role === 'SUPER_ADMIN') {
+      await prisma.notification.updateMany({
+        where: { isRead: false },
+        data: { isRead: true },
+      });
+    } else {
+      await prisma.notification.updateMany({
+        where: {
+          OR: [
+            { userId: user.id },
+            {
+              userId: null,
+              OR: [{ role: null }, { role: user.role }],
+            },
+          ],
+          isRead: false,
+        },
+        data: { isRead: true },
+      });
+    }
   } else if (id) {
     await prisma.notification.update({
       where: { id },
@@ -5196,8 +5805,141 @@ export async function recordSystemNotification({
   }
 }
 
+// 21. Builder Master Actions (Super Admin & Team Leader)
+export async function getBuildersAction() {
+  const builders = await prisma.builder.findMany({
+    orderBy: { name: 'asc' },
+    include: {
+      _count: { select: { visits: true } },
+    },
+  });
+  return { success: true, builders };
+}
 
+async function checkIsTeamLeaderOrSuperAdmin(user: UserContext): Promise<boolean> {
+  if (user.role === 'SUPER_ADMIN') return true;
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { isTeamLeader: true },
+  });
+  return Boolean(dbUser?.isTeamLeader);
+}
 
+export async function createBuilderAction(data: {
+  name: string;
+  contactPerson?: string | null;
+  designation?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  officeAddress?: string | null;
+  reraNumber?: string | null;
+  approvedBanks?: string | null;
+  notes?: string | null;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
 
+  const canManage = await checkIsTeamLeaderOrSuperAdmin(user);
+  if (!canManage) {
+    return { success: false, error: 'Only Super Admin and Team Leaders can add builders.' };
+  }
 
+  const cleanName = data.name.trim();
+  if (!cleanName) return { success: false, error: 'Builder name is required.' };
 
+  const existing = await prisma.builder.findUnique({
+    where: { name: cleanName },
+  });
+  if (existing) {
+    return { success: false, error: `Builder "${cleanName}" already exists in directory.` };
+  }
+
+  const builder = await prisma.builder.create({
+    data: {
+      name: cleanName,
+      contactPerson: data.contactPerson?.trim() || null,
+      designation: data.designation?.trim() || null,
+      phone: data.phone?.trim() || null,
+      email: data.email?.trim() || null,
+      officeAddress: data.officeAddress?.trim() || null,
+      reraNumber: data.reraNumber?.trim() || null,
+      approvedBanks: data.approvedBanks?.trim() || null,
+      notes: data.notes?.trim() || null,
+    },
+  });
+
+  revalidatePath('/visits');
+
+  return { success: true, builder };
+}
+
+export async function updateBuilderAction(data: {
+  id: string;
+  name: string;
+  contactPerson?: string | null;
+  designation?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  officeAddress?: string | null;
+  reraNumber?: string | null;
+  approvedBanks?: string | null;
+  notes?: string | null;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const canManage = await checkIsTeamLeaderOrSuperAdmin(user);
+  if (!canManage) {
+    return { success: false, error: 'Only Super Admin and Team Leaders can edit builders.' };
+  }
+
+  const cleanName = data.name.trim();
+  if (!cleanName) return { success: false, error: 'Builder name is required.' };
+
+  const existing = await prisma.builder.findFirst({
+    where: {
+      name: cleanName,
+      id: { not: data.id },
+    },
+  });
+  if (existing) {
+    return { success: false, error: `Another builder named "${cleanName}" already exists.` };
+  }
+
+  const builder = await prisma.builder.update({
+    where: { id: data.id },
+    data: {
+      name: cleanName,
+      contactPerson: data.contactPerson?.trim() || null,
+      designation: data.designation?.trim() || null,
+      phone: data.phone?.trim() || null,
+      email: data.email?.trim() || null,
+      officeAddress: data.officeAddress?.trim() || null,
+      reraNumber: data.reraNumber?.trim() || null,
+      approvedBanks: data.approvedBanks?.trim() || null,
+      notes: data.notes?.trim() || null,
+    },
+  });
+
+  revalidatePath('/visits');
+
+  return { success: true, builder };
+}
+
+export async function deleteBuilderAction(id: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const canManage = await checkIsTeamLeaderOrSuperAdmin(user);
+  if (!canManage) {
+    return { success: false, error: 'Only Super Admin and Team Leaders can delete builders.' };
+  }
+
+  await prisma.builder.delete({
+    where: { id },
+  });
+
+  revalidatePath('/visits');
+
+  return { success: true };
+}

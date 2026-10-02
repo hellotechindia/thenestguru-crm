@@ -35,7 +35,7 @@ export default async function RootLayout({
   const session = await getServerSession(authOptions);
 
   return (
-    <html lang="en" className="light" suppressHydrationWarning>
+    <html lang="en-IN" className="light" suppressHydrationWarning>
       <body className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased min-h-screen selection:bg-sky-500 selection:text-white">
         <Providers session={session}>
           <AppShell initialSession={session}>

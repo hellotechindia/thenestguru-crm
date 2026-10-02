@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { getScopedCaseWhere } from '@/lib/case-filter';
 import DashboardAnalytics from '@/components/DashboardAnalytics';
 import AttendancePunchTracker from '@/components/AttendancePunchTracker';
 import DashboardStickyNotes from '@/components/DashboardStickyNotes';
@@ -20,21 +21,7 @@ export default async function DashboardPage() {
   const userRole = (session.user as any).role;
   const currentUserId = (session.user as any).id;
 
-  // Filter cases for channel partner
-  let caseWhere: any = {};
-  if (userRole === 'CHANNEL') {
-    const currentDbUser = await prisma.user.findUnique({
-      where: { id: currentUserId },
-      select: { parentChannelId: true },
-    });
-    const effectiveChannelId = currentDbUser?.parentChannelId || currentUserId;
-    caseWhere = {
-      OR: [
-        { channelUserId: currentUserId },
-        { channelUserId: effectiveChannelId },
-      ],
-    };
-  }
+  const caseWhere = await getScopedCaseWhere(currentUserId, userRole);
 
   const [cases, revenues, expenses, states, systemSetting, selfTasks, childAccounts] = await Promise.all([
     prisma.case.findMany({
@@ -46,14 +33,24 @@ export default async function DashboardPage() {
       },
       orderBy: { createdAt: 'desc' },
     }),
-    prisma.revenueRecord.findMany({ orderBy: { createdAt: 'desc' } }),
-    prisma.expenseRecord.findMany({ orderBy: { createdAt: 'desc' } }),
+    userRole === 'SUPER_ADMIN'
+      ? prisma.revenueRecord.findMany({ orderBy: { createdAt: 'desc' } })
+      : prisma.revenueRecord.findMany({
+          where: { case: caseWhere },
+          orderBy: { createdAt: 'desc' },
+        }),
+    userRole === 'SUPER_ADMIN'
+      ? prisma.expenseRecord.findMany({ orderBy: { createdAt: 'desc' } })
+      : Promise.resolve([]),
     prisma.stateConfig.findMany({ orderBy: { name: 'asc' } }),
     prisma.systemSetting.findUnique({ where: { id: 'default' } }),
     userRole !== 'CHANNEL'
       ? prisma.task.findMany({
           where: {
-            assignedToId: currentUserId,
+            OR: [
+              { assignedToId: currentUserId },
+              { assignees: { some: { userId: currentUserId } } },
+            ],
             status: { not: 'CANCELLED' },
           },
           orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],

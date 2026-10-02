@@ -8,9 +8,10 @@ import {
   User, Mail, Phone, MapPin, Shield, Calendar, CreditCard, Building,
   ArrowLeft, Edit3, CheckCircle2, ShieldAlert, Heart, Save, DollarSign,
   Upload, FileText, Image as ImageIcon, Briefcase, GraduationCap, Users2,
-  Trash2, Plus, ExternalLink, X
+  Trash2, Plus, ExternalLink, X, Lock, AtSign, Eye, EyeOff
 } from 'lucide-react';
 import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
+import DatePickerInput from './DatePickerInput';
 
 export interface PastExperienceItem {
   companyName: string;
@@ -94,8 +95,11 @@ export default function StaffPersonalDetailsClient({
     ];
   })();
 
+  const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     name: staffUser.name || '',
+    username: staffUser.username || '',
+    password: '',
     email: staffUser.email || '',
     phone: staffUser.phone || '',
     gender: staffUser.gender || 'MALE',
@@ -280,6 +284,7 @@ export default function StaffPersonalDetailsClient({
 
       if (res.success) {
         setSuccess('Staff personal profile, KYC, and HRMS details saved successfully!');
+        setFormData((prev) => ({ ...prev, password: '' }));
         setIsEditing(false);
         router.refresh();
       } else {
@@ -450,6 +455,50 @@ export default function StaffPersonalDetailsClient({
               />
             </div>
 
+            {/* Username */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1 flex items-center gap-1">
+                <AtSign className="w-3.5 h-3.5 text-sky-500" />
+                Username (Login ID)
+              </label>
+              <input
+                type="text"
+                disabled={!isEditing}
+                value={formData.username}
+                onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, '') })}
+                className="w-full glass-input px-3 py-2 rounded-xl text-xs disabled:opacity-80 font-mono text-sky-600 dark:text-sky-400 font-semibold"
+                placeholder="e.g. deepak_kumar"
+              />
+            </div>
+
+            {/* Password */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1 flex items-center gap-1">
+                <Lock className="w-3.5 h-3.5 text-indigo-500" />
+                Password {isEditing && <span className="text-[10px] text-slate-400 font-normal">(Leave blank to keep unchanged)</span>}
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  disabled={!isEditing}
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  className="w-full glass-input px-3 py-2 pr-8 rounded-xl text-xs disabled:opacity-80 font-mono"
+                  placeholder={isEditing ? 'New password (optional)' : '••••••••'}
+                />
+                {isEditing && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    title={showPassword ? 'Hide' : 'Show'}
+                  >
+                    {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* Gender */}
             <div>
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
@@ -472,12 +521,13 @@ export default function StaffPersonalDetailsClient({
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                 Date of Birth (DOB)
               </label>
-              <input
-                type="date"
+              <DatePickerInput
                 disabled={!isEditing}
                 value={formData.dob}
-                onChange={(e) => setFormData({ ...formData, dob: e.target.value })}
+                onChange={(val) => setFormData({ ...formData, dob: val })}
                 className="w-full glass-input px-3 py-2 rounded-xl text-xs disabled:opacity-80"
+                minYear={1940}
+                maxYear={2026}
               />
             </div>
 
@@ -486,12 +536,13 @@ export default function StaffPersonalDetailsClient({
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                 Date of Joining (DOJ)
               </label>
-              <input
-                type="date"
+              <DatePickerInput
                 disabled={!isEditing}
                 value={formData.dateOfJoining}
-                onChange={(e) => setFormData({ ...formData, dateOfJoining: e.target.value })}
+                onChange={(val) => setFormData({ ...formData, dateOfJoining: val })}
                 className="w-full glass-input px-3 py-2 rounded-xl text-xs disabled:opacity-80"
+                minYear={2000}
+                maxYear={2035}
               />
             </div>
 
@@ -518,12 +569,13 @@ export default function StaffPersonalDetailsClient({
                 <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                   Marriage Anniversary
                 </label>
-                <input
-                  type="date"
+                <DatePickerInput
                   disabled={!isEditing}
                   value={formData.marriageAnniversary}
-                  onChange={(e) => setFormData({ ...formData, marriageAnniversary: e.target.value })}
+                  onChange={(val) => setFormData({ ...formData, marriageAnniversary: val })}
                   className="w-full glass-input px-3 py-2 rounded-xl text-xs disabled:opacity-80 bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900"
+                  minYear={1950}
+                  maxYear={2035}
                 />
               </div>
             )}

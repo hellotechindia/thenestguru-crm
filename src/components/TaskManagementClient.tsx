@@ -46,6 +46,7 @@ import {
   Tag,
   ShieldAlert,
 } from 'lucide-react';
+import DatePickerInput from './DatePickerInput';
 
 export interface TaskItem {
   id: string;
@@ -199,8 +200,13 @@ export default function TaskManagementClient({
 }: TaskManagementClientProps) {
   const router = useRouter();
 
-  // Navigation & Filtering states
-  const [activeTab, setActiveTab] = useState<'all' | 'my' | 'assigned_by_me'>('all');
+  // Role permissions
+  const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
+  const isTeamLeader = currentUser.role === 'TEAM_LEADER' || currentUser.role === 'SALES' || currentUser.role === 'OPERATION' || !!currentUser.isTeamLeader;
+  const canAssignTask = isSuperAdmin || isTeamLeader;
+
+  // Navigation & Filtering states: Super admin sees all, other roles default to their own tasks
+  const [activeTab, setActiveTab] = useState<'all' | 'my' | 'assigned_by_me'>(isSuperAdmin ? 'all' : 'my');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
@@ -217,17 +223,18 @@ export default function TaskManagementClient({
   const [selfTitle, setSelfTitle] = useState('');
   const [selfDesc, setSelfDesc] = useState('');
   const [selfDueDate, setSelfDueDate] = useState('');
+  const [selfDueTime, setSelfDueTime] = useState('');
   const [selfIsUrgent, setSelfIsUrgent] = useState(false);
   const [selfIsImportant, setSelfIsImportant] = useState(false);
 
   // Create form state
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [newPriority, setNewPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'>('MEDIUM');
+  const [newPriority, setNewPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'>('LOW');
   const [newIsUrgent, setNewIsUrgent] = useState(false);
   const [newIsImportant, setNewIsImportant] = useState(false);
-  const [newAssigneeId, setNewAssigneeId] = useState(assignableUsers[0]?.id || '');
-  const [newAssigneeIds, setNewAssigneeIds] = useState<string[]>(assignableUsers[0]?.id ? [assignableUsers[0].id] : []);
+  const [newAssigneeId, setNewAssigneeId] = useState('');
+  const [newAssigneeIds, setNewAssigneeIds] = useState<string[]>([]);
   const [newDueDate, setNewDueDate] = useState('');
   const [newDueTime, setNewDueTime] = useState('');
   const [newCaseId, setNewCaseId] = useState('');
@@ -257,14 +264,16 @@ export default function TaskManagementClient({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Meeting Feedback: Only Super Admin and Team Leaders can assign tasks to others
-  const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
-  const isTeamLeader = currentUser.role === 'TEAM_LEADER' || currentUser.role === 'SALES' || currentUser.role === 'OPERATION' || !!currentUser.isTeamLeader;
-  const canAssignTask = isSuperAdmin || isTeamLeader;
-
-  // Filter tasks
-  const filteredTasks = useMemo(() => {
+  // Base scoped tasks for the active tab & user role (before status filtering)
+  const scopedTasks = useMemo(() => {
     return initialTasks.filter((task) => {
+      // Strict Role Isolation: Non-super-admin can ONLY see tasks assigned to them or created by them
+      if (!isSuperAdmin) {
+        const isAssigned = task.assignedToId === currentUser.id || task.assignees?.some((a) => a.userId === currentUser.id);
+        const isCreator = task.createdById === currentUser.id;
+        if (!isAssigned && !isCreator) return false;
+      }
+
       // Tab filter
       if (activeTab === 'my') {
         const isAssignedToMe = task.assignedToId === currentUser.id || task.assignees?.some((a) => a.userId === currentUser.id);
@@ -272,35 +281,78 @@ export default function TaskManagementClient({
       }
       if (activeTab === 'assigned_by_me' && task.createdById !== currentUser.id) return false;
 
-      // Status filter
-      if (statusFilter !== 'ALL' && task.status !== statusFilter) return false;
-
-      // Priority filter
-      if (priorityFilter !== 'ALL' && task.priority !== priorityFilter) return false;
-
-      // Assignee filter
-      if (assigneeFilter !== 'ALL') {
-        const hasAssignee = task.assignedToId === assigneeFilter || task.assignees?.some((a) => a.userId === assigneeFilter);
-        if (!hasAssignee) return false;
-      }
-
-      // Search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const titleMatch = (task.title || '').toLowerCase().includes(q);
-        const descMatch = task.description?.toLowerCase().includes(q);
-        const assigneeMatch =
-          (task.assignedTo?.name || '').toLowerCase().includes(q) ||
-          task.assignees?.some((a) => a.user?.name?.toLowerCase().includes(q));
-        const caseMatch = (task.case?.clientName || '').toLowerCase().includes(q);
-        if (!titleMatch && !descMatch && !assigneeMatch && !caseMatch) return false;
-      }
-
       return true;
     });
-  }, [initialTasks, activeTab, statusFilter, priorityFilter, assigneeFilter, searchQuery, currentUser.id]);
+  }, [initialTasks, isSuperAdmin, activeTab, currentUser.id]);
 
-  // Summary Metrics
+  // Live status counts according to active tab scope
+  const statusCounts = useMemo(() => {
+    let all = scopedTasks.length;
+    let pending = 0;
+    let inProgress = 0;
+    let inReview = 0;
+    let completed = 0;
+    let cancelled = 0;
+
+    for (const t of scopedTasks) {
+      if (t.status === 'PENDING') pending++;
+      else if (t.status === 'IN_PROGRESS') inProgress++;
+      else if (t.status === 'IN_REVIEW') inReview++;
+      else if (t.status === 'COMPLETED') completed++;
+      else if (t.status === 'CANCELLED') cancelled++;
+    }
+
+    return { all, pending, inProgress, inReview, completed, cancelled };
+  }, [scopedTasks]);
+
+  // Filter tasks with latest-to-oldest sorting
+  const filteredTasks = useMemo(() => {
+    return scopedTasks
+      .filter((task) => {
+        // Status filter
+        if (statusFilter !== 'ALL' && task.status !== statusFilter) return false;
+
+        // Priority filter
+        if (priorityFilter !== 'ALL' && task.priority !== priorityFilter) return false;
+
+        // Assignee filter
+        if (assigneeFilter !== 'ALL') {
+          const hasAssignee = task.assignedToId === assigneeFilter || task.assignees?.some((a) => a.userId === assigneeFilter);
+          if (!hasAssignee) return false;
+        }
+
+        // Search query
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          const titleMatch = (task.title || '').toLowerCase().includes(q);
+          const descMatch = task.description?.toLowerCase().includes(q);
+          const assigneeMatch =
+            (task.assignedTo?.name || '').toLowerCase().includes(q) ||
+            task.assignees?.some((a) => a.user?.name?.toLowerCase().includes(q));
+          const caseMatch = (task.case?.clientName || '').toLowerCase().includes(q);
+          if (!titleMatch && !descMatch && !assigneeMatch && !caseMatch) return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        // Strictly Latest to Oldest
+        const timeA = new Date(a.createdAt || a.assignedAt).getTime();
+        const timeB = new Date(b.createdAt || b.assignedAt).getTime();
+        return timeB - timeA;
+      });
+  }, [scopedTasks, statusFilter, priorityFilter, assigneeFilter, searchQuery]);
+
+  // Summary Metrics scoped by role visibility
+  const visibleTasksForStats = useMemo(() => {
+    if (isSuperAdmin) return initialTasks;
+    return initialTasks.filter((task) => {
+      const isAssigned = task.assignedToId === currentUser.id || task.assignees?.some((a) => a.userId === currentUser.id);
+      const isCreator = task.createdById === currentUser.id;
+      return isAssigned || isCreator;
+    });
+  }, [initialTasks, isSuperAdmin, currentUser.id]);
+
   const stats = useMemo(() => {
     const now = new Date();
     let pending = 0;
@@ -308,7 +360,7 @@ export default function TaskManagementClient({
     let completed = 0;
     let overdue = 0;
 
-    for (const t of initialTasks) {
+    for (const t of visibleTasksForStats) {
       if (t.status === 'PENDING') pending++;
       if (t.status === 'IN_PROGRESS' || t.status === 'IN_REVIEW') inProgress++;
       if (t.status === 'COMPLETED') completed++;
@@ -320,13 +372,13 @@ export default function TaskManagementClient({
     }
 
     return {
-      total: initialTasks.length,
+      total: visibleTasksForStats.length,
       pending,
       inProgress,
       completed,
       overdue,
     };
-  }, [initialTasks]);
+  }, [visibleTasksForStats]);
 
   // Handle Quick Status Change
   const handleQuickStatusChange = async (taskId: string, newStatus: TaskItem['status']) => {
@@ -353,6 +405,7 @@ export default function TaskManagementClient({
       title: selfTitle.trim(),
       description: selfDesc.trim() || undefined,
       dueDate: selfDueDate || undefined,
+      dueTime: selfDueTime || undefined,
       isUrgent: selfIsUrgent,
       isImportant: selfIsImportant,
     });
@@ -363,6 +416,7 @@ export default function TaskManagementClient({
       setSelfTitle('');
       setSelfDesc('');
       setSelfDueDate('');
+      setSelfDueTime('');
       setSelfIsUrgent(false);
       setSelfIsImportant(false);
       router.refresh();
@@ -423,19 +477,47 @@ export default function TaskManagementClient({
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetAssignees = newAssigneeIds.length > 0 ? newAssigneeIds : (newAssigneeId ? [newAssigneeId] : []);
-    if (!newTitle.trim() || targetAssignees.length === 0) return;
+    
+    if (!newTitle.trim()) {
+      setErrorMsg('Task Title is required.');
+      return;
+    }
+    if (!newDesc.trim()) {
+      setErrorMsg('Detailed Instructions / Remarks are required.');
+      return;
+    }
+    if (!newPriority) {
+      setErrorMsg('Priority Level is required.');
+      return;
+    }
+    if (targetAssignees.length === 0) {
+      setErrorMsg('Please select at least one staff member.');
+      return;
+    }
+    if (!newDueDate) {
+      setErrorMsg('Due Date is required.');
+      return;
+    }
+    if (!newDueTime) {
+      setErrorMsg('Due Time is required.');
+      return;
+    }
+    if (activeCases.length > 0 && !newCaseId) {
+      setErrorMsg('Link to Loan Case is required.');
+      return;
+    }
 
     setLoading(true);
     setErrorMsg('');
 
     const res = await createTaskWithMultipleAssigneesAction({
-      title: newTitle,
-      description: newDesc || undefined,
+      title: newTitle.trim(),
+      description: newDesc.trim(),
       priority: newPriority,
       isUrgent: newIsUrgent,
       isImportant: newIsImportant,
-      dueDate: newDueDate || undefined,
-      dueTime: newDueTime || undefined,
+      dueDate: newDueDate,
+      dueTime: newDueTime,
       assigneeIds: targetAssignees,
       caseId: newCaseId || undefined,
     });
@@ -700,17 +782,19 @@ export default function TaskManagementClient({
         {/* Navigation Tabs & View Mode Toggle */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
           <div className="inline-flex rounded-xl p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => setActiveTab('all')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                activeTab === 'all'
-                  ? 'bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-sm font-bold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              All Team Tasks ({initialTasks.length})
-            </button>
+            {isSuperAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('all')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  activeTab === 'all'
+                    ? 'bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-sm font-bold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                All Company Tasks ({initialTasks.length})
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setActiveTab('my')}
@@ -720,7 +804,7 @@ export default function TaskManagementClient({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              My Tasks ({initialTasks.filter((t) => t.assignedToId === currentUser.id || t.assignees?.some((a) => a.userId === currentUser.id)).length})
+              My Assigned Tasks ({initialTasks.filter((t) => t.assignedToId === currentUser.id || t.assignees?.some((a) => a.userId === currentUser.id)).length})
             </button>
             <button
               type="button"
@@ -768,6 +852,140 @@ export default function TaskManagementClient({
           </div>
         </div>
 
+        {/* Status Filter Tabs with Counts (Pending, In Progress, In Review, Completed, Cancelled) */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none pt-1">
+          <button
+            type="button"
+            onClick={() => setStatusFilter('ALL')}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+              statusFilter === 'ALL'
+                ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-sm'
+                : 'bg-slate-50 dark:bg-slate-850 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+            }`}
+          >
+            <span>All Statuses</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                statusFilter === 'ALL'
+                  ? 'bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900'
+                  : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {statusCounts.all}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter('PENDING')}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+              statusFilter === 'PENDING'
+                ? 'bg-amber-500 text-white border-amber-600 shadow-sm shadow-amber-500/25 ring-2 ring-amber-500/20'
+                : 'bg-amber-500/10 border-amber-300/70 dark:border-amber-700/50 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full shrink-0 ${statusFilter === 'PENDING' ? 'bg-white' : 'bg-amber-500'}`} />
+            <span>Pending / To Do</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                statusFilter === 'PENDING'
+                  ? 'bg-amber-700/50 text-white'
+                  : 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300'
+              }`}
+            >
+              {statusCounts.pending}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter('IN_PROGRESS')}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+              statusFilter === 'IN_PROGRESS'
+                ? 'bg-sky-600 text-white border-sky-700 shadow-sm shadow-sky-500/25 ring-2 ring-sky-500/20'
+                : 'bg-sky-500/10 border-sky-300/70 dark:border-sky-700/50 text-sky-700 dark:text-sky-400 hover:bg-sky-500/20'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full shrink-0 ${statusFilter === 'IN_PROGRESS' ? 'bg-white' : 'bg-sky-500'}`} />
+            <span>In Progress</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                statusFilter === 'IN_PROGRESS'
+                  ? 'bg-sky-800/50 text-white'
+                  : 'bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-300'
+              }`}
+            >
+              {statusCounts.inProgress}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter('IN_REVIEW')}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+              statusFilter === 'IN_REVIEW'
+                ? 'bg-purple-600 text-white border-purple-700 shadow-sm shadow-purple-500/25 ring-2 ring-purple-500/20'
+                : 'bg-purple-500/10 border-purple-300/70 dark:border-purple-700/50 text-purple-700 dark:text-purple-400 hover:bg-purple-500/20'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full shrink-0 ${statusFilter === 'IN_REVIEW' ? 'bg-white' : 'bg-purple-500'}`} />
+            <span>In Review</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                statusFilter === 'IN_REVIEW'
+                  ? 'bg-purple-800/50 text-white'
+                  : 'bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-300'
+              }`}
+            >
+              {statusCounts.inReview}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter('COMPLETED')}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+              statusFilter === 'COMPLETED'
+                ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm shadow-emerald-500/25 ring-2 ring-emerald-500/20'
+                : 'bg-emerald-500/10 border-emerald-300/70 dark:border-emerald-700/50 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full shrink-0 ${statusFilter === 'COMPLETED' ? 'bg-white' : 'bg-emerald-500'}`} />
+            <span>Completed</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                statusFilter === 'COMPLETED'
+                  ? 'bg-emerald-800/50 text-white'
+                  : 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300'
+              }`}
+            >
+              {statusCounts.completed}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter('CANCELLED')}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+              statusFilter === 'CANCELLED'
+                ? 'bg-slate-600 text-white border-slate-700 shadow-sm shadow-slate-500/25 ring-2 ring-slate-500/20'
+                : 'bg-slate-500/10 border-slate-300/70 dark:border-slate-700/50 text-slate-600 dark:text-slate-400 hover:bg-slate-500/20'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full shrink-0 ${statusFilter === 'CANCELLED' ? 'bg-white' : 'bg-slate-400'}`} />
+            <span>Cancelled</span>
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                statusFilter === 'CANCELLED'
+                  ? 'bg-slate-800/50 text-white'
+                  : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {statusCounts.cancelled}
+            </span>
+          </button>
+        </div>
+
         {/* Filter Controls */}
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           {/* Search */}
@@ -782,19 +1000,19 @@ export default function TaskManagementClient({
             />
           </div>
 
-          {/* Status Filter */}
+          {/* Status Filter Dropdown */}
           <div>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
             >
-              <option value="ALL">All Statuses</option>
-              <option value="PENDING">Pending / To Do</option>
-              <option value="IN_PROGRESS">In Progress</option>
-              <option value="IN_REVIEW">In Review</option>
-              <option value="COMPLETED">Completed</option>
-              <option value="CANCELLED">Cancelled</option>
+              <option value="ALL">All Statuses ({statusCounts.all})</option>
+              <option value="PENDING">Pending / To Do ({statusCounts.pending})</option>
+              <option value="IN_PROGRESS">In Progress ({statusCounts.inProgress})</option>
+              <option value="IN_REVIEW">In Review ({statusCounts.inReview})</option>
+              <option value="COMPLETED">Completed ({statusCounts.completed})</option>
+              <option value="CANCELLED">Cancelled ({statusCounts.cancelled})</option>
             </select>
           </div>
 
@@ -898,6 +1116,15 @@ export default function TaskManagementClient({
                           <Timer className="w-3 h-3 text-indigo-500" />
                           <span>{task.timeSpentMinutes || 0}m</span>
                         </div>
+                        {(task.dueDate || task.dueTime) && (
+                          <div className="flex items-center gap-1 font-mono text-[9px] text-amber-600 dark:text-amber-400">
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>
+                              {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
+                              {task.dueTime ? ` ${task.dueTime}` : ''}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5 ml-auto">
                           <button
                             type="button"
@@ -974,6 +1201,15 @@ export default function TaskManagementClient({
                           <Timer className="w-3 h-3 text-indigo-500" />
                           <span>{task.timeSpentMinutes || 0}m</span>
                         </div>
+                        {(task.dueDate || task.dueTime) && (
+                          <div className="flex items-center gap-1 font-mono text-[9px] text-emerald-600 dark:text-emerald-400">
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>
+                              {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
+                              {task.dueTime ? ` ${task.dueTime}` : ''}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5 ml-auto">
                           <button
                             type="button"
@@ -1050,6 +1286,15 @@ export default function TaskManagementClient({
                           <Timer className="w-3 h-3 text-indigo-500" />
                           <span>{task.timeSpentMinutes || 0}m</span>
                         </div>
+                        {(task.dueDate || task.dueTime) && (
+                          <div className="flex items-center gap-1 font-mono text-[9px] text-sky-600 dark:text-sky-400">
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>
+                              {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
+                              {task.dueTime ? ` ${task.dueTime}` : ''}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5 ml-auto">
                           <button
                             type="button"
@@ -1126,6 +1371,15 @@ export default function TaskManagementClient({
                           <Timer className="w-3 h-3 text-indigo-500" />
                           <span>{task.timeSpentMinutes || 0}m</span>
                         </div>
+                        {(task.dueDate || task.dueTime) && (
+                          <div className="flex items-center gap-1 font-mono text-[9px] text-slate-500">
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>
+                              {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
+                              {task.dueTime ? ` ${task.dueTime}` : ''}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5 ml-auto">
                           <button
                             type="button"
@@ -1301,7 +1555,7 @@ export default function TaskManagementClient({
                     </div>
 
                     {/* Due Date & Time */}
-                    {task.dueDate && (
+                    {(task.dueDate || task.dueTime) && (
                       <div
                         className={`flex items-center gap-1 font-medium ${
                           isOverdue ? 'text-rose-600 dark:text-rose-400 font-bold' : ''
@@ -1309,7 +1563,7 @@ export default function TaskManagementClient({
                       >
                         <Calendar className="w-3.5 h-3.5 text-slate-400" />
                         <span>
-                          Due: {new Date(task.dueDate).toLocaleDateString('en-IN')}
+                          Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : 'Today'}
                           {task.dueTime ? ` (${task.dueTime})` : ''}
                         </span>
                       </div>
@@ -1434,16 +1688,55 @@ export default function TaskManagementClient({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Due Date
-                  </label>
-                  <input
-                    type="date"
-                    value={selfDueDate}
-                    onChange={(e) => setSelfDueDate(e.target.value)}
-                    className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-sky-500" />
+                        Due Date
+                      </span>
+                      {selfDueDate && (
+                        <button
+                          type="button"
+                          onClick={() => setSelfDueDate('')}
+                          className="text-[10px] text-slate-400 hover:text-rose-500 cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </label>
+                    <DatePickerInput
+                      value={selfDueDate}
+                      onChange={(val) => setSelfDueDate(val)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                      minYear={2024}
+                      maxYear={2035}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-amber-500" />
+                        Due Time
+                      </span>
+                      {selfDueTime && (
+                        <button
+                          type="button"
+                          onClick={() => setSelfDueTime('')}
+                          className="text-[10px] text-slate-400 hover:text-rose-500 cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </label>
+                    <input
+                      type="time"
+                      value={selfDueTime}
+                      onChange={(e) => setSelfDueTime(e.target.value)}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-mono"
+                    />
+                  </div>
                 </div>
 
                 {/* Eisenhower Matrix tags */}
@@ -1453,52 +1746,14 @@ export default function TaskManagementClient({
                       <Zap className="w-4 h-4 text-amber-500" />
                       Priority Tags (Eisenhower Classification)
                     </span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 truncate max-w-full">
-                      {selfIsUrgent && selfIsImportant && 'Q1: Do First (तुरंत करें)'}
-                      {!selfIsUrgent && selfIsImportant && 'Q2: Schedule (योजना बनाएं)'}
-                      {selfIsUrgent && !selfIsImportant && 'Q3: Delegate (सौंपें)'}
-                      {!selfIsUrgent && !selfIsImportant && 'Q4: Eliminate (बाद में)'}
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400">
+                      {selfIsImportant ? '⭐ High Business Impact' : 'Standard Focus'}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    {/* Urgent */}
+                  <div className="pt-1">
                     <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        selfIsUrgent
-                          ? 'bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400 shadow-sm ring-1 ring-rose-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selfIsUrgent}
-                        onChange={(e) => setSelfIsUrgent(e.target.checked)}
-                        className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Urgent 🔥</span>
-                    </label>
-
-                    {/* Not Urgent */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        !selfIsUrgent
-                          ? 'bg-sky-500/10 border-sky-500 text-sky-600 dark:text-sky-400 shadow-sm ring-1 ring-sky-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!selfIsUrgent}
-                        onChange={(e) => setSelfIsUrgent(!e.target.checked)}
-                        className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Not Urgent ⏳</span>
-                    </label>
-
-                    {/* Important */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
                         selfIsImportant
                           ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
                           : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
@@ -1510,24 +1765,7 @@ export default function TaskManagementClient({
                         onChange={(e) => setSelfIsImportant(e.target.checked)}
                         className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
                       />
-                      <span className="whitespace-nowrap">Important ⭐</span>
-                    </label>
-
-                    {/* Not Important */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        !selfIsImportant
-                          ? 'bg-slate-500/10 border-slate-400 text-slate-700 dark:text-slate-300 shadow-sm ring-1 ring-slate-400/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!selfIsImportant}
-                        onChange={(e) => setSelfIsImportant(!e.target.checked)}
-                        className="w-4 h-4 rounded text-slate-600 focus:ring-slate-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Not Important 📋</span>
+                      <span>Mark as High Importance (Key Personal Milestone)</span>
                     </label>
                   </div>
                 </div>
@@ -1586,7 +1824,7 @@ export default function TaskManagementClient({
                 {/* Title */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Task Title *
+                    Task Title <span className="text-rose-500 font-bold">*</span>
                   </label>
                   <input
                     type="text"
@@ -1601,11 +1839,12 @@ export default function TaskManagementClient({
                 {/* Description */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Detailed Instructions / Remarks
+                    Detailed Instructions / Remarks <span className="text-rose-500 font-bold">*</span>
                   </label>
                   <textarea
                     rows={3}
-                    placeholder="Provide detailed instructions, notes, or required deliverables..."
+                    required
+                    placeholder="Provide detailed instructions, notes, or required deliverables (Mandatory)..."
                     value={newDesc}
                     onChange={(e) => setNewDesc(e.target.value)}
                     className="w-full glass-input px-3 py-2 rounded-xl text-xs"
@@ -1616,9 +1855,10 @@ export default function TaskManagementClient({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Priority Level
+                      Priority Level <span className="text-rose-500 font-bold">*</span>
                     </label>
                     <select
+                      required
                       value={newPriority}
                       onChange={(e) => setNewPriority(e.target.value as any)}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900"
@@ -1626,17 +1866,20 @@ export default function TaskManagementClient({
                       <option value="LOW">Low</option>
                       <option value="MEDIUM">Medium</option>
                       <option value="HIGH">High</option>
-                      <option value="URGENT">Urgent 🔥</option>
                     </select>
                   </div>
 
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                        Assign To Staff (Select Multiple) *
+                        Assign To Staff (Select Multiple) <span className="text-rose-500 font-bold">*</span>
                       </label>
-                      <span className="text-[10px] font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/60 px-2 py-0.5 rounded-full border border-sky-200 dark:border-sky-800 shrink-0">
-                        {newAssigneeIds.length} Selected
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                        newAssigneeIds.length > 0
+                          ? 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/60 border-sky-200 dark:border-sky-800'
+                          : 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 border-rose-200 dark:border-rose-800'
+                      }`}>
+                        {newAssigneeIds.length > 0 ? `${newAssigneeIds.length} Selected` : 'Select at least 1 *'}
                       </span>
                     </div>
                     <div className="max-h-28 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
@@ -1649,9 +1892,9 @@ export default function TaskManagementClient({
                               checked={isChecked}
                               onChange={() => {
                                 if (isChecked) {
-                                  if (newAssigneeIds.length > 1) {
-                                    setNewAssigneeIds(newAssigneeIds.filter(id => id !== u.id));
-                                  }
+                                  newAssigneeIds.length > 1
+                                    ? setNewAssigneeIds(newAssigneeIds.filter(id => id !== u.id))
+                                    : setNewAssigneeIds([]);
                                 } else {
                                   setNewAssigneeIds([...newAssigneeIds, u.id]);
                                 }
@@ -1668,26 +1911,29 @@ export default function TaskManagementClient({
                   </div>
                 </div>
 
-                {/* Due Date, Due Time & Optional Case Link */}
+                {/* Due Date, Due Time & Case Link */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Due Date
+                      Due Date <span className="text-rose-500 font-bold">*</span>
                     </label>
-                    <input
-                      type="date"
+                    <DatePickerInput
+                      required
                       value={newDueDate}
-                      onChange={(e) => setNewDueDate(e.target.value)}
+                      onChange={(val) => setNewDueDate(val)}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                      minYear={2024}
+                      maxYear={2035}
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Due Time (hh:mm)
+                      Due Time (hh:mm) <span className="text-rose-500 font-bold">*</span>
                     </label>
                     <input
                       type="time"
+                      required
                       value={newDueTime}
                       onChange={(e) => setNewDueTime(e.target.value)}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs"
@@ -1696,14 +1942,15 @@ export default function TaskManagementClient({
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Link to Loan Case
+                      Link to Loan Case <span className="text-rose-500 font-bold">*</span>
                     </label>
                     <select
+                      required={activeCases.length > 0}
                       value={newCaseId}
                       onChange={(e) => setNewCaseId(e.target.value)}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
                     >
-                      <option value="">No Case Linked</option>
+                      <option value="">{activeCases.length > 0 ? '-- Select Loan Case * --' : 'No active cases'}</option>
                       {activeCases.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.clientName} ({c.product})
@@ -1720,52 +1967,14 @@ export default function TaskManagementClient({
                       <Zap className="w-4 h-4 text-amber-500" />
                       Priority Tags (Eisenhower Classification)
                     </span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 truncate max-w-full">
-                      {newIsUrgent && newIsImportant && 'Q1: Do First (तुरंत करें)'}
-                      {!newIsUrgent && newIsImportant && 'Q2: Schedule (योजना बनाएं)'}
-                      {newIsUrgent && !newIsImportant && 'Q3: Delegate (सौंपें)'}
-                      {!newIsUrgent && !newIsImportant && 'Q4: Eliminate (बाद में)'}
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400">
+                      {newIsImportant ? '⭐ High Business Impact' : 'Standard Focus'}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    {/* Urgent */}
+                  <div className="pt-1">
                     <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        newIsUrgent
-                          ? 'bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400 shadow-sm ring-1 ring-rose-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={newIsUrgent}
-                        onChange={(e) => setNewIsUrgent(e.target.checked)}
-                        className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Urgent 🔥</span>
-                    </label>
-
-                    {/* Not Urgent */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        !newIsUrgent
-                          ? 'bg-sky-500/10 border-sky-500 text-sky-600 dark:text-sky-400 shadow-sm ring-1 ring-sky-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!newIsUrgent}
-                        onChange={(e) => setNewIsUrgent(!e.target.checked)}
-                        className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Not Urgent ⏳</span>
-                    </label>
-
-                    {/* Important */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
                         newIsImportant
                           ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
                           : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
@@ -1777,24 +1986,7 @@ export default function TaskManagementClient({
                         onChange={(e) => setNewIsImportant(e.target.checked)}
                         className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
                       />
-                      <span className="whitespace-nowrap">Important ⭐</span>
-                    </label>
-
-                    {/* Not Important */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        !newIsImportant
-                          ? 'bg-slate-500/10 border-slate-400 text-slate-700 dark:text-slate-300 shadow-sm ring-1 ring-slate-400/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!newIsImportant}
-                        onChange={(e) => setNewIsImportant(!e.target.checked)}
-                        className="w-4 h-4 rounded text-slate-600 focus:ring-slate-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Not Important 📋</span>
+                      <span>Mark as High Importance (Key Business Milestone)</span>
                     </label>
                   </div>
                 </div>
@@ -2311,7 +2503,6 @@ export default function TaskManagementClient({
                       <option value="LOW">Low</option>
                       <option value="MEDIUM">Medium</option>
                       <option value="HIGH">High</option>
-                      <option value="URGENT">Urgent 🔥</option>
                     </select>
                   </div>
 
@@ -2404,11 +2595,12 @@ export default function TaskManagementClient({
                         </button>
                       )}
                     </label>
-                    <input
-                      type="date"
+                    <DatePickerInput
                       value={editDueDate}
-                      onChange={(e) => setEditDueDate(e.target.value)}
+                      onChange={(val) => setEditDueDate(val)}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                      minYear={2024}
+                      maxYear={2035}
                     />
                   </div>
 
@@ -2504,52 +2696,14 @@ export default function TaskManagementClient({
                       <Zap className="w-4 h-4 text-amber-500" />
                       Priority Tags (Eisenhower Classification)
                     </span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 truncate max-w-full">
-                      {editIsUrgent && editIsImportant && 'Q1: Do First (तुरंत करें)'}
-                      {!editIsUrgent && editIsImportant && 'Q2: Schedule (योजना बनाएं)'}
-                      {editIsUrgent && !editIsImportant && 'Q3: Delegate (सौंपें)'}
-                      {!editIsUrgent && !editIsImportant && 'Q4: Eliminate (बाद में)'}
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400">
+                      {editIsImportant ? '⭐ High Business Impact' : 'Standard Focus'}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    {/* Urgent */}
+                  <div className="pt-1">
                     <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        editIsUrgent
-                          ? 'bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400 shadow-sm ring-1 ring-rose-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={editIsUrgent}
-                        onChange={(e) => setEditIsUrgent(e.target.checked)}
-                        className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Urgent 🔥</span>
-                    </label>
-
-                    {/* Not Urgent */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        !editIsUrgent
-                          ? 'bg-sky-500/10 border-sky-500 text-sky-600 dark:text-sky-400 shadow-sm ring-1 ring-sky-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!editIsUrgent}
-                        onChange={(e) => setEditIsUrgent(!e.target.checked)}
-                        className="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Not Urgent ⏳</span>
-                    </label>
-
-                    {/* Important */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
                         editIsImportant
                           ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
                           : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
@@ -2561,24 +2715,7 @@ export default function TaskManagementClient({
                         onChange={(e) => setEditIsImportant(e.target.checked)}
                         className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
                       />
-                      <span className="whitespace-nowrap">Important ⭐</span>
-                    </label>
-
-                    {/* Not Important */}
-                    <label
-                      className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        !editIsImportant
-                          ? 'bg-slate-500/10 border-slate-400 text-slate-700 dark:text-slate-300 shadow-sm ring-1 ring-slate-400/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!editIsImportant}
-                        onChange={(e) => setEditIsImportant(!e.target.checked)}
-                        className="w-4 h-4 rounded text-slate-600 focus:ring-slate-500 cursor-pointer shrink-0"
-                      />
-                      <span className="whitespace-nowrap">Not Important 📋</span>
+                      <span>Mark as High Importance (Key Business Milestone)</span>
                     </label>
                   </div>
                 </div>

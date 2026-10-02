@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import {
   Search,
@@ -29,6 +29,7 @@ import { useRouter } from 'next/navigation';
 import { exportToCSV } from '@/lib/excel-export';
 import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 import { INDIAN_STATES, getCitiesForIndianState } from '@/lib/india-data';
+import DatePickerInput from './DatePickerInput';
 
 export interface CoApplicantInfo {
   name: string;
@@ -104,9 +105,11 @@ export default function CaseListTable({
 }: CaseListTableProps) {
   const router = useRouter();
   const availableStatuses = caseStatuses && caseStatuses.length > 0 ? caseStatuses : DEFAULT_STATUSES;
+  const userMap = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [propertyFilter, setPropertyFilter] = useState('ALL');
+  const [assigneeFilter, setAssigneeFilter] = useState('ALL');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -141,15 +144,30 @@ export default function CaseListTable({
   const operationUsers = users.filter((u) => u.role === 'OPERATION' || u.role === 'TEAM_MEMBER');
 
   const filteredCases = cases.filter((c) => {
+    const searchLower = searchTerm.toLowerCase();
+    const opsUser = c.operationUserId ? (userMap.get(c.operationUserId)?.name || '').toLowerCase() : '';
+    const salesUser = c.salesUserId ? (userMap.get(c.salesUserId)?.name || '').toLowerCase() : '';
+    const channelUser = c.channelUserId ? (userMap.get(c.channelUserId)?.name || '').toLowerCase() : '';
+    const teamName = (c.assignedTeamName || '').toLowerCase();
+
     const matchesSearch =
-      c.clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.clientName.toLowerCase().includes(searchLower) ||
       c.mobile.includes(searchTerm) ||
-      (c.email && c.email.toLowerCase().includes(searchTerm.toLowerCase()));
+      (c.email && c.email.toLowerCase().includes(searchLower)) ||
+      opsUser.includes(searchLower) ||
+      salesUser.includes(searchLower) ||
+      channelUser.includes(searchLower) ||
+      teamName.includes(searchLower);
 
     const matchesStatus = statusFilter === 'ALL' || c.status === statusFilter;
     const matchesProperty = propertyFilter === 'ALL' || c.propertyType === propertyFilter;
+    const matchesAssignee =
+      assigneeFilter === 'ALL' ||
+      c.operationUserId === assigneeFilter ||
+      c.salesUserId === assigneeFilter ||
+      c.channelUserId === assigneeFilter;
 
-    return matchesSearch && matchesStatus && matchesProperty;
+    return matchesSearch && matchesStatus && matchesProperty && matchesAssignee;
   });
 
   const handleExportFilteredCases = () => {
@@ -166,7 +184,10 @@ export default function CaseListTable({
       'Property Scope': c.propertyType,
       'Co-Applicants Count': c.coApplicantCount,
       'Processing Stage': `Stage ${c.stage}`,
-      'Overall Status': c.status,
+      'Case Filing Status': c.status,
+      'Assigned Operations Lead': (c.operationUserId && userMap.get(c.operationUserId)?.name) || 'N/A',
+      'Assigned Sales Lead': (c.salesUserId && userMap.get(c.salesUserId)?.name) || 'N/A',
+      'Channel Partner': (c.channelUserId && userMap.get(c.channelUserId)?.name) || 'N/A',
       'Assigned Team': c.assignedTeamName,
       'Documents Received': `${c.receivedCount}/${c.checklistCount}`,
       'Checklist Progress (%)': c.checklistCount > 0 ? `${Math.round((c.receivedCount / c.checklistCount) * 100)}%` : '0%',
@@ -257,7 +278,7 @@ export default function CaseListTable({
           email: '',
           state: states[0]?.name || '',
           dob: '',
-          incomeRequired: true,
+          incomeRequired: false,
         });
       }
     } else {
@@ -370,30 +391,30 @@ export default function CaseListTable({
       )}
 
       {/* Controls: Search & Filter & Excel Export */}
-      <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row gap-3 justify-between items-center shadow-sm">
+      <div className="glass-panel p-2.5 sm:p-3 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shadow-sm overflow-x-auto">
         {/* Search */}
-        <div className="relative w-full md:w-80">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+        <div className="relative min-w-[200px] max-w-[280px] flex-1 shrink-0">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
           <input
             type="text"
             placeholder="Search by client name, mobile, email..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full glass-input pl-9 pr-4 py-2 rounded-xl text-xs"
+            className="w-full glass-input pl-8 pr-3 py-1.5 rounded-xl text-xs"
           />
         </div>
 
-        {/* Filters & Export */}
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-500 font-medium">Status:</span>
+        {/* Filters & Export & Add Case (All on single line) */}
+        <div className="flex items-center gap-2 shrink-0 flex-nowrap">
+          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs shrink-0">
+            <Filter className="w-3 h-3 text-slate-400" />
+            <span className="text-slate-500 font-medium">Case Filing Status:</span>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="bg-transparent text-sky-600 dark:text-sky-400 font-semibold focus:outline-none"
+              className="bg-transparent text-sky-600 dark:text-sky-400 font-semibold focus:outline-none cursor-pointer"
             >
-              <option value="ALL">All Statuses</option>
+              <option value="ALL">All Filing Statuses</option>
               {availableStatuses.map((st) => (
                 <option key={st.id || st.name} value={st.name}>
                   {st.name}
@@ -402,12 +423,12 @@ export default function CaseListTable({
             </select>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs shrink-0">
             <span className="text-slate-500 font-medium">Property:</span>
             <select
               value={propertyFilter}
               onChange={(e) => setPropertyFilter(e.target.value)}
-              className="bg-transparent text-sky-600 dark:text-sky-400 font-semibold focus:outline-none"
+              className="bg-transparent text-sky-600 dark:text-sky-400 font-semibold focus:outline-none cursor-pointer"
             >
               <option value="ALL">All Types</option>
               <option value="Resale">Resale</option>
@@ -416,16 +437,34 @@ export default function CaseListTable({
             </select>
           </div>
 
+          {userRole === 'SUPER_ADMIN' && users.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs shrink-0">
+              <span className="text-slate-500 font-medium">Assignee:</span>
+              <select
+                value={assigneeFilter}
+                onChange={(e) => setAssigneeFilter(e.target.value)}
+                className="bg-transparent text-sky-600 dark:text-sky-400 font-semibold focus:outline-none max-w-[120px] cursor-pointer"
+              >
+                <option value="ALL">All Staff</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} ({u.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <button
             onClick={handleExportFilteredCases}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-all shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-all shadow-sm shrink-0 whitespace-nowrap"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
           </button>
 
           <Link
             href="/cases/new"
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-all shadow"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-all shadow shrink-0 whitespace-nowrap"
           >
             <PlusCircle className="w-3.5 h-3.5" /> Add Case
           </Link>
@@ -435,23 +474,24 @@ export default function CaseListTable({
       {/* Cases Table */}
       <div className="glass-panel rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-left text-xs min-w-[900px]">
             <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 bg-slate-50/50 dark:bg-slate-900/50 font-semibold uppercase tracking-wider">
-                <th className="py-3 px-4">Client Details</th>
-                <th className="py-3 px-4">Product / Profile</th>
-                <th className="py-3 px-4">Property</th>
-                <th className="py-3 px-4 text-center">Co-Applicants</th>
-                <th className="py-3 px-4">Timeline / Age</th>
-                <th className="py-3 px-4 text-center">Stage</th>
-                <th className="py-3 px-4 text-center">Checklist Progress</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 bg-slate-50/50 dark:bg-slate-900/50 font-semibold uppercase tracking-wider text-[11px]">
+                <th className="py-2.5 px-3">Client Details</th>
+                <th className="py-2.5 px-3">Product / Profile</th>
+                <th className="py-2.5 px-2.5">Property</th>
+                <th className="py-2.5 px-2 text-center">Co-Applicants</th>
+                <th className="py-2.5 px-2.5">Timeline / Age</th>
+                <th className="py-2.5 px-2.5">Assigned To</th>
+                <th className="py-2.5 px-2 text-center">Stage</th>
+                <th className="py-2.5 px-2.5 text-center">Checklist Progress</th>
+                <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {filteredCases.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                  <td colSpan={9} className="py-8 text-center text-slate-500">
                     No cases match your filters.
                   </td>
                 </tr>
@@ -462,37 +502,39 @@ export default function CaseListTable({
 
                   return (
                     <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-4 px-4">
-                        <Link href={`/cases/${c.id}`} className="font-bold text-slate-900 dark:text-white hover:text-sky-600 text-xs">
+                      <td className="py-3 px-3">
+                        <Link href={`/cases/${c.id}`} className="font-bold text-slate-900 dark:text-white hover:text-sky-600 text-xs line-clamp-1">
                           {c.clientName}
                         </Link>
                         <div className="text-[11px] text-slate-500 font-mono mt-0.5">{c.mobile}</div>
-                        {c.email && <div className="text-[10px] text-slate-400">{c.email}</div>}
+                        {c.email && <div className="text-[10px] text-slate-400 truncate max-w-[130px]">{c.email}</div>}
                         {(c.clientCity || c.clientState) && (
-                          <div className="text-[10px] text-indigo-500 dark:text-indigo-400 font-medium mt-0.5">
+                          <div className="text-[10px] text-indigo-500 dark:text-indigo-400 font-medium mt-0.5 truncate max-w-[140px]">
                             📍 {c.clientCity ? `${c.clientCity}, ${c.clientState || ''}` : c.clientState}
                           </div>
                         )}
                       </td>
-                      <td className="py-4 px-4">
-                        <span className="font-semibold text-sky-600 dark:text-sky-400">{c.product}</span>
-                        <span className="block text-[10px] text-slate-500">{c.customerType}</span>
+                      <td className="py-3 px-3">
+                        <span className="font-semibold text-sky-600 dark:text-sky-400 block truncate max-w-[120px]">{c.product}</span>
+                        <span className="text-[10px] text-slate-500 block truncate max-w-[120px]">{c.customerType}</span>
                       </td>
-                      <td className="py-4 px-4 text-slate-700 dark:text-slate-300 font-medium">{c.propertyType}</td>
-                      <td className="py-4 px-4 text-center font-bold text-slate-700 dark:text-slate-300">
+                      <td className="py-3 px-2.5 text-slate-700 dark:text-slate-300 font-medium text-[11px] leading-snug">
+                        <span className="block max-w-[110px] break-words">{c.propertyType}</span>
+                      </td>
+                      <td className="py-3 px-2 text-center font-bold text-slate-700 dark:text-slate-300">
                         {c.coApplicantCount > 0 ? (
-                          <span className="px-2 py-0.5 rounded bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/20">
+                          <span className="px-1.5 py-0.5 rounded bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/20 text-[10px] whitespace-nowrap">
                             {c.coApplicantCount} Co-App
                           </span>
                         ) : (
-                          <span className="text-slate-400 font-normal">Sole Applicant</span>
+                          <span className="text-slate-400 font-normal text-[10px] whitespace-nowrap">Sole Applicant</span>
                         )}
                       </td>
-                      <td className="py-4 px-4 whitespace-nowrap">
-                        <div className="flex flex-col gap-1">
+                      <td className="py-3 px-2.5">
+                        <div className="flex flex-col gap-1 whitespace-nowrap">
                           {/* Intake Date */}
-                          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
-                            <Calendar className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                          <div className="flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                            <Calendar className="w-3 h-3 text-sky-500 shrink-0" />
                             <span>
                               {new Date(c.createdAt).toLocaleDateString('en-IN', {
                                 day: 'numeric',
@@ -515,7 +557,7 @@ export default function CaseListTable({
                               let badgeClass = '';
 
                               if (diffDays === 0) {
-                                badgeText = diffHours <= 1 ? 'Intake: Today (Fresh)' : `Intake: Today (${diffHours}h ago)`;
+                                badgeText = diffHours <= 1 ? 'Fresh (Today)' : `Today (${diffHours}h)`;
                                 badgeClass = 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30';
                               } else if (diffDays === 1) {
                                 badgeText = '1 day old';
@@ -532,43 +574,78 @@ export default function CaseListTable({
                               }
 
                               return (
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${badgeClass}`}>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold border ${badgeClass}`}
+                                  title={c.updatedAt ? `Updated: ${new Date(c.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : undefined}
+                                >
                                   ⏱ {badgeText}
                                 </span>
                               );
                             })()}
                           </div>
-
-                          {/* Last Modified */}
-                          {c.updatedAt && (
-                            <div className="flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium">
-                              <Clock className="w-3 h-3 shrink-0" />
-                              <span>
-                                Updated: {new Date(c.updatedAt).toLocaleDateString('en-IN', {
-                                  day: 'numeric',
-                                  month: 'short',
-                                })}, {new Date(c.updatedAt).toLocaleTimeString('en-IN', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}
+                        </div>
+                      </td>
+                      {/* Assigned Staff Column */}
+                      <td className="py-3 px-2.5">
+                        <div className="flex flex-col gap-1 text-[11px] whitespace-nowrap">
+                          {/* Ops Lead */}
+                          {c.operationUserId && userMap.get(c.operationUserId) ? (
+                            <div className="flex items-center gap-1" title={`Operations: ${userMap.get(c.operationUserId)?.name}`}>
+                              <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-purple-50 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shrink-0">
+                                Ops
                               </span>
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
+                                {userMap.get(c.operationUserId)?.name}
+                              </span>
+                            </div>
+                          ) : null}
+
+                          {/* Sales Lead */}
+                          {c.salesUserId && userMap.get(c.salesUserId) ? (
+                            <div className="flex items-center gap-1" title={`Sales: ${userMap.get(c.salesUserId)?.name}`}>
+                              <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shrink-0">
+                                Sales
+                              </span>
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
+                                {userMap.get(c.salesUserId)?.name}
+                              </span>
+                            </div>
+                          ) : null}
+
+                          {/* Channel Partner */}
+                          {c.channelUserId && userMap.get(c.channelUserId) ? (
+                            <div className="flex items-center gap-1" title={`Channel: ${userMap.get(c.channelUserId)?.name}`}>
+                              <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 shrink-0">
+                                CP
+                              </span>
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
+                                {userMap.get(c.channelUserId)?.name}
+                              </span>
+                            </div>
+                          ) : null}
+
+                          {/* Fallback if no specific staff is assigned */}
+                          {!c.operationUserId && !c.salesUserId && !c.channelUserId && (
+                            <div className="text-[10px] text-slate-400 dark:text-slate-500 italic truncate max-w-[100px]" title={c.assignedTeamName ? `Team: ${c.assignedTeamName}` : 'Unassigned'}>
+                              {c.assignedTeamName ? `Team: ${c.assignedTeamName}` : 'Unassigned'}
                             </div>
                           )}
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-center">
-                        <span className="inline-block px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 font-bold text-[10px] border border-indigo-200 dark:border-indigo-500/30">
+                      <td className="py-3 px-2 text-center whitespace-nowrap">
+                        <span className="inline-block px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 font-bold text-[10px] border border-indigo-200 dark:border-indigo-500/30">
                           Stage {c.stage}
                         </span>
                       </td>
-                      <td className="py-4 px-4">
+                      <td className="py-3 px-2.5">
                         <div className="flex flex-col items-center">
                           {(() => {
                             const statusObj = availableStatuses.find((s) => s.name === c.status);
                             const statusColor = statusObj?.color || '#3b82f6';
                             return (
                               <span
-                                className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold mb-1.5 border"
+                                className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold mb-1 border max-w-[115px] truncate text-center"
+                                title={c.status}
                                 style={{
                                   backgroundColor: `${statusColor}18`,
                                   color: statusColor,
@@ -579,7 +656,7 @@ export default function CaseListTable({
                               </span>
                             );
                           })()}
-                          <div className="w-28 bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                          <div className="w-20 bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
                             <div
                               className={`h-1.5 rounded-full ${
                                 progressPct === 100 ? 'bg-emerald-500' : 'bg-sky-500'
@@ -587,28 +664,28 @@ export default function CaseListTable({
                               style={{ width: `${progressPct}%` }}
                             />
                           </div>
-                          <span className="text-[9px] text-slate-500 mt-1">
+                          <span className="text-[9px] text-slate-500 mt-0.5">
                             {c.receivedCount}/{c.checklistCount} ({progressPct}%)
                           </span>
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                      <td className="py-3 px-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1">
                           {/* Edit Details Button */}
                           <button
                             onClick={() => handleOpenEdit(c)}
                             title="Edit Case Intake Details"
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-600/20 hover:bg-emerald-100 dark:hover:bg-emerald-600/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 font-semibold transition-colors text-xs"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-600/20 hover:bg-emerald-100 dark:hover:bg-emerald-600/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 font-semibold transition-colors text-[11px]"
                           >
-                            <Edit3 className="w-3.5 h-3.5" /> Edit
+                            <Edit3 className="w-3 h-3" /> Edit
                           </button>
 
                           {/* Open Case Detail View */}
                           <Link
                             href={`/cases/${c.id}`}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-50 dark:bg-sky-600/20 hover:bg-sky-100 dark:hover:bg-sky-600/40 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/30 font-semibold transition-colors text-xs"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-sky-50 dark:bg-sky-600/20 hover:bg-sky-100 dark:hover:bg-sky-600/40 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/30 font-semibold transition-colors text-[11px]"
                           >
-                            Open <ExternalLink className="w-3.5 h-3.5" />
+                            Open <ExternalLink className="w-3 h-3" />
                           </Link>
 
                           {/* Delete Button: ONLY visible to SUPER_ADMIN */}
@@ -617,16 +694,16 @@ export default function CaseListTable({
                               onClick={() => handleDelete(c.id, c.clientName)}
                               disabled={deletingId === c.id}
                               title="Delete Case (Super Admin Only)"
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                              className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           ) : (
                             <span
                               title="Delete restricted to Super Admin"
-                              className="p-1.5 text-slate-700 cursor-not-allowed opacity-50"
+                              className="p-1 text-slate-300 dark:text-slate-700 cursor-not-allowed opacity-50"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </span>
                           )}
                         </div>
@@ -722,11 +799,12 @@ export default function CaseListTable({
                     <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Date of Birth (DOB)
                     </label>
-                    <input
-                      type="date"
+                    <DatePickerInput
                       value={editFormData.clientDob}
-                      onChange={(e) => setEditFormData({ ...editFormData, clientDob: e.target.value })}
+                      onChange={(val) => setEditFormData({ ...editFormData, clientDob: val })}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                      minYear={1930}
+                      maxYear={2026}
                     />
                   </div>
 
@@ -1040,11 +1118,12 @@ export default function CaseListTable({
                             <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
                               Date of Birth (DOB)
                             </label>
-                            <input
-                              type="date"
+                            <DatePickerInput
                               value={coApp.dob || ''}
-                              onChange={(e) => handleCoApplicantFieldChange(idx, 'dob', e.target.value)}
+                              onChange={(val) => handleCoApplicantFieldChange(idx, 'dob', val)}
                               className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs"
+                              minYear={1930}
+                              maxYear={2026}
                             />
                           </div>
                         </div>
@@ -1078,7 +1157,7 @@ export default function CaseListTable({
 
                   <div>
                     <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Overall Status
+                      Case Filing Status
                     </label>
                     <select
                       value={editFormData.status}

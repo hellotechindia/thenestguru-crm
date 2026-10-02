@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { exportToCSV } from '@/lib/excel-export';
 import { isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
+import DatePickerInput from './DatePickerInput';
 
 interface ChecklistItem {
   id: string;
@@ -1415,11 +1416,12 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
             <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Date of Joining Current Company
             </label>
-            <input
-              type="date"
+            <DatePickerInput
               value={personalInfo.dojCompany}
-              onChange={(e) => setPersonalInfo({ ...personalInfo, dojCompany: e.target.value })}
+              onChange={(val) => setPersonalInfo({ ...personalInfo, dojCompany: val })}
               className="w-full glass-input px-3 py-2 rounded-xl"
+              minYear={1950}
+              maxYear={2035}
             />
           </div>
 

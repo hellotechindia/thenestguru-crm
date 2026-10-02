@@ -30,6 +30,7 @@ async function main() {
     { name: 'Public Limited Company', description: 'Publicly listed or unlisted company' },
     { name: 'Limited Liability Partnership (LLP)', description: 'LLP registered under MCA' },
     { name: 'Hindu Undivided Family (HUF)', description: 'HUF represented by Karta' },
+    { name: 'Housewife', description: 'Non-earning homemaker co-borrower' },
   ];
 
   for (const ent of customerEntities) {

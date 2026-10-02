@@ -18,14 +18,18 @@ import {
   Trash2,
   Link2,
   Sparkles,
+  AtSign,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { signOut } from 'next-auth/react';
-import { isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
+import { isValidName, sanitizeToAlphabetsOnly, isValidEmail } from '@/lib/validations';
 
 interface ProfileEditProps {
   user: {
     id: string;
     name: string;
+    username?: string | null;
     email: string;
     role: string;
     avatarUrl?: string | null;
@@ -36,8 +40,11 @@ interface ProfileEditProps {
 export default function ProfileEditClient({ user }: ProfileEditProps) {
   const router = useRouter();
   const [name, setName] = useState(user.name);
+  const [username, setUsername] = useState(user.username || '');
+  const [email, setEmail] = useState(user.email || '');
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -72,9 +79,16 @@ export default function ProfileEditClient({ user }: ProfileEditProps) {
       return;
     }
 
+    if (email && !isValidEmail(email)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
     setLoading(true);
     const res = await updateUserProfileAction({
       name,
+      username: username ? username.trim().toLowerCase() : undefined,
+      email: email ? email.trim().toLowerCase() : undefined,
       password: password || undefined,
       avatarUrl: avatarUrl || null,
     });
@@ -232,20 +246,37 @@ export default function ProfileEditClient({ user }: ProfileEditProps) {
               required
               value={name}
               onChange={(e) => setName(sanitizeToAlphabetsOnly(e.target.value))}
+              placeholder="e.g. Ramesh Sharma"
               className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
             />
           </div>
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address (Read-only)</label>
+          <label className="block text-xs font-semibold text-slate-300 mb-1">Username (Login ID)</label>
+          <div className="relative">
+            <AtSign className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))}
+              placeholder="e.g. ramesh_nestguru"
+              className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm font-mono text-sky-400"
+            />
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">Unique login username for signing in.</p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
           <div className="relative">
             <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
             <input
               type="email"
-              disabled
-              value={user.email}
-              className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm opacity-60 cursor-not-allowed bg-slate-900"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e.g. user@thenestguru.com"
+              className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
             />
           </div>
         </div>
@@ -257,12 +288,20 @@ export default function ProfileEditClient({ user }: ProfileEditProps) {
           <div className="relative">
             <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
             <input
-              type="password"
-              placeholder="New password (optional)"
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Enter new password (optional)"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full glass-input pl-9 pr-4 py-2.5 rounded-xl text-sm"
+              className="w-full glass-input pl-9 pr-10 py-2.5 rounded-xl text-sm"
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-3 text-slate-400 hover:text-white transition"
+              title={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
           </div>
         </div>
 

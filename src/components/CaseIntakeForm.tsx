@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 import { INDIAN_STATES, getCitiesForIndianState } from '@/lib/india-data';
+import DatePickerInput from '@/components/DatePickerInput';
 
 export interface CoApplicantEntry {
   name: string;
@@ -70,7 +71,7 @@ export default function CaseIntakeForm({
     clientState: defaultState,
     clientCity: '',
     customerType: defaultCustomerType,
-    incomeTypes: (profiles && profiles.length > 0) ? [profiles[0].name] : ['Salaried'],
+    incomeTypes: [] as string[],
     propertyType: defaultPropertyScope,
     propertyState: defaultState,
     propertyCity: '',
@@ -108,9 +109,9 @@ export default function CaseIntakeForm({
         if (parsed.formData && (parsed.formData.clientName || parsed.formData.mobile)) {
           setFormData({
             ...parsed.formData,
-            incomeTypes: Array.isArray(parsed.formData.incomeTypes) && parsed.formData.incomeTypes.length > 0
+            incomeTypes: Array.isArray(parsed.formData.incomeTypes)
               ? parsed.formData.incomeTypes
-              : ['Salaried'],
+              : [],
           });
           if (parsed.coApplicants) setCoApplicants(parsed.coApplicants);
           setDraftSavedTime('Draft restored');
@@ -153,7 +154,6 @@ export default function CaseIntakeForm({
     setFormData(prev => {
       const current = prev.incomeTypes || [];
       if (current.includes(type)) {
-        if (current.length === 1) return prev; // keep at least one
         return { ...prev, incomeTypes: current.filter(t => t !== type) };
       } else {
         return { ...prev, incomeTypes: [...current, type] };
@@ -179,8 +179,8 @@ export default function CaseIntakeForm({
             state: formData.clientState || (states[0]?.name || ''),
             city: '',
             customerType: defaultCustomerType,
-            incomeTypes: (profiles && profiles.length > 0) ? [profiles[0].name] : ['Salaried'],
-            incomeRequired: true,
+            incomeTypes: [],
+            incomeRequired: false,
           });
         }
       } else {
@@ -204,12 +204,26 @@ export default function CaseIntakeForm({
     const updated = [...coApplicants];
     const co = updated[index];
     const current = co.incomeTypes || [];
+    let nextIncomeTypes: string[];
+
     if (current.includes(incomeType)) {
-      if (current.length === 1) return;
-      updated[index] = { ...co, incomeTypes: current.filter(t => t !== incomeType) };
+      nextIncomeTypes = current.filter((t) => t !== incomeType);
     } else {
-      updated[index] = { ...co, incomeTypes: [...current, incomeType] };
+      if (incomeType.toLowerCase().includes('housewife')) {
+        nextIncomeTypes = ['Housewife'];
+      } else {
+        nextIncomeTypes = [...current.filter((t) => !t.toLowerCase().includes('housewife')), incomeType];
+      }
     }
+
+    const isHousewife = nextIncomeTypes.some((t) => t.toLowerCase().includes('housewife'));
+    const hasEarningIncome = nextIncomeTypes.length > 0 && !isHousewife;
+
+    updated[index] = {
+      ...co,
+      incomeTypes: nextIncomeTypes,
+      incomeRequired: hasEarningIncome,
+    };
     setCoApplicants(updated);
   };
 
@@ -447,17 +461,14 @@ export default function CaseIntakeForm({
 
           <div>
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-              Date of Birth (Birthday)
+              Date of Birth (Birthday - DD/MM/YYYY)
             </label>
-            <div className="relative">
-              <Calendar className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-              <input
-                type="date"
-                value={formData.clientDob}
-                onChange={(e) => setFormData({ ...formData, clientDob: e.target.value })}
-                className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
-              />
-            </div>
+            <DatePickerInput
+              value={formData.clientDob}
+              onChange={(iso) => setFormData({ ...formData, clientDob: iso })}
+              placeholder="DD/MM/YYYY"
+              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+            />
           </div>
 
           <div>
@@ -521,10 +532,12 @@ export default function CaseIntakeForm({
             Income Profile (Select Multiple if Applicable) *
           </label>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {((profiles && profiles.length > 0)
-              ? profiles.map((p) => p.name)
-              : ['Salaried', 'Self Employed Professional', 'Business / Non-Professional', 'Rental Income']
-            ).map((inc) => {
+            {(() => {
+              const baseList = (profiles && profiles.length > 0)
+                ? profiles.map((p) => p.name)
+                : ['Salaried', 'Self Employed Professional', 'Business / Non-Professional', 'Rental Income'];
+              return baseList.includes('Housewife') ? baseList : [...baseList, 'Housewife'];
+            })().map((inc) => {
               const checked = (formData.incomeTypes || []).includes(inc);
               return (
                 <label
@@ -743,9 +756,12 @@ export default function CaseIntakeForm({
               const coStateCities = Array.from(new Set([...coDbCities, ...getCitiesForIndianState(activeCoState)]));
               const coCityListId = `coCityList_${activeIdx}`;
 
-              const availableIncomeProfiles = (profiles && profiles.length > 0)
+              const baseProfiles = (profiles && profiles.length > 0)
                 ? profiles.map((p) => p.name)
                 : ['Salaried', 'Self Employed Professional', 'Business / Non-Professional', 'Rental Income'];
+              const availableIncomeProfiles = baseProfiles.includes('Housewife')
+                ? baseProfiles
+                : [...baseProfiles, 'Housewife'];
 
               return (
                 <div className="p-5 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-4">
@@ -860,12 +876,12 @@ export default function CaseIntakeForm({
 
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                        Date of Birth (Birthday)
+                        Date of Birth (DD/MM/YYYY)
                       </label>
-                      <input
-                        type="date"
+                      <DatePickerInput
                         value={activeCo.dob}
-                        onChange={(e) => handleCoApplicantChange(activeIdx, 'dob', e.target.value)}
+                        onChange={(iso) => handleCoApplicantChange(activeIdx, 'dob', iso)}
+                        placeholder="DD/MM/YYYY"
                         className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
                       />
                     </div>

@@ -33,14 +33,14 @@ export default async function AdminCaseStatusesPage() {
               <FileCheck2 className="w-3.5 h-3.5" /> Checklist Matrix
             </Link>
             <ChevronRight className="w-3 h-3" />
-            <span className="text-slate-700 dark:text-slate-200 font-bold">Overall Case Statuses</span>
+            <span className="text-slate-700 dark:text-slate-200 font-bold">Case Filing Statuses</span>
           </div>
           <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center gap-3">
             <Tag className="w-7 h-7 text-amber-500" />
-            Overall Case Statuses Master
+            Case Filing Statuses Master
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Dynamically configure case drop-down statuses, custom color branding, display order, and pipeline categories.
+            Dynamically configure case filing drop-down statuses, custom color branding, display order, and pipeline categories.
           </p>
         </div>
       </div>

@@ -6,8 +6,8 @@ export default withAuth(
     const token = req.nextauth.token;
     const pathname = req.nextUrl.pathname;
 
-    // Security guard: Block external CHANNEL partners from accessing any /admin routes
-    if (pathname.startsWith('/admin') && token?.role === 'CHANNEL') {
+    // Security guard: Strictly restrict all /admin routes to SUPER_ADMIN only
+    if (pathname.startsWith('/admin') && token?.role !== 'SUPER_ADMIN') {
       return NextResponse.redirect(new URL('/dashboard', req.url));
     }
 

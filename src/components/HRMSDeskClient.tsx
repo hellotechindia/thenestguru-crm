@@ -22,8 +22,18 @@ import {
   UserCheck,
   Phone,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Sun,
+  Moon,
+  Star,
+  Compass,
+  Info,
+  Edit3,
+  Lock,
+  Plus
 } from 'lucide-react';
+import DatePickerInput from './DatePickerInput';
+import { getPanchangForDate, PanchangDayInfo } from '@/lib/panchang';
 import { 
   getAllStaffAttendanceTodayAction, 
   getStaffMonthlyAttendanceAction, 
@@ -32,7 +42,10 @@ import {
   reviewLeaveAction, 
   getHolidaysAction,
   recordAdminLeaveAction,
-  deleteLeaveAction
+  deleteLeaveAction,
+  createHolidayAction,
+  updateHolidayAction,
+  deleteHolidayAction
 } from '@/app/actions';
 import { formatTimeIST, formatDuration } from '@/lib/ist-time';
 import { isValid10DigitPhone, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
@@ -61,6 +74,8 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
   // Month Calendar View State
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [calendarStaffFilter, setCalendarStaffFilter] = useState<string>('ALL');
+  const [calendarDisplayMode, setCalendarDisplayMode] = useState<'COMBINED' | 'PANCHANG' | 'ATTENDANCE'>('COMBINED');
+  const [selectedPanchangDay, setSelectedPanchangDay] = useState<PanchangDayInfo | null>(null);
 
   // Live Attendance state
   const [todaySummary, setTodaySummary] = useState<any>(null);
@@ -263,6 +278,112 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
       loadLeaves();
     } else {
       alert(res.error || 'Failed to delete leave record.');
+    }
+  };
+
+  // Super Admin Holiday Management State & Handlers
+  const [isHolidayModalOpen, setIsHolidayModalOpen] = useState(false);
+  const [editingHolidayId, setEditingHolidayId] = useState<string | null>(null);
+  const [holidayForm, setHolidayForm] = useState({
+    name: '',
+    date: '',
+    isOptional: false,
+  });
+  const [holidayLoading, setHolidayLoading] = useState(false);
+  const [holidayError, setHolidayError] = useState('');
+  const [holidaySuccess, setHolidaySuccess] = useState('');
+
+  const handleOpenAddHoliday = () => {
+    setEditingHolidayId(null);
+    setHolidayForm({ name: '', date: '', isOptional: false });
+    setHolidayError('');
+    setHolidaySuccess('');
+    setIsHolidayModalOpen(true);
+  };
+
+  const handleOpenEditHoliday = (h: any) => {
+    setEditingHolidayId(h.id);
+    setHolidayForm({
+      name: h.name || '',
+      date: h.date || '',
+      isOptional: Boolean(h.isOptional),
+    });
+    setHolidayError('');
+    setHolidaySuccess('');
+    setIsHolidayModalOpen(true);
+  };
+
+  const handleSaveHoliday = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!holidayForm.name.trim()) {
+      setHolidayError('Holiday name is required.');
+      return;
+    }
+    if (!holidayForm.date.trim()) {
+      setHolidayError('Holiday date is required.');
+      return;
+    }
+
+    setHolidayLoading(true);
+    setHolidayError('');
+    setHolidaySuccess('');
+
+    try {
+      if (editingHolidayId) {
+        const res = await updateHolidayAction({
+          id: editingHolidayId,
+          name: holidayForm.name,
+          date: holidayForm.date,
+          isOptional: holidayForm.isOptional,
+        });
+        if (res.success) {
+          setHolidaySuccess('Official holiday updated successfully!');
+          setTimeout(() => {
+            setIsHolidayModalOpen(false);
+            setHolidaySuccess('');
+            setEditingHolidayId(null);
+            setHolidayForm({ name: '', date: '', isOptional: false });
+          }, 800);
+          await loadHolidays();
+        } else {
+          setHolidayError(res.error || 'Failed to update holiday.');
+        }
+      } else {
+        const res = await createHolidayAction({
+          name: holidayForm.name,
+          date: holidayForm.date,
+          isOptional: holidayForm.isOptional,
+        });
+        if (res.success) {
+          setHolidaySuccess('New official holiday added successfully!');
+          setTimeout(() => {
+            setIsHolidayModalOpen(false);
+            setHolidaySuccess('');
+            setHolidayForm({ name: '', date: '', isOptional: false });
+          }, 800);
+          await loadHolidays();
+        } else {
+          setHolidayError(res.error || 'Failed to add holiday.');
+        }
+      }
+    } catch (err: any) {
+      setHolidayError(err.message || 'An error occurred.');
+    } finally {
+      setHolidayLoading(false);
+    }
+  };
+
+  const handleDeleteHoliday = async (h: any) => {
+    if (!confirm(`Are you sure you want to delete official holiday "${h.name}" on ${h.date}?`)) return;
+    try {
+      const res = await deleteHolidayAction(h.id);
+      if (res.success) {
+        await loadHolidays();
+      } else {
+        alert(res.error || 'Failed to delete official holiday.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete official holiday.');
     }
   };
 
@@ -592,6 +713,10 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
           return s <= monthEnd && e >= monthStart;
         });
 
+        const todayObj = new Date();
+        const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+        const todayPanchang = getPanchangForDate(todayStr);
+
         // Compute days array
         const calendarGrid: Array<{
           dayNumber: number;
@@ -602,6 +727,7 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
           holiday?: any;
           dayLeaves: any[];
           attendanceRecord?: any;
+          panchang: PanchangDayInfo;
         }> = [];
 
         // Previous month padding
@@ -617,11 +743,9 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
             isSunday: false,
             isToday: false,
             dayLeaves: [],
+            panchang: getPanchangForDate(dateStr),
           });
         }
-
-        const todayObj = new Date();
-        const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
 
         // Current month days
         let countSundays = 0;
@@ -635,8 +759,10 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
           const isSunday = currentDayObj.getDay() === 0;
           if (isSunday) countSundays++;
 
-          const holiday = holidays.find((h) => h.date === dateStr);
-          if (holiday) countHolidays++;
+          const panchang = getPanchangForDate(dateStr);
+          const dbHoliday = holidays.find((h) => h.date === dateStr);
+          const hasHoliday = !!dbHoliday || panchang.isPublicHoliday;
+          if (hasHoliday) countHolidays++;
 
           // Day leaves
           const curStart = new Date(calYear, calMonth, day, 0, 0, 0);
@@ -662,9 +788,10 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
             dateStr,
             isSunday,
             isToday: dateStr === todayStr,
-            holiday,
+            holiday: dbHoliday,
             dayLeaves,
             attendanceRecord: attRecord,
+            panchang,
           });
         }
 
@@ -681,6 +808,7 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
             isSunday: false,
             isToday: false,
             dayLeaves: [],
+            panchang: getPanchangForDate(dateStr),
           });
         }
 
@@ -688,6 +816,59 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
 
         return (
           <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Today's Panchang Live Header Banner */}
+            <div className="p-4 sm:p-5 rounded-3xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-indigo-500/10 dark:from-amber-950/30 dark:via-orange-950/20 dark:to-indigo-950/30 shadow-lg flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                    <span>🕉️</span> दैनिक पंचांग (Today's Panchang)
+                  </span>
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {todayStr} ({new Date().toLocaleDateString('en-IN', { weekday: 'long' })})
+                  </span>
+                </div>
+                <div className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
+                  <span className="text-amber-600 dark:text-amber-400 font-serif">
+                    {todayPanchang.hinduMonth} • {todayPanchang.pakshaHindi} {todayPanchang.tithiHindi}
+                  </span>
+                  <span className="text-slate-400 hidden sm:inline">•</span>
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                    <Star className="w-3.5 h-3.5 text-amber-500" />
+                    नक्षत्र: {todayPanchang.nakshatra}
+                  </span>
+                  <span className="text-slate-400 hidden sm:inline">•</span>
+                  <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+                    {todayPanchang.rahuKaal}
+                  </span>
+                </div>
+                {(todayPanchang.festival || todayPanchang.publicHolidayName) && (
+                  <div className="flex items-center gap-2 flex-wrap pt-0.5">
+                    {todayPanchang.publicHolidayName && (
+                      <span className="px-2 py-0.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-700 dark:text-rose-300 text-xs font-bold flex items-center gap-1">
+                        🇮🇳 सार्वजनिक अवकाश: {todayPanchang.publicHolidayName}
+                      </span>
+                    )}
+                    {todayPanchang.festival && (
+                      <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-800 dark:text-amber-300 text-xs font-bold flex items-center gap-1">
+                        🪔 {todayPanchang.festivalHindi || todayPanchang.festival}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPanchangDay(todayPanchang)}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-bold shadow-md hover:shadow-lg transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Compass className="w-4 h-4" />
+                  <span>View Today's Full Panchang</span>
+                </button>
+              </div>
+            </div>
+
             {/* Top Toolbar: Month Navigation & Filter */}
             <div className="glass-panel p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -699,13 +880,50 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                     {monthTitle}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Monthly working calendar, scheduled leaves, LWPs and official bank holidays
+                    Monthly working calendar with Hindu Panchang (Tithi, Vrat) & Indian Public Holidays
                   </p>
                 </div>
               </div>
 
-              {/* Month Navigation & Staff Filter */}
+              {/* View Mode Selector & Navigation */}
               <div className="flex flex-wrap items-center gap-2">
+                {/* Calendar Display Mode Selector */}
+                <div className="flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setCalendarDisplayMode('COMBINED')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      calendarDisplayMode === 'COMBINED'
+                        ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    ✨ Combined
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCalendarDisplayMode('PANCHANG')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      calendarDisplayMode === 'PANCHANG'
+                        ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    🕉️ Panchang
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCalendarDisplayMode('ATTENDANCE')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      calendarDisplayMode === 'ATTENDANCE'
+                        ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    👥 Attendance
+                  </button>
+                </div>
+
                 {isSuperAdmin && staffList.length > 0 && (
                   <select
                     value={calendarStaffFilter}
@@ -799,90 +1017,157 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
 
               {/* Grid Cells */}
               <div className="grid grid-cols-7 gap-1 sm:gap-2">
-                {calendarGrid.map((cell, idx) => (
-                  <div
-                    key={`${cell.dateStr}-${idx}`}
-                    className={`min-h-[85px] sm:min-h-[110px] p-2 rounded-2xl border transition-all flex flex-col justify-between ${
-                      !cell.isCurrentMonth
-                        ? 'opacity-30 bg-slate-50/50 dark:bg-slate-900/30 border-transparent text-slate-400'
-                        : cell.isToday
-                        ? 'bg-indigo-50/60 dark:bg-indigo-950/30 border-indigo-400 dark:border-indigo-600 shadow-md ring-2 ring-indigo-500/30'
-                        : cell.isSunday
-                        ? 'bg-rose-50/30 dark:bg-rose-950/10 border-slate-200/60 dark:border-slate-800'
-                        : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
-                    }`}
-                  >
-                    {/* Top Row: Day Number & Badges */}
-                    <div className="flex items-center justify-between">
-                      <span
-                        className={`text-xs sm:text-sm font-black font-mono ${
-                          cell.isToday
-                            ? 'px-1.5 py-0.5 rounded-md bg-indigo-600 text-white'
-                            : cell.isSunday
-                            ? 'text-rose-500'
-                            : 'text-slate-800 dark:text-slate-200'
-                        }`}
-                      >
-                        {cell.dayNumber}
-                      </span>
+                {calendarGrid.map((cell, idx) => {
+                  const holidayName = cell.panchang.publicHolidayName || cell.holiday?.name;
+                  const isPublicHol = cell.panchang.isPublicHoliday || !!cell.holiday;
 
-                      {cell.isSunday && cell.isCurrentMonth && (
-                        <span className="text-[9px] font-bold text-rose-400 uppercase hidden sm:inline">Sun Off</span>
-                      )}
-                      {cell.isToday && (
-                        <span className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 uppercase">Today</span>
-                      )}
-                    </div>
-
-                    {/* Middle Content: Holidays & Leaves */}
-                    <div className="space-y-1 my-1 overflow-hidden">
-                      {cell.holiday && (
-                        <div
-                          className="px-1.5 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-700 dark:text-purple-300 text-[10px] font-bold truncate flex items-center gap-1"
-                          title={cell.holiday.name}
-                        >
-                          <span>🎉</span>
-                          <span className="truncate">{cell.holiday.name}</span>
-                        </div>
-                      )}
-
-                      {cell.dayLeaves.map((l, lIdx) => {
-                        const isLwp = l.leaveType === 'LWP';
-                        const empName = l.isManual ? l.manualName : (l.user?.name?.split(' ')[0] || 'Staff');
-                        return (
-                          <div
-                            key={l.id || lIdx}
-                            className={`px-1.5 py-0.5 rounded-lg text-[10px] font-bold truncate flex items-center gap-1 border ${
-                              isLwp
-                                ? 'bg-rose-500/15 border-rose-500/40 text-rose-700 dark:text-rose-300 animate-pulse'
-                                : 'bg-sky-500/10 border-sky-500/30 text-sky-700 dark:text-sky-300'
+                  return (
+                    <div
+                      key={`${cell.dateStr}-${idx}`}
+                      onClick={() => setSelectedPanchangDay(cell.panchang)}
+                      className={`min-h-[105px] sm:min-h-[130px] p-2 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer group hover:shadow-md ${
+                        !cell.isCurrentMonth
+                          ? 'opacity-30 bg-slate-50/50 dark:bg-slate-900/30 border-transparent text-slate-400'
+                          : cell.isToday
+                          ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-500 dark:border-indigo-500 shadow-md ring-2 ring-indigo-500/30'
+                          : isPublicHol
+                          ? 'bg-rose-50/40 dark:bg-rose-950/20 border-rose-300 dark:border-rose-800/80 hover:border-rose-400'
+                          : cell.isSunday
+                          ? 'bg-rose-50/20 dark:bg-rose-950/10 border-slate-200/60 dark:border-slate-800 hover:border-slate-300'
+                          : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700'
+                      }`}
+                    >
+                      {/* Top Row: Day Number & Tithi / Badges */}
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <div className="flex items-center gap-1">
+                          <span
+                            className={`text-xs sm:text-sm font-black font-mono ${
+                              cell.isToday
+                                ? 'px-1.5 py-0.5 rounded-md bg-indigo-600 text-white'
+                                : cell.isSunday
+                                ? 'text-rose-500'
+                                : 'text-slate-800 dark:text-slate-200'
                             }`}
-                            title={`${l.leaveType}: ${empName} (${l.reason || ''})`}
                           >
-                            <span>{isLwp ? '🚨' : '🏖️'}</span>
-                            <span className="truncate">
-                              {isLwp ? 'LWP' : l.leaveType}: {empName}
-                            </span>
-                          </div>
-                        );
-                      })}
+                            {cell.dayNumber}
+                          </span>
 
-                      {cell.attendanceRecord && (
-                        <div
-                          className="px-1.5 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold truncate flex items-center gap-0.5"
-                          title={`Punch In: ${formatTimeIST(cell.attendanceRecord.punchIn)} - Duration: ${formatDuration(cell.attendanceRecord.totalMinutes * 60)}`}
-                        >
-                          <span>✓</span>
-                          <span>{formatDuration(cell.attendanceRecord.totalMinutes * 60)}</span>
+                          {cell.isSunday && cell.isCurrentMonth && (
+                            <span className="text-[8px] font-bold text-rose-400 uppercase hidden sm:inline">Sun</span>
+                          )}
+                          {cell.isToday && (
+                            <span className="text-[8px] font-black text-indigo-600 dark:text-indigo-400 uppercase">Today</span>
+                          )}
                         </div>
-                      )}
-                    </div>
 
-                    <div className="text-[9px] text-slate-400 text-right">
-                      {cell.dateStr}
+                        {/* Hindu Panchang Tithi Tag */}
+                        {calendarDisplayMode !== 'ATTENDANCE' && cell.isCurrentMonth && (
+                          <div className="text-[9px] font-bold">
+                            {cell.panchang.isPurnima ? (
+                              <span className="px-1 py-0.2 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 font-black">
+                                🌕 पूर्णिमा
+                              </span>
+                            ) : cell.panchang.isAmavasya ? (
+                              <span className="px-1 py-0.2 rounded bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900 font-black">
+                                🌑 अमावस्या
+                              </span>
+                            ) : cell.panchang.isEkadashi ? (
+                              <span className="px-1 py-0.2 rounded bg-purple-500/20 text-purple-700 dark:text-purple-300 border border-purple-500/40 font-black">
+                                ✨ एकादशी
+                              </span>
+                            ) : (
+                              <span className="text-slate-500 dark:text-slate-400">
+                                {cell.panchang.tithiHindi}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Middle Content: Public Holidays, Festivals, Leaves & Attendance */}
+                      <div className="space-y-1 my-1 overflow-hidden">
+                        {/* Indian Public Holiday Badge */}
+                        {isPublicHol && (
+                          <div
+                            className="px-1.5 py-0.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-700 dark:text-rose-300 text-[10px] font-black truncate flex items-center gap-1 shadow-sm"
+                            title={`🇮🇳 Public Holiday: ${holidayName || 'Official Holiday'}`}
+                          >
+                            <span>🇮🇳</span>
+                            <span className="truncate">{holidayName || 'Public Holiday'}</span>
+                          </div>
+                        )}
+
+                        {/* Hindu Festival / Vrat Badge */}
+                        {cell.panchang.festival && calendarDisplayMode !== 'ATTENDANCE' && (
+                          <div
+                            className="px-1.5 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-200 text-[10px] font-bold truncate flex items-center gap-1"
+                            title={cell.panchang.festivalHindi || cell.panchang.festival}
+                          >
+                            <span>🪔</span>
+                            <span className="truncate">{cell.panchang.festivalHindi || cell.panchang.festival}</span>
+                          </div>
+                        )}
+
+                        {/* Panchang Detailed Mode additions */}
+                        {calendarDisplayMode === 'PANCHANG' && cell.isCurrentMonth && (
+                          <div className="text-[9px] text-slate-500 dark:text-slate-400 space-y-0.5 pt-0.5">
+                            <div className="flex items-center gap-1 truncate font-medium">
+                              <Star className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                              <span className="truncate">{cell.panchang.nakshatra}</span>
+                            </div>
+                            <div className="text-[8px] text-slate-400 truncate">
+                              {cell.panchang.pakshaHindi}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Attendance / Leaves (Visible in COMBINED and ATTENDANCE modes) */}
+                        {calendarDisplayMode !== 'PANCHANG' && (
+                          <>
+                            {cell.dayLeaves.map((l, lIdx) => {
+                              const isLwp = l.leaveType === 'LWP';
+                              const empName = l.isManual ? l.manualName : (l.user?.name?.split(' ')[0] || 'Staff');
+                              return (
+                                <div
+                                  key={l.id || lIdx}
+                                  className={`px-1.5 py-0.5 rounded-lg text-[9px] font-bold truncate flex items-center gap-1 border ${
+                                    isLwp
+                                      ? 'bg-rose-500/15 border-rose-500/40 text-rose-700 dark:text-rose-300 animate-pulse'
+                                      : 'bg-sky-500/10 border-sky-500/30 text-sky-700 dark:text-sky-300'
+                                  }`}
+                                  title={`${l.leaveType}: ${empName} (${l.reason || ''})`}
+                                >
+                                  <span>{isLwp ? '🚨' : '🏖️'}</span>
+                                  <span className="truncate">
+                                    {isLwp ? 'LWP' : l.leaveType}: {empName}
+                                  </span>
+                                </div>
+                              );
+                            })}
+
+                            {cell.attendanceRecord && (
+                              <div
+                                className="px-1.5 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold truncate flex items-center gap-0.5"
+                                title={`Punch In: ${formatTimeIST(cell.attendanceRecord.punchIn)} - Duration: ${formatDuration(cell.attendanceRecord.totalMinutes * 60)}`}
+                              >
+                                <span>✓</span>
+                                <span>{formatDuration(cell.attendanceRecord.totalMinutes * 60)}</span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Cell Footer */}
+                      <div className="flex items-center justify-between text-[8px] sm:text-[9px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800/60">
+                        <span className="text-amber-600/80 dark:text-amber-400/80 font-semibold group-hover:text-amber-500 transition">
+                          🕉️ पंचांग
+                        </span>
+                        <span>{cell.dateStr.slice(8)}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Legend Footer */}
@@ -893,12 +1178,12 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                     <span>Today's Date</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
-                    <span>Bank / Company Holiday</span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                    <span>🇮🇳 Indian Public Holiday</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-                    <span>LWP (Leave Without Pay)</span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    <span>🪔 Hindu Festival / Vrat</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-sky-500" />
@@ -906,14 +1191,175 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <span>Work Session Punched</span>
+                    <span>Work Punched</span>
                   </div>
                 </div>
                 <span className="text-[11px] text-slate-400 italic">
-                  * All dates synchronized with Indian Standard Time (IST)
+                  * Click any calendar date to view full Hindu Panchang, Shubh Muhurat, Rahu Kaal & Tithi details.
                 </span>
               </div>
             </div>
+
+            {/* Interactive Hindu Panchang & Public Holiday Details Modal */}
+            {selectedPanchangDay && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+                <div className="w-full max-w-xl p-6 rounded-3xl bg-white dark:bg-slate-900 border border-amber-500/30 dark:border-amber-500/20 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2.5 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                        <Sun className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                          <span>दैनिक हिन्दू पंचांग</span>
+                          <span className="text-xs font-normal text-slate-500">Hindu Panchang Details</span>
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {selectedPanchangDay.dateStr} • {new Date(selectedPanchangDay.dateStr).toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSelectedPanchangDay(null)}
+                      className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Public Holiday Banner if applicable */}
+                  {selectedPanchangDay.isPublicHoliday && selectedPanchangDay.publicHolidayName && (
+                    <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-200 flex items-center gap-3">
+                      <span className="text-2xl">🇮🇳</span>
+                      <div>
+                        <div className="text-xs font-black uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                          Official Indian Public Holiday
+                        </div>
+                        <div className="text-sm font-bold">
+                          {selectedPanchangDay.publicHolidayName}
+                        </div>
+                        <div className="text-[10px] text-rose-600/80 dark:text-rose-400/80">
+                          Gazetted Public Holiday (Office Closed / Paid Holiday)
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Festival / Vrat Banner if applicable */}
+                  {selectedPanchangDay.festival && (
+                    <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200 flex items-center gap-3">
+                      <span className="text-2xl">🪔</span>
+                      <div>
+                        <div className="text-xs font-black uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                          Festival & Auspicious Vrat (पर्व एवं व्रत)
+                        </div>
+                        <div className="text-sm font-bold">
+                          {selectedPanchangDay.festivalHindi || selectedPanchangDay.festival}
+                        </div>
+                        <div className="text-[10px] text-amber-600/80 dark:text-amber-400/80">
+                          {selectedPanchangDay.festival}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Panchang Elements Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    {/* Tithi Card */}
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <Moon className="w-3 h-3 text-indigo-500" /> तिथि (Tithi)
+                      </span>
+                      <div className="font-bold text-slate-900 dark:text-white text-sm">
+                        {selectedPanchangDay.tithiHindi}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {selectedPanchangDay.tithiName}
+                      </div>
+                    </div>
+
+                    {/* Paksha Card */}
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <Sun className="w-3 h-3 text-amber-500" /> पक्ष (Paksha)
+                      </span>
+                      <div className="font-bold text-slate-900 dark:text-white text-sm">
+                        {selectedPanchangDay.pakshaHindi}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {selectedPanchangDay.paksha === 'SHUKLA' ? 'Bright Fortnight (Shukla Paksha)' : 'Dark Fortnight (Krishna Paksha)'}
+                      </div>
+                    </div>
+
+                    {/* Hindu Month Card */}
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-purple-500" /> हिन्दू मास (Hindu Month)
+                      </span>
+                      <div className="font-bold text-slate-900 dark:text-white text-sm">
+                        {selectedPanchangDay.hinduMonth}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        विक्रम संवत 2082 / 2083
+                      </div>
+                    </div>
+
+                    {/* Nakshatra Card */}
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <Star className="w-3 h-3 text-amber-500" /> नक्षत्र (Nakshatra)
+                      </span>
+                      <div className="font-bold text-slate-900 dark:text-white text-sm">
+                        {selectedPanchangDay.nakshatra}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        योग: {selectedPanchangDay.yoga} • करण: {selectedPanchangDay.karana}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Shubh Muhurat & Inauspicious Timings Card */}
+                  <div className="p-4 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800/60 space-y-2.5 text-xs">
+                    <div className="font-bold text-indigo-700 dark:text-indigo-300 uppercase text-[10px] tracking-wider flex items-center gap-1.5">
+                      <Compass className="w-3.5 h-3.5" /> शुभ एवं अशुभ समय (Auspicious & Inauspicious Timings)
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 block">
+                          ✨ {selectedPanchangDay.shubhMuhurat || 'अभिजीत मुहूर्त: 11:52 AM - 12:44 PM'}
+                        </span>
+                        <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">
+                          सर्वश्रेष्ठ शुभ समय (व्यापार, नया कार्य, अनुबंध)
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                        <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300 block">
+                          ⏳ {selectedPanchangDay.rahuKaal || 'राहुकाल'}
+                        </span>
+                        <span className="text-[10px] text-rose-600/80 dark:text-rose-400/80">
+                          अशुभ काल (महत्वपूर्ण कार्य टालें)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] text-slate-400 italic">
+                      * All calculations aligned with Indian Standard Time (IST) & Drik Panchang rules.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPanchangDay(null)}
+                      className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-xs hover:opacity-90 transition cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -1281,24 +1727,26 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                       <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                         Start Date (From) <span className="text-rose-500">*</span>
                       </label>
-                      <input
-                        type="date"
+                      <DatePickerInput
                         required
                         value={adminLeaveForm.startDate}
-                        onChange={(e) => setAdminLeaveForm({ ...adminLeaveForm, startDate: e.target.value })}
+                        onChange={(val) => setAdminLeaveForm({ ...adminLeaveForm, startDate: val })}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                        minYear={2024}
+                        maxYear={2030}
                       />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                         End Date (To) <span className="text-rose-500">*</span>
                       </label>
-                      <input
-                        type="date"
+                      <DatePickerInput
                         required
                         value={adminLeaveForm.endDate}
-                        onChange={(e) => setAdminLeaveForm({ ...adminLeaveForm, endDate: e.target.value })}
+                        onChange={(val) => setAdminLeaveForm({ ...adminLeaveForm, endDate: val })}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                        minYear={2024}
+                        maxYear={2030}
                       />
                     </div>
                   </div>
@@ -1373,22 +1821,24 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Start Date</label>
-                      <input
-                        type="date"
+                      <DatePickerInput
                         required
                         value={newLeave.startDate}
-                        onChange={(e) => setNewLeave({ ...newLeave, startDate: e.target.value })}
+                        onChange={(val) => setNewLeave({ ...newLeave, startDate: val })}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                        minYear={2024}
+                        maxYear={2030}
                       />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">End Date</label>
-                      <input
-                        type="date"
+                      <DatePickerInput
                         required
                         value={newLeave.endDate}
-                        onChange={(e) => setNewLeave({ ...newLeave, endDate: e.target.value })}
+                        onChange={(val) => setNewLeave({ ...newLeave, endDate: val })}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                        minYear={2024}
+                        maxYear={2030}
                       />
                     </div>
                   </div>
@@ -1431,46 +1881,198 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
       {activeTab === 'holidays' && (
         <div className="space-y-6 animate-in fade-in duration-200">
           <div className="glass-panel p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl">
-            <div className="pb-4 border-b border-slate-200 dark:border-slate-800">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-amber-500" /> Official Company Holiday Calendar (2026)
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Indian national and public festival holidays. These days are considered paid non-working days.
-              </p>
+            <div className="pb-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-amber-500" /> Official Company Holiday Calendar
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Indian national and public festival holidays. These days are considered paid non-working days.
+                </p>
+              </div>
+
+              {isSuperAdmin ? (
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3" />
+                    Super Admin Managed
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleOpenAddHoliday}
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md transition flex items-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Official Holiday
+                  </button>
+                </div>
+              ) : (
+                <span className="text-[10px] uppercase font-semibold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 flex items-center gap-1 self-start sm:self-auto">
+                  <Lock className="w-3 h-3 text-slate-400" />
+                  View Only (Super Admin Managed)
+                </span>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
               {holidays.map((h) => (
                 <div
                   key={h.id}
-                  className={`p-4 rounded-2xl border transition-all ${
+                  className={`p-4 rounded-2xl border transition-all flex flex-col justify-between ${
                     h.isPassed
                       ? 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800/80 opacity-60'
                       : 'glass-panel border-amber-500/30 hover:shadow-lg hover:border-amber-500/50 bg-gradient-to-tr from-amber-500/5 to-transparent'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                      {h.dayName || 'Holiday'}
-                    </span>
-                    <span
-                      className={`text-[10px] font-bold ${
-                        h.isPassed ? 'text-slate-400' : 'text-amber-600 dark:text-amber-400 font-extrabold'
-                      }`}
-                    >
-                      {h.isPassed ? 'Passed' : 'Upcoming 🎉'}
-                    </span>
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                        {h.dayName || 'Holiday'}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold ${
+                          h.isPassed ? 'text-slate-400' : 'text-amber-600 dark:text-amber-400 font-extrabold'
+                        }`}
+                      >
+                        {h.isPassed ? 'Passed' : 'Upcoming 🎉'}
+                      </span>
+                    </div>
+                    <h4 className="text-sm font-extrabold text-slate-900 dark:text-white mt-2">
+                      {h.name}
+                    </h4>
+                    <div className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 mt-1">
+                      {h.date}
+                    </div>
                   </div>
-                  <h4 className="text-sm font-extrabold text-slate-900 dark:text-white mt-2">
-                    {h.name}
-                  </h4>
-                  <div className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 mt-1">
-                    {h.date}
-                  </div>
+
+                  {isSuperAdmin && (
+                    <div className="flex items-center gap-1 pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800/60 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditHoliday(h)}
+                        title="Edit official holiday"
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition flex items-center gap-1"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteHoliday(h)}
+                        title="Delete official holiday"
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Super Admin Add / Edit Official Holiday Modal */}
+      {isHolidayModalOpen && isSuperAdmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-amber-500/10 to-transparent">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center border border-amber-500/30">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    {editingHolidayId ? 'Edit Official Holiday' : 'Add New Official Holiday'}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Super Admin only. Updates company holiday calendar and HRMS working days.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsHolidayModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveHoliday} className="p-6 space-y-4">
+              {holidayError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  {holidayError}
+                </div>
+              )}
+              {holidaySuccess && (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  {holidaySuccess}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Official Holiday Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Diwali (Deepavali), Eid-ul-Fitr, Company Foundation Day"
+                  value={holidayForm.name}
+                  onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Holiday Date (DD/MM/YYYY) *
+                </label>
+                <DatePickerInput
+                  value={holidayForm.date}
+                  onChange={(val) => setHolidayForm({ ...holidayForm, date: val })}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
+                  minYear={2024}
+                  maxYear={2030}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={holidayForm.isOptional}
+                    onChange={(e) => setHolidayForm({ ...holidayForm, isOptional: e.target.checked })}
+                    className="rounded border-slate-300 text-amber-600 focus:ring-amber-500 w-4 h-4"
+                  />
+                  <span>Mark as <strong>Optional / Restricted Holiday</strong> (RH)</span>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsHolidayModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={holidayLoading}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-md transition disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  {holidayLoading ? 'Saving...' : editingHolidayId ? 'Update Holiday' : 'Add Holiday'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -523,9 +523,53 @@ model VisitRecord {
   status          String          @default("SCHEDULED") // SCHEDULED, COMPLETED, CANCELLED
   remarks         String?         @db.Text
   lastRemarkAt    DateTime?
+
+  // Builder Relation & Specifications:
+  builderId                   String?
+  builder                     Builder?  @relation(fields: [builderId], references: [id], onDelete: SetNull)
+  builderName                 String?
+  projectType                 String?   // Residential, Commercial, Industrial
+  projectLaunchDate           String?   // Project Launch date / Expected Launch date
+  reraStatus                  String?   // Received / Expected date of receive / In Process
+  approvedBanks               String?   // Bank's Name who have approved the project
+  priceRange                  String?   // Price Range
+  totalUnits                  String?   // Total no. of unit
+  unitsSold                   String?   // Unit Sold (if any)
+  paymentPlan                 String?   // Payment Plan
+  concernedPersonName         String?   // Concerned Person Name
+  concernedPersonDesignation  String?   // Designation
+  concernedPersonContact      String?   // Contact details (Mobile/ E-mail id)
+  officeAddress               String?   @db.Text // Office address
+
+  // CP (Channel Partner) Details:
+  cpName                      String?   // CP Name
+  cpContact                   String?   // CP Contact details
+  cpAddress                   String?   @db.Text // CP Address
+
+  // Frequency & Follow-up Details:
+  visitFrequency              String?   // Frequency of Visit (days/ Month)
+  nextFollowUpDate            DateTime? // Next FU date
+  leadType                    String?   @default("Warm") // Lead Type (Hot/ Warm/ Cold)
+
   followUps       VisitFollowUp[]
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+}
+
+model Builder {
+  id                    String        @id @default(cuid())
+  name                  String        @unique
+  contactPerson         String?       // Concerned person name
+  designation           String?       // Designation
+  phone                 String?       // Mobile / Phone
+  email                 String?       // Email ID
+  officeAddress         String?       @db.Text // Office address
+  reraNumber            String?       // RERA Number / Status
+  approvedBanks         String?       // e.g. SBI, HDFC, ICICI
+  notes                 String?       @db.Text
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  visits                VisitRecord[]
 }
 
 model VisitFollowUp {

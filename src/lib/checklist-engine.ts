@@ -175,7 +175,8 @@ export async function generateChecklistForCase(
           for (let i = 1; i <= coApplicantCount; i++) {
             const coAppData = coApplicantsData && coApplicantsData[i - 1];
             const coAppName = coAppData?.name?.trim() || `Co-Applicant ${i}`;
-            const incomeRequired = coAppData ? coAppData.incomeRequired !== false : true;
+            const isHousewife = (coAppData?.incomeTypes && Array.isArray(coAppData.incomeTypes) && coAppData.incomeTypes.some((t: string) => t.toLowerCase().includes('housewife'))) || (coAppData?.customerType && coAppData.customerType.toLowerCase().includes('housewife'));
+            const incomeRequired = isHousewife ? false : (coAppData ? coAppData.incomeRequired === true : false);
 
             // If this is income category and co-applicant does NOT require income, skip
             if (categoryPart === 'INCOME' && !incomeRequired) {

@@ -28,16 +28,22 @@ import {
   Building,
   UserCheck,
   AlertCircle,
-  Pencil
+  Pencil,
+  Upload,
+  Download,
+  FileSpreadsheet,
+  FileCheck
 } from 'lucide-react';
 import { BIRTHDAY_TEMPLATES, getCustomWish } from '@/lib/birthday-wishes';
 import { isValid10DigitPhone, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
+import DatePickerInput from './DatePickerInput';
 import { 
   createManualBirthdayAction, 
   createManualBirthdayWithCategoryAction,
   checkDuplicateBirthdayPhoneAction,
   updateManualBirthdayAction, 
-  deleteManualBirthdayAction 
+  deleteManualBirthdayAction,
+  bulkUploadBirthdaysAction
 } from '@/app/actions';
 
 export interface BirthdayItem {
@@ -122,6 +128,167 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
   });
   const [isEditing, setIsEditing] = useState(false);
   const [editError, setEditError] = useState('');
+
+  // Bulk Upload Modal State
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkError, setBulkError] = useState('');
+  const [bulkSuccess, setBulkSuccess] = useState('');
+  const [bulkRows, setBulkRows] = useState<Array<{
+    name: string;
+    phone: string;
+    email: string;
+    dob: string;
+    category: string;
+    onBehalfOf: string;
+    remark: string;
+    isValid: boolean;
+    errorMsg?: string;
+  }>>([]);
+
+  const downloadBirthdayTemplate = () => {
+    const headers = ['Name', 'Phone', 'Email', 'Date of Birth (DD/MM/YYYY)', 'Category (CUSTOMER/STAFF/CHANNEL)', 'On Behalf Of', 'Remark'];
+    const sampleRows = [
+      ['Rajesh Sharma', '9876543210', 'rajesh@example.com', '15/08/1990', 'CUSTOMER', 'TheNestGuru Management', 'Preferred Loan Client'],
+      ['Pooja Nair', '9811223344', 'pooja@nestguru.com', '24/10/1992', 'STAFF', 'TheNestGuru Management', 'Operations Desk'],
+      ['Amit Patel', '9988776655', 'amit@channel.com', '05/01/1985', 'CHANNEL', 'TheNestGuru Management', 'Prime Channel Partner'],
+    ];
+
+    const csvContent = [headers.join(','), ...sampleRows.map(r => r.join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'birthday_bulk_upload_template.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCSVFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setBulkError('');
+    setBulkSuccess('');
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const content = evt.target?.result as string;
+      if (!content) {
+        setBulkError('Uploaded file is empty.');
+        return;
+      }
+
+      const lines = content.split(/\r\n|\n/).map(l => l.trim()).filter(Boolean);
+      if (lines.length <= 1) {
+        setBulkError('CSV file has no data rows. Please use the template.');
+        return;
+      }
+
+      const dataLines = lines.slice(1);
+      const parsed: Array<{
+        name: string;
+        phone: string;
+        email: string;
+        dob: string;
+        category: string;
+        onBehalfOf: string;
+        remark: string;
+        isValid: boolean;
+        errorMsg?: string;
+      }> = [];
+
+      for (let i = 0; i < dataLines.length; i++) {
+        const line = dataLines[i];
+        const cells = line.split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+        if (cells.length === 0 || cells.every(c => !c)) continue;
+
+        const name = cells[0] || '';
+        const phone = cells[1] || '';
+        const email = cells[2] || '';
+        const dob = cells[3] || '';
+        const rawCat = (cells[4] || 'CUSTOMER').toUpperCase();
+        const category = ['STAFF', 'CHANNEL', 'CUSTOMER'].includes(rawCat) ? rawCat : 'CUSTOMER';
+        const onBehalfOf = cells[5] || 'TheNestGuru Management';
+        const remark = cells[6] || '';
+
+        let isValid = true;
+        let errorMsg = '';
+
+        if (!name.trim()) {
+          isValid = false;
+          errorMsg = 'Name required';
+        } else if (!dob.trim()) {
+          isValid = false;
+          errorMsg = 'DOB required';
+        } else {
+          // Verify date parseable (DD/MM/YYYY or YYYY-MM-DD)
+          const dmy = dob.trim().match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+          if (dmy) {
+            const day = parseInt(dmy[1], 10);
+            const mon = parseInt(dmy[2], 10);
+            if (day < 1 || day > 31 || mon < 1 || mon > 12) {
+              isValid = false;
+              errorMsg = 'Invalid date range';
+            }
+          } else if (isNaN(new Date(dob).getTime())) {
+            isValid = false;
+            errorMsg = 'Invalid date format (use DD/MM/YYYY)';
+          }
+        }
+
+        parsed.push({
+          name,
+          phone,
+          email,
+          dob,
+          category,
+          onBehalfOf,
+          remark,
+          isValid,
+          errorMsg,
+        });
+      }
+
+      setBulkRows(parsed);
+      if (parsed.length === 0) {
+        setBulkError('No valid rows found in CSV.');
+      }
+    };
+
+    reader.readAsText(file);
+  };
+
+  const handleBulkUploadSubmit = async () => {
+    const validOnes = bulkRows.filter(r => r.isValid);
+    if (validOnes.length === 0) {
+      setBulkError('No valid rows to upload. Please fix errors first.');
+      return;
+    }
+
+    setBulkLoading(true);
+    setBulkError('');
+    setBulkSuccess('');
+
+    try {
+      const res = await bulkUploadBirthdaysAction(validOnes);
+      setBulkLoading(false);
+      if (res.success) {
+        setBulkSuccess(`Successfully uploaded ${res.count} birthday records!`);
+        setTimeout(() => {
+          setIsBulkModalOpen(false);
+          router.refresh();
+        }, 1500);
+      } else {
+        setBulkError(res.error || 'Failed to upload birthday entries.');
+      }
+    } catch (err: any) {
+      setBulkLoading(false);
+      setBulkError(err?.message || 'Error executing bulk upload.');
+    }
+  };
 
   // Stats calculation
   const todayCount = useMemo(() => birthdays.filter((b) => b.isToday).length, [birthdays]);
@@ -334,6 +501,20 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            onClick={() => {
+              setBulkError('');
+              setBulkSuccess('');
+              setBulkRows([]);
+              setIsBulkModalOpen(true);
+            }}
+            className="px-4 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 shrink-0"
+            title="Upload multiple birthdays at once using a CSV template"
+          >
+            <Upload className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+            <span>Bulk Upload CSV</span>
+          </button>
+
           <button
             onClick={() => {
               setAddError('');
@@ -1033,16 +1214,14 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Date of Birth (DOB) <span className="text-rose-500">*</span>
                 </label>
-                <div className="relative">
-                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input
-                    type="date"
-                    required
-                    value={addForm.dob}
-                    onChange={(e) => setAddForm({ ...addForm, dob: e.target.value })}
-                    className="w-full glass-input pl-9 pr-3.5 py-2.5 rounded-xl text-xs"
-                  />
-                </div>
+                <DatePickerInput
+                  required
+                  value={addForm.dob}
+                  onChange={(val) => setAddForm({ ...addForm, dob: val })}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs"
+                  minYear={1930}
+                  maxYear={2026}
+                />
               </div>
 
               <div>
@@ -1163,16 +1342,14 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Date of Birth (DOB) <span className="text-rose-500">*</span>
                 </label>
-                <div className="relative">
-                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input
-                    type="date"
-                    required
-                    value={editForm.dob}
-                    onChange={(e) => setEditForm({ ...editForm, dob: e.target.value })}
-                    className="w-full glass-input pl-9 pr-3.5 py-2.5 rounded-xl text-xs"
-                  />
-                </div>
+                <DatePickerInput
+                  required
+                  value={editForm.dob}
+                  onChange={(val) => setEditForm({ ...editForm, dob: val })}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs"
+                  minYear={1930}
+                  maxYear={2026}
+                />
               </div>
 
               <div>
@@ -1205,6 +1382,182 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                 </button>
               </div>
             </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Bulk Upload Modal */}
+      {isBulkModalOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-3xl w-full max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-indigo-500/10">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                    Bulk Upload Birthdays via CSV
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Upload multiple client, staff, or channel partner birthdays using standard DD/MM/YYYY format
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsBulkModalOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1">
+              {/* Template Download Banner */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/60">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                    <FileCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                    <span>Download CSV Template First</span>
+                  </div>
+                  <p className="text-[11px] text-purple-700 dark:text-purple-300">
+                    Pre-formatted columns: Name, Phone, Email, DOB (DD/MM/YYYY), Category (CUSTOMER/STAFF/CHANNEL), On Behalf Of, Remark
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={downloadBirthdayTemplate}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 shrink-0"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download Template</span>
+                </button>
+              </div>
+
+              {/* File Upload Drop Area */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  Select CSV File to Upload
+                </label>
+                <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-6 text-center hover:border-purple-500 transition-colors bg-slate-50/50 dark:bg-slate-800/30">
+                  <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={handleCSVFileChange}
+                    className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-purple-50 file:text-purple-700 dark:file:bg-purple-950 dark:file:text-purple-300 hover:file:bg-purple-100 cursor-pointer"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-2">
+                    Make sure Date of Birth is formatted as <strong className="text-slate-600 dark:text-slate-300">DD/MM/YYYY</strong> (e.g. 15/08/1990)
+                  </p>
+                </div>
+              </div>
+
+              {/* Status / Errors / Success Message */}
+              {bulkError && (
+                <div className="p-3.5 bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 rounded-xl text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{bulkError}</span>
+                </div>
+              )}
+
+              {bulkSuccess && (
+                <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs flex items-center gap-2 font-bold">
+                  <Check className="w-4 h-4 shrink-0" />
+                  <span>{bulkSuccess}</span>
+                </div>
+              )}
+
+              {/* Table Preview */}
+              {bulkRows.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      File Preview ({bulkRows.length} Rows Parsed)
+                    </span>
+                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                      ✓ {bulkRows.filter(r => r.isValid).length} Valid Rows
+                    </span>
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0 text-[10px] uppercase font-bold text-slate-500">
+                        <tr>
+                          <th className="py-2 px-3">#</th>
+                          <th className="py-2 px-3">Name</th>
+                          <th className="py-2 px-3">DOB (DD/MM/YYYY)</th>
+                          <th className="py-2 px-3">Phone</th>
+                          <th className="py-2 px-3">Category</th>
+                          <th className="py-2 px-3">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {bulkRows.map((row, idx) => (
+                          <tr
+                            key={idx}
+                            className={row.isValid ? 'hover:bg-slate-50 dark:hover:bg-slate-800/40' : 'bg-rose-50/50 dark:bg-rose-950/20'}
+                          >
+                            <td className="py-2 px-3 text-slate-400 font-mono text-[10px]">{idx + 1}</td>
+                            <td className="py-2 px-3 font-semibold text-slate-800 dark:text-slate-200">{row.name || '--'}</td>
+                            <td className="py-2 px-3 font-mono">{row.dob || '--'}</td>
+                            <td className="py-2 px-3 font-mono">{row.phone || '--'}</td>
+                            <td className="py-2 px-3">
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                {row.category}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3">
+                              {row.isValid ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                  ✓ Ready
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-500" title={row.errorMsg}>
+                                  ⚠️ {row.errorMsg}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/40">
+              <div className="text-[11px] text-slate-500">
+                {bulkRows.length > 0 && (
+                  <span>
+                    Ready to upload <strong className="text-purple-600 dark:text-purple-400">{bulkRows.filter(r => r.isValid).length}</strong> records
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={bulkLoading || bulkRows.filter(r => r.isValid).length === 0}
+                  onClick={handleBulkUploadSubmit}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-xs shadow-md transition-all disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{bulkLoading ? 'Uploading...' : `Upload ${bulkRows.filter(r => r.isValid).length} Birthdays`}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>,
         document.body

@@ -92,7 +92,7 @@ export default function CaseStatusMasterManager({ initialStatuses = [] }: Props)
       setColor('#0284c7');
       setDisplayOrder(statuses.length + 2);
       setDescription('');
-      setSuccess('Case overall status created successfully!');
+      setSuccess('Case filing status created successfully!');
       setTimeout(() => setSuccess(''), 4000);
       router.refresh();
     } else {
@@ -121,7 +121,7 @@ export default function CaseStatusMasterManager({ initialStatuses = [] }: Props)
           .sort((a, b) => a.displayOrder - b.displayOrder)
       );
       setEditingStatus(null);
-      setSuccess('Case overall status updated successfully!');
+      setSuccess('Case filing status updated successfully!');
       setTimeout(() => setSuccess(''), 4000);
       router.refresh();
     } else {
@@ -140,7 +140,7 @@ export default function CaseStatusMasterManager({ initialStatuses = [] }: Props)
 
     if (res.success) {
       setStatuses(statuses.filter((s) => s.id !== id));
-      setSuccess('Case status deleted successfully!');
+      setSuccess('Case filing status deleted successfully!');
       setTimeout(() => setSuccess(''), 4000);
       router.refresh();
     } else {
@@ -175,7 +175,7 @@ export default function CaseStatusMasterManager({ initialStatuses = [] }: Props)
           </div>
           <div>
             <div className="font-extrabold text-sm text-slate-900 dark:text-white">
-              Configured Statuses ({statuses.length})
+              Configured Case Filing Statuses ({statuses.length})
             </div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
               Drop-down statuses used across Case Intake, Directory Filters & Case Updates
@@ -191,7 +191,7 @@ export default function CaseStatusMasterManager({ initialStatuses = [] }: Props)
           className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-sky-500/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
         >
           <Plus className="w-4 h-4" />
-          <span>Add New Status</span>
+          <span>Add Case Filing Status</span>
         </button>
       </div>
 
@@ -298,10 +298,10 @@ export default function CaseStatusMasterManager({ initialStatuses = [] }: Props)
                 </div>
                 <div>
                   <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
-                    Add Overall Case Status
+                    Add Case Filing Status
                   </h3>
                   <p className="text-[10px] text-slate-400">
-                    Configure a new pipeline status for loan cases
+                    Configure a new filing status for loan cases
                   </p>
                 </div>
               </div>
@@ -462,7 +462,7 @@ export default function CaseStatusMasterManager({ initialStatuses = [] }: Props)
                 </div>
                 <div>
                   <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
-                    Edit Overall Case Status
+                    Edit Case Filing Status
                   </h3>
                   <p className="text-[10px] text-slate-400">
                     Modifying the title will safely update existing cases

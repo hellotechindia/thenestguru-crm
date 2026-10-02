@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { redirect, notFound } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { canUserAccessCase } from '@/lib/case-filter';
 import CaseDetailTracker from '@/components/CaseDetailTracker';
 import CaseFollowUpTimeline from '@/components/CaseFollowUpTimeline';
 
@@ -14,6 +15,7 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
   }
 
   const userRole = (session.user as any).role;
+  const userId = (session.user as any).id;
   const userAccessPermission = (session.user as any).accessPermission || 'EDIT';
 
   const caseData = await prisma.case.findUnique({
@@ -31,6 +33,11 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
 
   if (!caseData) {
     notFound();
+  }
+
+  const hasAccess = await canUserAccessCase(userId, userRole, caseData);
+  if (!hasAccess) {
+    redirect('/cases');
   }
 
   const banks = await prisma.bankConfig.findMany({ orderBy: { bankName: 'asc' } });

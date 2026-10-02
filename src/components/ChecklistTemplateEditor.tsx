@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   createTemplateCategoryAction,
+  createTemplateCategoriesBatchAction,
   updateTemplateCategoryAction,
   deleteTemplateCategoryAction,
   createTemplateItemAction,
@@ -76,6 +77,10 @@ function MultiSelectDropdown({
   onChange,
   color = 'indigo',
   allLabel = 'All',
+  headerRight,
+  mode = 'filter',
+  placeholder,
+  inline = true,
 }: {
   label: string;
   icon?: any;
@@ -84,6 +89,10 @@ function MultiSelectDropdown({
   onChange: (newSelected: string[]) => void;
   color?: 'indigo' | 'sky' | 'purple' | 'amber' | 'emerald';
   allLabel?: string;
+  headerRight?: React.ReactNode;
+  mode?: 'filter' | 'explicit';
+  placeholder?: string;
+  inline?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -115,7 +124,10 @@ function MultiSelectDropdown({
   const selectAll = () => onChange(options.map((o) => o.value));
   const clearAll = () => onChange([]);
 
-  const isAll = selected.length === 0;
+  const isExplicit = mode === 'explicit';
+  const isAll = isExplicit
+    ? selected.length === options.length && options.length > 0
+    : selected.length === 0;
 
   const filteredOptions = options.filter((o) =>
     o.label.toLowerCase().includes(search.toLowerCase())
@@ -166,7 +178,11 @@ function MultiSelectDropdown({
 
   // Dynamic summary text for the trigger button
   let summaryText = allLabel;
-  if (selected.length === 1) {
+  if (isExplicit && selected.length === 0) {
+    summaryText = placeholder || 'Select options (0 selected)';
+  } else if (isExplicit && isAll) {
+    summaryText = `All Selected (${options.length})`;
+  } else if (selected.length === 1) {
     const matched = options.find((o) => o.value === selected[0]);
     summaryText = matched ? matched.label : selected[0];
   } else if (selected.length > 1) {
@@ -175,20 +191,39 @@ function MultiSelectDropdown({
 
   return (
     <div className="relative space-y-1" ref={dropdownRef}>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-1.5 flex-wrap">
         <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
           {Icon && <Icon className={`w-3.5 h-3.5 ${themeColors.text}`} />}
           <span>{label}</span>
+          {isExplicit && (
+            <span className="text-[10px] text-slate-400 font-normal">
+              ({selected.length}/{options.length})
+            </span>
+          )}
         </label>
-        <span
-          className={`text-[9.5px] font-bold px-2 py-0.5 rounded-full border transition-all ${
-            isAll
-              ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'
-              : themeColors.badge
-          }`}
-        >
-          {isAll ? 'All (Default)' : `${selected.length} Selected`}
-        </span>
+        {headerRight ? (
+          headerRight
+        ) : (
+          <span
+            className={`text-[9.5px] font-bold px-2 py-0.5 rounded-full border transition-all ${
+              isAll
+                ? isExplicit
+                  ? themeColors.badge
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                : selected.length === 0
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'
+                : themeColors.badge
+            }`}
+          >
+            {isExplicit
+              ? isAll
+                ? `All (${options.length})`
+                : `${selected.length} Selected`
+              : isAll
+              ? 'All (Default)'
+              : `${selected.length} Selected`}
+          </span>
+        )}
       </div>
 
       {/* Trigger Button */}
@@ -203,8 +238,10 @@ function MultiSelectDropdown({
       >
         <div className="flex items-center gap-2 overflow-hidden">
           <span className="text-slate-800 dark:text-slate-200 truncate font-medium">
-            {isAll ? (
+            {!isExplicit && isAll ? (
               <span className="text-slate-400 font-normal">All / Any (No restriction)</span>
+            ) : selected.length === 0 ? (
+              <span className="text-slate-400 font-normal">{placeholder || 'None selected (0)'}</span>
             ) : (
               <span className="font-semibold">{summaryText}</span>
             )}
@@ -217,8 +254,8 @@ function MultiSelectDropdown({
         />
       </button>
 
-      {/* Dismissible Selected Badges Preview */}
-      {!isAll && (
+      {/* Dismissible Selected Badges Preview (shown when closed) */}
+      {selected.length > 0 && (!isAll || isExplicit) && !isOpen && (
         <div className="flex flex-wrap gap-1 pt-0.5">
           {selected.slice(0, 3).map((val) => {
             const opt = options.find((o) => o.value === val);
@@ -249,11 +286,17 @@ function MultiSelectDropdown({
         </div>
       )}
 
-      {/* Floating Popover with Search & Checkboxes */}
+      {/* Options Container: Inline expanding panel (prevents overlapping fields/cards) */}
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2.5 space-y-2 animate-in fade-in zoom-in-95 duration-150">
-          {/* Popover Header / Search */}
-          <div className="space-y-1.5 pb-2 border-b border-slate-100 dark:border-slate-800">
+        <div
+          className={
+            inline
+              ? 'mt-2 bg-slate-50/90 dark:bg-slate-800/80 border border-slate-200/90 dark:border-slate-700/80 rounded-2xl p-2.5 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150 shadow-inner'
+              : 'absolute left-0 right-0 top-full mt-1.5 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2.5 space-y-2 animate-in fade-in zoom-in-95 duration-150'
+          }
+        >
+          {/* Header / Search */}
+          <div className="space-y-1.5 pb-2 border-b border-slate-200/80 dark:border-slate-800">
             {options.length > 4 && (
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -262,13 +305,13 @@ function MultiSelectDropdown({
                   placeholder={`Search ${label}...`}
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-8 pr-2.5 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none"
+                  className="w-full pl-8 pr-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
                   autoFocus
                 />
               </div>
             )}
             <div className="flex items-center justify-between text-[11px] pt-0.5 px-0.5">
-              <span className="text-slate-400 font-medium">
+              <span className="text-slate-500 dark:text-slate-400 font-medium">
                 {selected.length} of {options.length} selected
               </span>
               <div className="flex items-center gap-2">
@@ -277,7 +320,7 @@ function MultiSelectDropdown({
                   onClick={clearAll}
                   className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 font-semibold hover:underline"
                 >
-                  Clear (All)
+                  Deselect All
                 </button>
                 <span className="text-slate-300 dark:text-slate-700">•</span>
                 <button
@@ -292,7 +335,7 @@ function MultiSelectDropdown({
           </div>
 
           {/* Options List with Checkboxes */}
-          <div className="max-h-48 overflow-y-auto space-y-0.5 custom-scrollbar pr-0.5">
+          <div className="max-h-52 overflow-y-auto space-y-0.5 custom-scrollbar pr-0.5">
             {filteredOptions.length === 0 ? (
               <div className="p-3 text-center text-xs text-slate-400">No matching options</div>
             ) : (
@@ -306,7 +349,7 @@ function MultiSelectDropdown({
                     className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
                       checked
                         ? `${themeColors.hover} font-semibold text-slate-900 dark:text-white`
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
+                        : 'hover:bg-slate-100/70 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'
                     }`}
                   >
                     {/* Modern Checkbox */}
@@ -342,10 +385,10 @@ export default function ChecklistTemplateEditor({
 }: ChecklistTemplateEditorProps) {
   const router = useRouter();
 
-  // Category creation
+  // Category creation (multi-select for Product and Profile, default unselected)
   const [newCatName, setNewCatName] = useState('');
-  const [newCatProduct, setNewCatProduct] = useState(products[0]?.name || 'Home Loan');
-  const [newCatCustomerType, setNewCatCustomerType] = useState(profiles[0]?.name || 'Salaried');
+  const [newCatProducts, setNewCatProducts] = useState<string[]>([]);
+  const [newCatCustomerTypes, setNewCatCustomerTypes] = useState<string[]>([]);
 
   // Category editing modal
   const [editingCategory, setEditingCategory] = useState<{
@@ -390,16 +433,34 @@ export default function ChecklistTemplateEditor({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // 1. Create Category
+  // 1. Create Category (Batch across selected Products and Profiles)
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCatName.trim()) return;
+    if (!newCatName.trim()) {
+      setErrorMsg('Category Name is required.');
+      return;
+    }
+    if (newCatProducts.length === 0) {
+      setErrorMsg('Please select at least one Product (or click "Select All").');
+      return;
+    }
+    if (newCatCustomerTypes.length === 0) {
+      setErrorMsg('Please select at least one Profile (or click "Select All").');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg('');
-    const res = await createTemplateCategoryAction(newCatName, newCatProduct, newCatCustomerType);
+    const res = await createTemplateCategoriesBatchAction({
+      name: newCatName,
+      products: newCatProducts,
+      customerTypes: newCatCustomerTypes,
+    });
     setLoading(false);
     if (res.success) {
       setNewCatName('');
+      setNewCatProducts([]);
+      setNewCatCustomerTypes([]);
       router.refresh();
     } else {
       setErrorMsg(res.error || 'Failed to create category');
@@ -543,7 +604,7 @@ export default function ChecklistTemplateEditor({
         {/* Forms Sidebar */}
         <div className="space-y-6">
           {/* Create Category Form */}
-          <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
+          <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-20">
             <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <Tag className="w-4 h-4 text-sky-600 dark:text-sky-400" />
               Add Checklist Category
@@ -564,90 +625,107 @@ export default function ChecklistTemplateEditor({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-3">
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                      Product
-                    </label>
-                    <Link
-                      href="/admin/products"
-                      className="text-[10px] text-sky-600 hover:text-sky-500 font-semibold flex items-center gap-0.5"
-                      title="Manage Loan Products"
-                    >
-                      + Manage
-                    </Link>
-                  </div>
-                  {products.length > 0 ? (
-                    <select
-                      value={newCatProduct}
-                      onChange={(e) => setNewCatProduct(e.target.value)}
-                      className="w-full glass-input px-2 py-2 rounded-xl text-xs font-semibold text-sky-600 dark:text-sky-400 bg-white dark:bg-slate-900"
-                    >
-                      {products.map((p) => (
-                        <option key={p.id} value={p.name}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={newCatProduct}
-                      onChange={(e) => setNewCatProduct(e.target.value)}
-                      className="w-full glass-input px-2.5 py-2 rounded-xl text-xs font-semibold text-sky-600 dark:text-sky-400"
-                    />
-                  )}
+                  <MultiSelectDropdown
+                    label="Product"
+                    icon={Package}
+                    options={products.map((p) => ({ label: p.name, value: p.name }))}
+                    selected={newCatProducts}
+                    onChange={setNewCatProducts}
+                    color="sky"
+                    mode="explicit"
+                    placeholder="Select Products..."
+                    headerRight={
+                      <div className="flex items-center gap-1.5 text-[10px] shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setNewCatProducts(products.map((p) => p.name))}
+                          className="text-sky-600 hover:text-sky-700 dark:text-sky-400 font-semibold hover:underline"
+                        >
+                          Select All
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-700">•</span>
+                        <button
+                          type="button"
+                          onClick={() => setNewCatProducts([])}
+                          className="text-slate-500 hover:text-slate-700 dark:text-slate-400 font-semibold hover:underline"
+                        >
+                          Deselect All
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-700">•</span>
+                        <Link
+                          href="/admin/products"
+                          className="text-sky-600 hover:text-sky-500 font-semibold"
+                          title="Manage Loan Products"
+                        >
+                          + Manage
+                        </Link>
+                      </div>
+                    }
+                  />
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                      Profile
-                    </label>
-                    <Link
-                      href="/admin/profiles"
-                      className="text-[10px] text-purple-600 hover:text-purple-500 font-semibold flex items-center gap-0.5"
-                      title="Manage Customer Profiles"
-                    >
-                      + Manage
-                    </Link>
-                  </div>
-                  {profiles.length > 0 ? (
-                    <select
-                      value={newCatCustomerType}
-                      onChange={(e) => setNewCatCustomerType(e.target.value)}
-                      className="w-full glass-input px-2 py-2 rounded-xl text-xs font-semibold text-indigo-600 dark:text-indigo-400 bg-white dark:bg-slate-900"
-                    >
-                      {profiles.map((p) => (
-                        <option key={p.id} value={p.name}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={newCatCustomerType}
-                      onChange={(e) => setNewCatCustomerType(e.target.value)}
-                      className="w-full glass-input px-2.5 py-2 rounded-xl text-xs font-semibold text-indigo-600 dark:text-indigo-400"
-                    />
-                  )}
+                  <MultiSelectDropdown
+                    label="Profile"
+                    icon={Briefcase}
+                    options={profiles.map((p) => ({ label: p.name, value: p.name }))}
+                    selected={newCatCustomerTypes}
+                    onChange={setNewCatCustomerTypes}
+                    color="purple"
+                    mode="explicit"
+                    placeholder="Select Profiles..."
+                    headerRight={
+                      <div className="flex items-center gap-1.5 text-[10px] shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setNewCatCustomerTypes(profiles.map((p) => p.name))}
+                          className="text-purple-600 hover:text-purple-700 dark:text-purple-400 font-semibold hover:underline"
+                        >
+                          Select All
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-700">•</span>
+                        <button
+                          type="button"
+                          onClick={() => setNewCatCustomerTypes([])}
+                          className="text-slate-500 hover:text-slate-700 dark:text-slate-400 font-semibold hover:underline"
+                        >
+                          Deselect All
+                        </button>
+                        <span className="text-slate-300 dark:text-slate-700">•</span>
+                        <Link
+                          href="/admin/profiles"
+                          className="text-purple-600 hover:text-purple-500 font-semibold"
+                          title="Manage Customer Profiles"
+                        >
+                          + Manage
+                        </Link>
+                      </div>
+                    }
+                  />
                 </div>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shadow transition-all disabled:opacity-50"
+                className="w-full mt-2 py-2.5 px-4 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                + Add Category
+                <Plus className="w-4 h-4" />
+                {loading
+                  ? 'Adding Categories...'
+                  : newCatProducts.length > 0 && newCatCustomerTypes.length > 0
+                  ? `+ Add Category (${newCatProducts.length * newCatCustomerTypes.length} combination${
+                      newCatProducts.length * newCatCustomerTypes.length > 1 ? 's' : ''
+                    })`
+                  : '+ Add Category'}
               </button>
             </form>
           </div>
 
           {/* Add Template Item Form */}
-          <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
+          <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-10">
             <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <FilePlus2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               Add Checklist Item Template
