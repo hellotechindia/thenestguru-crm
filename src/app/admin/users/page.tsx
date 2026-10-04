@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import UserManagementClient from '@/components/UserManagementClient';
 
+export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function AdminUsersPage() {

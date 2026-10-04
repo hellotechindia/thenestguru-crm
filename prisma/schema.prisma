@@ -42,14 +42,14 @@ model User {
   teamId           String?
   team             Team?            @relation(fields: [teamId], references: [id])
   dob              DateTime?
-  avatarUrl        String?          @db.Text
-  photographUrl    String?          @db.Text
+  avatarUrl        String?          @db.LongText
+  photographUrl    String?          @db.LongText
   phone            String?
   gender           String?          // MALE, FEMALE, OTHER
   pan              String?
-  panCardUrl       String?          @db.Text
+  panCardUrl       String?          @db.LongText
   aadhaar          String?
-  aadhaarCardUrl   String?          @db.Text
+  aadhaarCardUrl   String?          @db.LongText
   maritalStatus    String?          // MARRIED, UNMARRIED, SINGLE
   marriageAnniversary DateTime?
   residentialAddress String?        @db.Text
@@ -64,7 +64,7 @@ model User {
   emergencyContactPhone2 String?
   dateOfJoining    DateTime?
   educationQualification String?
-  pastExperience   String?          @db.Text
+  pastExperience   String?          @db.LongText
   bankName         String?
   bankAccountNo    String?
   bankIfsc         String?

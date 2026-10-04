@@ -7,6 +7,7 @@ import { getScopedCaseWhere } from '@/lib/case-filter';
 import Link from 'next/link';
 import { PlusCircle } from 'lucide-react';
 
+export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function CasesPage() {
@@ -20,7 +21,19 @@ export default async function CasesPage() {
 
   const casesWhere = await getScopedCaseWhere(userId, userRole);
 
-  const [teams, states, users, cases, products, profiles, caseStatuses] = await Promise.all([
+  const [
+    teams,
+    states,
+    users,
+    cases,
+    products,
+    profiles,
+    caseStatuses,
+    workflowStages,
+    propertyScopes,
+    targetCategories,
+    subProducts,
+  ] = await Promise.all([
     prisma.team.findMany({ orderBy: { name: 'asc' } }),
     prisma.stateConfig.findMany({
       include: { cities: { orderBy: { name: 'asc' } } },
@@ -41,6 +54,10 @@ export default async function CasesPage() {
     prisma.productMaster.findMany({ orderBy: { name: 'asc' } }),
     prisma.profileMaster.findMany({ orderBy: { name: 'asc' } }),
     prisma.caseStatusMaster.findMany({ orderBy: { displayOrder: 'asc' } }),
+    prisma.workflowStageMaster.findMany({ orderBy: { stageNumber: 'asc' } }),
+    prisma.propertyScopeMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.targetCategoryMaster.findMany({ orderBy: { name: 'asc' } }),
+    prisma.subProductMaster.findMany({ orderBy: { name: 'asc' } }),
   ]);
 
   const formattedCases = cases.map((c) => {
@@ -55,11 +72,14 @@ export default async function CasesPage() {
       clientName: c.clientName,
       mobile: c.mobile,
       email: c.email,
+      gender: c.gender || 'MALE',
       clientState: c.clientState || '',
       clientCity: c.clientCity || '',
       clientDob: c.clientDob ? c.clientDob.toISOString().slice(0, 10) : '',
       product: c.product,
+      subProduct: c.subProduct || '',
       customerType: c.customerType,
+      incomeTypes: c.incomeTypes || '',
       propertyType: c.propertyType,
       propertyState: c.propertyState || '',
       propertyCity: c.propertyCity || '',
@@ -110,8 +130,12 @@ export default async function CasesPage() {
         states={states}
         users={users}
         products={products}
+        subProducts={subProducts}
         profiles={profiles}
         caseStatuses={caseStatuses}
+        workflowStages={workflowStages}
+        propertyScopes={propertyScopes}
+        targetCategories={targetCategories}
       />
     </div>
   );

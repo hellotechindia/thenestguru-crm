@@ -24,11 +24,16 @@ export async function getScopedCaseWhere(
       channelIds.push(...userRecord.childChannels.map((c) => c.id));
     }
 
+    const channelOrConditions: Prisma.CaseWhereInput[] = [
+      { channelUserId: { in: channelIds } },
+      { createdById: { in: channelIds } },
+    ];
+    for (const cid of channelIds) {
+      channelOrConditions.push({ channelUserId: { contains: cid } });
+    }
+
     return {
-      OR: [
-        { channelUserId: { in: channelIds } },
-        { createdById: { in: channelIds } },
-      ],
+      OR: channelOrConditions,
     };
   }
 
@@ -43,18 +48,22 @@ export async function getScopedCaseWhere(
   if (userRole === 'SALES') {
     orConditions.push(
       { salesUserId: userId },
+      { salesUserId: { contains: userId } },
       { createdById: userId }
     );
   } else if (userRole === 'OPERATION') {
     orConditions.push(
       { operationUserId: userId },
+      { operationUserId: { contains: userId } },
       { createdById: userId }
     );
   } else {
     // Regular TEAM_MEMBER
     orConditions.push(
       { salesUserId: userId },
+      { salesUserId: { contains: userId } },
       { operationUserId: userId },
+      { operationUserId: { contains: userId } },
       { createdById: userId }
     );
   }
@@ -82,6 +91,10 @@ export async function canUserAccessCase(
 ): Promise<boolean> {
   if (userRole === 'SUPER_ADMIN') return true;
 
+  const caseChannelIds = (caseItem.channelUserId || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const caseSalesIds = (caseItem.salesUserId || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const caseOpsIds = (caseItem.operationUserId || '').split(',').map((s) => s.trim()).filter(Boolean);
+
   if (userRole === 'CHANNEL') {
     const userRecord = await prisma.user.findUnique({
       where: { id: userId },
@@ -93,7 +106,7 @@ export async function canUserAccessCase(
       channelIds.push(...userRecord.childChannels.map((c) => c.id));
     }
     return (
-      (caseItem.channelUserId ? channelIds.includes(caseItem.channelUserId) : false) ||
+      caseChannelIds.some((cid) => channelIds.includes(cid)) ||
       (caseItem.createdById ? channelIds.includes(caseItem.createdById) : false)
     );
   }
@@ -102,11 +115,11 @@ export async function canUserAccessCase(
   if (caseItem.createdById === userId) return true;
 
   // Check role-specific assignment
-  if (userRole === 'SALES' && caseItem.salesUserId === userId) return true;
-  if (userRole === 'OPERATION' && caseItem.operationUserId === userId) return true;
+  if (userRole === 'SALES' && caseSalesIds.includes(userId)) return true;
+  if (userRole === 'OPERATION' && caseOpsIds.includes(userId)) return true;
   if (
     userRole === 'TEAM_MEMBER' &&
-    (caseItem.salesUserId === userId || caseItem.operationUserId === userId)
+    (caseSalesIds.includes(userId) || caseOpsIds.includes(userId))
   ) {
     return true;
   }

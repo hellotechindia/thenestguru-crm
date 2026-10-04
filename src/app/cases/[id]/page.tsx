@@ -6,6 +6,7 @@ import { canUserAccessCase } from '@/lib/case-filter';
 import CaseDetailTracker from '@/components/CaseDetailTracker';
 import CaseFollowUpTimeline from '@/components/CaseFollowUpTimeline';
 
+export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function CaseDetailPage({ params }: { params: { id: string } }) {

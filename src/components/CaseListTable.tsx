@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import {
   Search,
@@ -23,13 +23,32 @@ import {
   Users,
   Calendar,
   Clock,
+  Plus,
+  Loader2,
+  Save,
+  Palette,
 } from 'lucide-react';
-import { deleteCaseAction, updateCaseIntakeDetailsAction } from '@/app/actions';
+import {
+  deleteCaseAction,
+  updateCaseIntakeDetailsAction,
+  createWorkflowStageAction,
+  updateWorkflowStageAction,
+  deleteWorkflowStageAction,
+} from '@/app/actions';
 import { useRouter } from 'next/navigation';
 import { exportToCSV } from '@/lib/excel-export';
 import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 import { INDIAN_STATES, getCitiesForIndianState } from '@/lib/india-data';
 import DatePickerInput from './DatePickerInput';
+import MultiSelectDropdown from './MultiSelectDropdown';
+
+export interface WorkflowStageItem {
+  id: string;
+  stageNumber: number;
+  name: string;
+  description?: string | null;
+  color?: string | null;
+}
 
 export interface CoApplicantInfo {
   name: string;
@@ -41,6 +60,7 @@ export interface CoApplicantInfo {
   city?: string;
   dob?: string;
   customerType?: string;
+  customerTypes?: string[];
   incomeTypes?: string[];
   incomeRequired: boolean;
 }
@@ -50,11 +70,14 @@ export interface CaseItem {
   clientName: string;
   mobile: string;
   email: string | null;
+  gender?: string | null;
   clientState?: string | null;
   clientCity?: string | null;
   clientDob?: string | null;
   product: string;
+  subProduct?: string | null;
   customerType: string;
+  incomeTypes?: string | null;
   propertyType: string;
   propertyState?: string | null;
   propertyCity?: string | null;
@@ -83,8 +106,12 @@ interface CaseListTableProps {
   states?: Array<{ id: string; name: string; cities?: Array<{ id: string; name: string }> }>;
   users?: Array<{ id: string; name: string; role: string; email?: string | null; username?: string | null }>;
   products?: Array<{ id: string; name: string }>;
+  subProducts?: Array<{ id: string; name: string; productId: string }>;
   profiles?: Array<{ id: string; name: string }>;
   caseStatuses?: Array<{ id: string; name: string; color?: string | null; description?: string | null; displayOrder?: number }>;
+  workflowStages?: WorkflowStageItem[];
+  propertyScopes?: Array<{ id: string; name: string }>;
+  targetCategories?: Array<{ id: string; name: string }>;
 }
 
 const DEFAULT_STATUSES = [
@@ -96,6 +123,13 @@ const DEFAULT_STATUSES = [
   { id: '6', name: 'Rejected', color: '#ef4444' },
 ];
 
+const DEFAULT_WORKFLOW_STAGES: WorkflowStageItem[] = [
+  { id: '1', stageNumber: 1, name: 'Lead Intake & KYC Verification', color: '#0284c7' },
+  { id: '2', stageNumber: 2, name: 'Property Legal & Technical Verification', color: '#8b5cf6' },
+  { id: '3', stageNumber: 3, name: 'Bank Login & Credit Underwriting', color: '#f59e0b' },
+  { id: '4', stageNumber: 4, name: 'Sanction & Final Disbursement', color: '#10b981' },
+];
+
 export default function CaseListTable({
   cases,
   userRole,
@@ -103,74 +137,284 @@ export default function CaseListTable({
   states = [],
   users = [],
   products = [],
+  subProducts = [],
   profiles = [],
   caseStatuses = [],
+  workflowStages = [],
+  propertyScopes = [],
+  targetCategories = [],
 }: CaseListTableProps) {
   const router = useRouter();
   const availableStatuses = caseStatuses && caseStatuses.length > 0 ? caseStatuses : DEFAULT_STATUSES;
   const userMap = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [stageFilter, setStageFilter] = useState('ALL');
   const [propertyFilter, setPropertyFilter] = useState('ALL');
   const [assigneeFilter, setAssigneeFilter] = useState('ALL');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
+  // Dynamic Processing Stages State
+  const [stagesList, setStagesList] = useState<WorkflowStageItem[]>(
+    workflowStages && workflowStages.length > 0 ? workflowStages : DEFAULT_WORKFLOW_STAGES
+  );
+
+  useEffect(() => {
+    if (workflowStages && workflowStages.length > 0) {
+      setStagesList(workflowStages);
+    }
+  }, [workflowStages]);
+
+  // Stage Manager Modal State
+  const [isStageManagerOpen, setIsStageManagerOpen] = useState(false);
+  const [editingStageId, setEditingStageId] = useState<string | null>(null);
+  const [editStageData, setEditStageData] = useState({ stageNumber: 1, name: '', description: '', color: '#3b82f6' });
+  const [newStageData, setNewStageData] = useState({
+    stageNumber: 5,
+    name: '',
+    description: '',
+    color: '#3b82f6',
+  });
+  const [stageManagerLoading, setStageManagerLoading] = useState(false);
+  const [stageManagerError, setStageManagerError] = useState('');
+  const [stageManagerSuccess, setStageManagerSuccess] = useState('');
+
+  const handleAddStage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newStageData.name.trim() || !newStageData.stageNumber) {
+      setStageManagerError('Stage Number and Name are required.');
+      return;
+    }
+    setStageManagerLoading(true);
+    setStageManagerError('');
+    const res = await createWorkflowStageAction({
+      stageNumber: Number(newStageData.stageNumber),
+      name: newStageData.name.trim(),
+      description: newStageData.description?.trim() || undefined,
+      color: newStageData.color,
+    });
+    setStageManagerLoading(false);
+    if (res.success && res.stage) {
+      const updated = [...stagesList, res.stage].sort((a, b) => a.stageNumber - b.stageNumber);
+      setStagesList(updated);
+      setNewStageData({
+        stageNumber: Math.max(...updated.map((s) => s.stageNumber), 0) + 1,
+        name: '',
+        description: '',
+        color: '#3b82f6',
+      });
+      setStageManagerSuccess('New Processing Stage added successfully!');
+      setTimeout(() => setStageManagerSuccess(''), 3000);
+      router.refresh();
+    } else {
+      setStageManagerError(res.error || 'Failed to add stage.');
+    }
+  };
+
+  const handleStartEditStage = (stg: WorkflowStageItem) => {
+    setEditingStageId(stg.id);
+    setEditStageData({
+      stageNumber: stg.stageNumber,
+      name: stg.name,
+      description: stg.description || '',
+      color: stg.color || '#3b82f6',
+    });
+    setStageManagerError('');
+  };
+
+  const handleSaveEditStage = async (id: string) => {
+    if (!editStageData.name.trim() || !editStageData.stageNumber) {
+      setStageManagerError('Stage Number and Name are required.');
+      return;
+    }
+    setStageManagerLoading(true);
+    setStageManagerError('');
+    const res = await updateWorkflowStageAction(id, {
+      stageNumber: Number(editStageData.stageNumber),
+      name: editStageData.name.trim(),
+      description: editStageData.description?.trim() || undefined,
+      color: editStageData.color,
+    });
+    setStageManagerLoading(false);
+    if (res.success && res.stage) {
+      const updated = stagesList
+        .map((s) => (s.id === id ? { ...s, ...res.stage } : s))
+        .sort((a, b) => a.stageNumber - b.stageNumber);
+      setStagesList(updated);
+      setEditingStageId(null);
+      setStageManagerSuccess('Processing Stage updated successfully!');
+      setTimeout(() => setStageManagerSuccess(''), 3000);
+      router.refresh();
+    } else {
+      setStageManagerError(res.error || 'Failed to update stage.');
+    }
+  };
+
+  const handleDeleteStage = async (id: string, stageNumber: number, name: string) => {
+    if (!confirm(`Are you sure you want to delete Stage ${stageNumber} (${name})?`)) return;
+    setStageManagerLoading(true);
+    setStageManagerError('');
+    const res = await deleteWorkflowStageAction(id);
+    setStageManagerLoading(false);
+    if (res.success) {
+      const updated = stagesList.filter((s) => s.id !== id);
+      setStagesList(updated);
+      setStageManagerSuccess(`Stage ${stageNumber} deleted successfully.`);
+      setTimeout(() => setStageManagerSuccess(''), 3000);
+      router.refresh();
+    } else {
+      setStageManagerError(res.error || 'Failed to delete stage.');
+    }
+  };
+
   // Edit Modal State
   const [editingCase, setEditingCase] = useState<CaseItem | null>(null);
   const [isCustomCityEdit, setIsCustomCityEdit] = useState(false);
+  const [isCustomPropCityEdit, setIsCustomPropCityEdit] = useState(false);
   const [editFormData, setEditFormData] = useState({
     clientName: '',
     mobile: '',
     email: '',
+    gender: 'MALE',
     clientState: '',
     clientCity: '',
     clientDob: '',
     product: products[0]?.name || 'Home Loan',
-    customerType: profiles[0]?.name || 'Salaried',
-    propertyType: 'Resale',
+    subProduct: '',
+    customerType: targetCategories[0]?.name || profiles[0]?.name || 'Individual',
+    customerTypes: [] as string[],
+    incomeTypes: [] as string[],
+    propertyType: propertyScopes[0]?.name || 'Resale',
+    propertyState: '',
+    propertyCity: '',
     coApplicantCount: 0,
     stage: 1,
     status: 'Pending Documents',
     assignedTeamId: '',
     channelUserId: '',
+    channelUserIds: [] as string[],
     salesUserId: '',
+    salesUserIds: [] as string[],
     operationUserId: '',
+    operationUserIds: [] as string[],
   });
   const [editCoApplicants, setEditCoApplicants] = useState<CoApplicantInfo[]>([]);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
 
+  // Real-time synchronization when tab is focused
+  useEffect(() => {
+    const handleFocus = () => {
+      router.refresh();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [router]);
+
+  const filterPropertyScopes = useMemo(() => {
+    return propertyScopes && propertyScopes.length > 0
+      ? propertyScopes
+      : [
+          { id: '1', name: 'Resale' },
+          { id: '2', name: 'Takeover / Seller BT' },
+          { id: '3', name: 'Direct Allotment (Under Construction)' },
+        ];
+  }, [propertyScopes]);
+
+  const availablePropertyScopes = useMemo(() => {
+    const list = propertyScopes && propertyScopes.length > 0
+      ? [...propertyScopes]
+      : [
+          { id: '1', name: 'Resale' },
+          { id: '2', name: 'Takeover / Seller BT' },
+          { id: '3', name: 'Direct Allotment (Under Construction)' },
+        ];
+    if (editFormData.propertyType && !list.some((p) => p.name.toLowerCase() === editFormData.propertyType.toLowerCase())) {
+      list.push({ id: 'current', name: editFormData.propertyType });
+    }
+    return list;
+  }, [propertyScopes, editFormData.propertyType]);
+
+  const availableCustomerTypes = useMemo(() => {
+    const list = targetCategories && targetCategories.length > 0
+      ? [...targetCategories]
+      : profiles && profiles.length > 0
+      ? [...profiles]
+      : [
+          { id: '1', name: 'Individual' },
+          { id: '2', name: 'Salaried' },
+          { id: '3', name: 'Self Employed Professional' },
+          { id: '4', name: 'Business / Non-Professional' },
+        ];
+    if (editFormData.customerType && !list.some((c) => c.name.toLowerCase() === editFormData.customerType.toLowerCase())) {
+      list.push({ id: 'current', name: editFormData.customerType });
+    }
+    return list;
+  }, [targetCategories, profiles, editFormData.customerType]);
+
+  const availableProducts = useMemo(() => {
+    const list = products && products.length > 0
+      ? [...products]
+      : [
+          { id: '1', name: 'Home Loan' },
+          { id: '2', name: 'Loan Against Property' },
+          { id: '3', name: 'MSME Business Loan' },
+        ];
+    if (editFormData.product && !list.some((p) => p.name.toLowerCase() === editFormData.product.toLowerCase())) {
+      list.push({ id: 'current', name: editFormData.product });
+    }
+    return list;
+  }, [products, editFormData.product]);
+
   const channelUsers = users.filter((u) => u.role === 'CHANNEL');
   const salesUsers = users.filter((u) => u.role === 'SALES');
   const operationUsers = users.filter((u) => u.role === 'OPERATION' || u.role === 'TEAM_MEMBER');
 
+  const selectedEditProductObj = availableProducts.find(
+    (p) => p.name.toLowerCase() === editFormData.product.toLowerCase()
+  );
+  const filteredEditSubProducts = (subProducts || []).filter((sp) => {
+    if (!selectedEditProductObj) return false;
+    return sp.productId === (selectedEditProductObj as any).id;
+  });
+
   const filteredCases = cases.filter((c) => {
     const searchLower = searchTerm.toLowerCase();
-    const opsUser = c.operationUserId ? (userMap.get(c.operationUserId)?.name || '').toLowerCase() : '';
-    const salesUser = c.salesUserId ? (userMap.get(c.salesUserId)?.name || '').toLowerCase() : '';
-    const channelUser = c.channelUserId ? (userMap.get(c.channelUserId)?.name || '').toLowerCase() : '';
+    const opsUserNames = (c.operationUserId || '')
+      .split(',')
+      .map((id) => (userMap.get(id.trim())?.name || '').toLowerCase())
+      .join(' ');
+    const salesUserNames = (c.salesUserId || '')
+      .split(',')
+      .map((id) => (userMap.get(id.trim())?.name || '').toLowerCase())
+      .join(' ');
+    const channelUserNames = (c.channelUserId || '')
+      .split(',')
+      .map((id) => (userMap.get(id.trim())?.name || '').toLowerCase())
+      .join(' ');
     const teamName = (c.assignedTeamName || '').toLowerCase();
 
     const matchesSearch =
       c.clientName.toLowerCase().includes(searchLower) ||
       c.mobile.includes(searchTerm) ||
       (c.email && c.email.toLowerCase().includes(searchLower)) ||
-      opsUser.includes(searchLower) ||
-      salesUser.includes(searchLower) ||
-      channelUser.includes(searchLower) ||
+      opsUserNames.includes(searchLower) ||
+      salesUserNames.includes(searchLower) ||
+      channelUserNames.includes(searchLower) ||
       teamName.includes(searchLower);
 
     const matchesStatus = statusFilter === 'ALL' || c.status === statusFilter;
+    const matchesStage = stageFilter === 'ALL' || String(c.stage) === stageFilter;
     const matchesProperty = propertyFilter === 'ALL' || c.propertyType === propertyFilter;
     const matchesAssignee =
       assigneeFilter === 'ALL' ||
-      c.operationUserId === assigneeFilter ||
-      c.salesUserId === assigneeFilter ||
-      c.channelUserId === assigneeFilter;
+      (c.operationUserId && c.operationUserId.split(',').map((s) => s.trim()).includes(assigneeFilter)) ||
+      (c.salesUserId && c.salesUserId.split(',').map((s) => s.trim()).includes(assigneeFilter)) ||
+      (c.channelUserId && c.channelUserId.split(',').map((s) => s.trim()).includes(assigneeFilter));
 
-    return matchesSearch && matchesStatus && matchesProperty && matchesAssignee;
+    return matchesSearch && matchesStatus && matchesStage && matchesProperty && matchesAssignee;
   });
 
   const handleExportFilteredCases = () => {
@@ -186,11 +430,14 @@ export default function CaseListTable({
       'Customer Profile': c.customerType,
       'Property Scope': c.propertyType,
       'Co-Applicants Count': c.coApplicantCount,
-      'Processing Stage': `Stage ${c.stage}`,
+      'Processing Stage': (() => {
+        const stg = stagesList.find((s) => s.stageNumber === c.stage);
+        return stg ? `Stage ${c.stage} - ${stg.name}` : `Stage ${c.stage}`;
+      })(),
       'Case Filing Status': c.status,
-      'Assigned Operations Lead': (c.operationUserId && userMap.get(c.operationUserId)?.name) || 'N/A',
-      'Assigned Sales Lead': (c.salesUserId && userMap.get(c.salesUserId)?.name) || 'N/A',
-      'Channel Partner': (c.channelUserId && userMap.get(c.channelUserId)?.name) || 'N/A',
+      'Assigned Operations Lead': (c.operationUserId ? c.operationUserId.split(',').map((id) => userMap.get(id.trim())?.name).filter(Boolean).join(', ') : '') || 'N/A',
+      'Assigned Sales Lead': (c.salesUserId ? c.salesUserId.split(',').map((id) => userMap.get(id.trim())?.name).filter(Boolean).join(', ') : '') || 'N/A',
+      'Channel Partner': (c.channelUserId ? c.channelUserId.split(',').map((id) => userMap.get(id.trim())?.name).filter(Boolean).join(', ') : '') || 'N/A',
       'Assigned Team': c.assignedTeamName,
       'Documents Received': `${c.receivedCount}/${c.checklistCount}`,
       'Checklist Progress (%)': c.checklistCount > 0 ? `${Math.round((c.receivedCount / c.checklistCount) * 100)}%` : '0%',
@@ -226,7 +473,7 @@ export default function CaseListTable({
     setEditError('');
     setEditingCase(c);
 
-    let parsedCoApps: CoApplicantInfo[] = [];
+    let parsedCoApps: any[] = [];
     try {
       if (c.coApplicantsData) {
         parsedCoApps = JSON.parse(c.coApplicantsData);
@@ -237,36 +484,82 @@ export default function CaseListTable({
 
     const fullCoApps: CoApplicantInfo[] = [];
     for (let i = 0; i < c.coApplicantCount; i++) {
-      fullCoApps.push(
-        parsedCoApps[i] || {
-          name: '',
-          mobile: '',
-          email: '',
-          state: states[0]?.name || '',
-          incomeRequired: true,
-        }
-      );
+      const co = parsedCoApps[i] || {};
+      const coCustTypes = Array.isArray(co.customerTypes)
+        ? co.customerTypes
+        : (co.customerType ? co.customerType.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+      const coIncTypes = Array.isArray(co.incomeTypes)
+        ? co.incomeTypes
+        : [];
+      fullCoApps.push({
+        name: co.name || '',
+        relationship: co.relationship || 'Spouse',
+        mobile: co.mobile || '',
+        email: co.email || '',
+        gender: co.gender || 'MALE',
+        state: co.state || (states[0]?.name || ''),
+        city: co.city || '',
+        dob: co.dob || '',
+        customerType: coCustTypes.join(', ') || co.customerType || '',
+        customerTypes: coCustTypes,
+        incomeTypes: coIncTypes,
+        incomeRequired: co.incomeRequired !== false,
+      });
     }
     setEditCoApplicants(fullCoApps);
 
+    const parsedCustomerTypes = c.customerType
+      ? c.customerType.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    let parsedIncomeTypes: string[] = [];
+    if (c.incomeTypes) {
+      try {
+        const parsed = JSON.parse(c.incomeTypes);
+        parsedIncomeTypes = Array.isArray(parsed) ? parsed : [c.incomeTypes];
+      } catch {
+        parsedIncomeTypes = c.incomeTypes.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+
+    const channelUserIds = c.channelUserId
+      ? c.channelUserId.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    const salesUserIds = c.salesUserId
+      ? c.salesUserId.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    const operationUserIds = c.operationUserId
+      ? c.operationUserId.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
     setIsCustomCityEdit(false);
+    setIsCustomPropCityEdit(false);
     setEditFormData({
       clientName: c.clientName,
       mobile: c.mobile,
       email: c.email || '',
+      gender: c.gender || 'MALE',
       clientState: c.clientState || (states[0]?.name || ''),
       clientCity: c.clientCity || '',
       clientDob: c.clientDob || '',
       product: c.product,
+      subProduct: c.subProduct || '',
       customerType: c.customerType,
+      customerTypes: parsedCustomerTypes,
+      incomeTypes: parsedIncomeTypes,
       propertyType: c.propertyType,
+      propertyState: c.propertyState || (states[0]?.name || ''),
+      propertyCity: c.propertyCity || '',
       coApplicantCount: c.coApplicantCount,
       stage: c.stage,
       status: c.status,
       assignedTeamId: c.assignedTeamId || (teams[0]?.id || ''),
       channelUserId: c.channelUserId || '',
+      channelUserIds,
       salesUserId: c.salesUserId || '',
+      salesUserIds,
       operationUserId: c.operationUserId || '',
+      operationUserIds,
     });
   };
 
@@ -277,10 +570,16 @@ export default function CaseListTable({
       for (let i = updated.length; i < newCount; i++) {
         updated.push({
           name: '',
+          relationship: 'Spouse',
           mobile: '',
           email: '',
+          gender: 'MALE',
           state: states[0]?.name || '',
+          city: '',
           dob: '',
+          customerType: '',
+          customerTypes: [],
+          incomeTypes: [],
           incomeRequired: false,
         });
       }
@@ -340,24 +639,46 @@ export default function CaseListTable({
     setEditLoading(true);
     setEditError('');
 
+    const finalCustType = editFormData.customerTypes.length > 0
+      ? editFormData.customerTypes.join(', ')
+      : editFormData.customerType;
+
+    const channelUserId = editFormData.channelUserIds.length > 0
+      ? editFormData.channelUserIds.join(',')
+      : (editFormData.channelUserId || null);
+    const salesUserId = editFormData.salesUserIds.length > 0
+      ? editFormData.salesUserIds.join(',')
+      : (editFormData.salesUserId || null);
+    const operationUserId = editFormData.operationUserIds.length > 0
+      ? editFormData.operationUserIds.join(',')
+      : (editFormData.operationUserId || null);
+
     const res = await updateCaseIntakeDetailsAction(editingCase.id, {
       clientName: editFormData.clientName,
       mobile: editFormData.mobile,
       email: editFormData.email || null,
+      gender: editFormData.gender || 'MALE',
       clientState: editFormData.clientState || null,
       clientCity: editFormData.clientCity || null,
       clientDob: editFormData.clientDob || null,
       product: editFormData.product,
-      customerType: editFormData.customerType,
+      subProduct: editFormData.subProduct || null,
+      customerType: finalCustType,
+      incomeTypes: editFormData.incomeTypes,
       propertyType: editFormData.propertyType,
-      coApplicantCount: editFormData.coApplicantCount,
-      coApplicantsData: editCoApplicants,
+      propertyState: editFormData.propertyState || null,
+      propertyCity: editFormData.propertyCity || null,
+      coApplicantCount: editCoApplicants.length,
+      coApplicantsData: editCoApplicants.map((co) => ({
+        ...co,
+        customerType: co.customerTypes && co.customerTypes.length > 0 ? co.customerTypes.join(', ') : co.customerType,
+      })),
       stage: editFormData.stage,
       status: editFormData.status,
       assignedTeamId: editFormData.assignedTeamId || null,
-      channelUserId: editFormData.channelUserId || null,
-      salesUserId: editFormData.salesUserId || null,
-      operationUserId: editFormData.operationUserId || null,
+      channelUserId,
+      salesUserId,
+      operationUserId,
     });
 
     setEditLoading(false);
@@ -427,6 +748,22 @@ export default function CaseListTable({
           </div>
 
           <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs shrink-0">
+            <span className="text-slate-500 font-medium">Stage:</span>
+            <select
+              value={stageFilter}
+              onChange={(e) => setStageFilter(e.target.value)}
+              className="bg-transparent text-sky-600 dark:text-sky-400 font-semibold focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">All Stages</option>
+              {stagesList.map((stg) => (
+                <option key={stg.id || stg.stageNumber} value={String(stg.stageNumber)}>
+                  Stage {stg.stageNumber} ({stg.name})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs shrink-0">
             <span className="text-slate-500 font-medium">Property:</span>
             <select
               value={propertyFilter}
@@ -434,9 +771,11 @@ export default function CaseListTable({
               className="bg-transparent text-sky-600 dark:text-sky-400 font-semibold focus:outline-none cursor-pointer"
             >
               <option value="ALL">All Types</option>
-              <option value="Resale">Resale</option>
-              <option value="Takeover / Seller BT">Takeover / Seller BT</option>
-              <option value="Direct Allotment (Under Construction)">Direct Allotment</option>
+              {filterPropertyScopes.map((ps) => (
+                <option key={ps.id || ps.name} value={ps.name}>
+                  {ps.name}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -603,41 +942,56 @@ export default function CaseListTable({
                       {/* Assigned Staff Column */}
                       <td className="py-3 px-2.5">
                         <div className="flex flex-col gap-1 text-[11px] whitespace-nowrap">
-                          {/* Ops Lead */}
-                          {c.operationUserId && userMap.get(c.operationUserId) ? (
-                            <div className="flex items-center gap-1" title={`Operations: ${userMap.get(c.operationUserId)?.name}`}>
-                              <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-purple-50 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shrink-0">
-                                Ops
-                              </span>
-                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
-                                {userMap.get(c.operationUserId)?.name}
-                              </span>
-                            </div>
-                          ) : null}
+                          {/* Ops Lead(s) */}
+                          {(() => {
+                            const ids = (c.operationUserId || '').split(',').map((s) => s.trim()).filter(Boolean);
+                            const names = ids.map((id) => userMap.get(id)?.name).filter(Boolean);
+                            if (names.length === 0) return null;
+                            return (
+                              <div className="flex items-center gap-1" title={`Operations: ${names.join(', ')}`}>
+                                <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-purple-50 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shrink-0">
+                                  Ops{names.length > 1 ? ` (${names.length})` : ''}
+                                </span>
+                                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
+                                  {names.join(', ')}
+                                </span>
+                              </div>
+                            );
+                          })()}
 
-                          {/* Sales Lead */}
-                          {c.salesUserId && userMap.get(c.salesUserId) ? (
-                            <div className="flex items-center gap-1" title={`Sales: ${userMap.get(c.salesUserId)?.name}`}>
-                              <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shrink-0">
-                                Sales
-                              </span>
-                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
-                                {userMap.get(c.salesUserId)?.name}
-                              </span>
-                            </div>
-                          ) : null}
+                          {/* Sales Lead(s) */}
+                          {(() => {
+                            const ids = (c.salesUserId || '').split(',').map((s) => s.trim()).filter(Boolean);
+                            const names = ids.map((id) => userMap.get(id)?.name).filter(Boolean);
+                            if (names.length === 0) return null;
+                            return (
+                              <div className="flex items-center gap-1" title={`Sales: ${names.join(', ')}`}>
+                                <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 shrink-0">
+                                  Sales{names.length > 1 ? ` (${names.length})` : ''}
+                                </span>
+                                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
+                                  {names.join(', ')}
+                                </span>
+                              </div>
+                            );
+                          })()}
 
-                          {/* Channel Partner */}
-                          {c.channelUserId && userMap.get(c.channelUserId) ? (
-                            <div className="flex items-center gap-1" title={`Channel: ${userMap.get(c.channelUserId)?.name}`}>
-                              <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 shrink-0">
-                                CP
-                              </span>
-                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
-                                {userMap.get(c.channelUserId)?.name}
-                              </span>
-                            </div>
-                          ) : null}
+                          {/* Channel Partner(s) */}
+                          {(() => {
+                            const ids = (c.channelUserId || '').split(',').map((s) => s.trim()).filter(Boolean);
+                            const names = ids.map((id) => userMap.get(id)?.name).filter(Boolean);
+                            if (names.length === 0) return null;
+                            return (
+                              <div className="flex items-center gap-1" title={`Channel: ${names.join(', ')}`}>
+                                <span className="px-1 py-0.2 rounded text-[8px] font-black uppercase bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 shrink-0">
+                                  CP{names.length > 1 ? ` (${names.length})` : ''}
+                                </span>
+                                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[95px]">
+                                  {names.join(', ')}
+                                </span>
+                              </div>
+                            );
+                          })()}
 
                           {/* Fallback if no specific staff is assigned */}
                           {!c.operationUserId && !c.salesUserId && !c.channelUserId && (
@@ -648,9 +1002,23 @@ export default function CaseListTable({
                         </div>
                       </td>
                       <td className="py-3 px-2 text-center whitespace-nowrap">
-                        <span className="inline-block px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 font-bold text-[10px] border border-indigo-200 dark:border-indigo-500/30">
-                          Stage {c.stage}
-                        </span>
+                        {(() => {
+                          const matchedStage = stagesList.find((s) => s.stageNumber === c.stage);
+                          const stageColor = matchedStage?.color || '#6366f1';
+                          return (
+                            <span
+                              className="inline-block px-2 py-0.5 rounded-lg font-bold text-[10px] border max-w-[130px] truncate"
+                              title={matchedStage ? `Stage ${c.stage}: ${matchedStage.name}` : `Stage ${c.stage}`}
+                              style={{
+                                backgroundColor: `${stageColor}18`,
+                                color: stageColor,
+                                borderColor: `${stageColor}40`,
+                              }}
+                            >
+                              Stage {c.stage}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="py-3 px-2.5">
                         <div className="flex flex-col items-center">
@@ -760,10 +1128,10 @@ export default function CaseListTable({
             )}
 
             <form onSubmit={handleSaveEdit} className="space-y-5 text-xs overflow-y-auto pr-1 flex-1">
-              {/* Section 1: Client Contact Information */}
+              {/* Section 1: Client Contact Information & KYC */}
               <div className="space-y-3">
                 <div className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-1">
-                  <User className="w-3.5 h-3.5 text-sky-500" /> 1. Client Contact Details
+                  <User className="w-3.5 h-3.5 text-sky-500" /> 1. Client Contact & KYC Details
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
@@ -775,7 +1143,7 @@ export default function CaseListTable({
                       required
                       value={editFormData.clientName}
                       onChange={(e) => setEditFormData({ ...editFormData, clientName: sanitizeToAlphabetsOnly(e.target.value) })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold"
                     />
                   </div>
 
@@ -794,7 +1162,7 @@ export default function CaseListTable({
                       maxLength={10}
                       value={editFormData.mobile}
                       onChange={(e) => setEditFormData({ ...editFormData, mobile: sanitizeTo10Digits(e.target.value) })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-mono tracking-wider"
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs font-mono tracking-wider font-semibold"
                     />
                   </div>
 
@@ -808,6 +1176,28 @@ export default function CaseListTable({
                       onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value.trim() })}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Gender *
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['MALE', 'FEMALE', 'OTHER'].map((g) => (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => setEditFormData({ ...editFormData, gender: g })}
+                          className={`py-2 text-center rounded-xl text-xs font-bold transition-all border ${
+                            editFormData.gender === g
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                          }`}
+                        >
+                          {g}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div>
@@ -848,13 +1238,13 @@ export default function CaseListTable({
                     </select>
                   </div>
 
-                  <div>
+                  <div className="sm:col-span-2">
                     <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Client City
                     </label>
                     {(() => {
                       const editStateObj = states.find((s) => s.name?.toLowerCase() === editFormData.clientState?.toLowerCase());
-                      const dbCities = editStateObj?.cities?.map(c => c.name) || [];
+                      const dbCities = editStateObj?.cities?.map((c) => c.name) || [];
                       const editCities = Array.from(new Set([...dbCities, ...getCitiesForIndianState(editFormData.clientState)]));
                       if (editCities.length > 0) {
                         return (
@@ -923,92 +1313,256 @@ export default function CaseListTable({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Loan Product
+                      Loan Product *
                     </label>
                     <select
                       value={editFormData.product}
-                      onChange={(e) => setEditFormData({ ...editFormData, product: e.target.value })}
+                      onChange={(e) => setEditFormData({ ...editFormData, product: e.target.value, subProduct: '' })}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold text-sky-600 dark:text-sky-400"
                     >
-                      {products.length > 0 ? (
-                        products.map((p) => (
-                          <option key={p.id} value={p.name}>
-                            {p.name}
-                          </option>
-                        ))
-                      ) : (
-                        <>
-                          <option value="Home Loan">Home Loan</option>
-                          <option value="Loan Against Property">Loan Against Property</option>
-                          <option value="MSME Business Loan">MSME Business Loan</option>
-                        </>
-                      )}
+                      {availableProducts.map((p) => (
+                        <option key={p.id || p.name} value={p.name}>
+                          {p.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
                   <div>
                     <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Customer Profile
+                      Sub-Product
                     </label>
                     <select
-                      value={editFormData.customerType}
-                      onChange={(e) => setEditFormData({ ...editFormData, customerType: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                      value={editFormData.subProduct || ''}
+                      onChange={(e) => setEditFormData({ ...editFormData, subProduct: e.target.value })}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold text-slate-800 dark:text-slate-200"
                     >
-                      {profiles.length > 0 ? (
-                        profiles.map((pr) => (
-                          <option key={pr.id} value={pr.name}>
-                            {pr.name}
-                          </option>
-                        ))
-                      ) : (
-                        <>
-                          <option value="Salaried">Salaried</option>
-                          <option value="Professional">Professional</option>
-                          <option value="Business">Business</option>
-                        </>
-                      )}
+                      <option value="">-- Standard / General --</option>
+                      {filteredEditSubProducts.map((sp) => (
+                        <option key={sp.id} value={sp.name}>
+                          {sp.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Property Scope
-                    </label>
-                    <select
-                      value={editFormData.propertyType}
-                      onChange={(e) => setEditFormData({ ...editFormData, propertyType: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
-                    >
-                      <option value="Resale">Resale Property</option>
-                      <option value="Takeover / Seller BT">Takeover / Seller BT</option>
-                      <option value="Direct Allotment (Under Construction)">Direct Allotment (Under Construction)</option>
-                    </select>
+                  <div className="sm:col-span-2 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                        Customer Profile / Type (Multi-Select)
+                      </label>
+                      <a
+                        href="/admin/profiles"
+                        target="_blank"
+                        className="text-[10px] text-sky-600 hover:underline font-semibold"
+                      >
+                        + Manage Profiles
+                      </a>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {availableCustomerTypes.map((pr) => {
+                        const checked = editFormData.customerTypes.includes(pr.name);
+                        return (
+                          <button
+                            key={pr.name}
+                            type="button"
+                            onClick={() => {
+                              const newTypes = checked
+                                ? editFormData.customerTypes.filter((t) => t !== pr.name)
+                                : [...editFormData.customerTypes, pr.name];
+                              setEditFormData({
+                                ...editFormData,
+                                customerTypes: newTypes,
+                                customerType: newTypes.join(', '),
+                              });
+                            }}
+                            className={`flex items-center gap-2 p-2 rounded-xl border text-xs text-left transition-all ${
+                              checked
+                                ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-500 text-indigo-700 dark:text-indigo-300 font-semibold shadow-xs'
+                                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border shrink-0 ${
+                              checked ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 dark:border-slate-600'
+                            }`}>
+                              {checked && <CheckCircle2 className="w-3 h-3 stroke-[3]" />}
+                            </div>
+                            <span className="truncate">{pr.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      No. of Co-Applicants
+                  <div className="sm:col-span-2 space-y-1.5">
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                      Income Profile (Multi-Select)
                     </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="0"
-                        max="10"
-                        value={editFormData.coApplicantCount}
-                        onChange={(e) => handleCoApplicantCountChange(parseInt(e.target.value) || 0)}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs font-bold"
-                      />
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {profiles.map((pr) => {
+                        const checked = editFormData.incomeTypes.includes(pr.name);
+                        return (
+                          <button
+                            key={pr.name}
+                            type="button"
+                            onClick={() => {
+                              const newTypes = checked
+                                ? editFormData.incomeTypes.filter((t) => t !== pr.name)
+                                : [...editFormData.incomeTypes, pr.name];
+                              setEditFormData({
+                                ...editFormData,
+                                incomeTypes: newTypes,
+                              });
+                            }}
+                            className={`flex items-center gap-2 p-2 rounded-xl border text-xs text-left transition-all ${
+                              checked
+                                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 text-emerald-700 dark:text-emerald-300 font-semibold shadow-xs'
+                                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border shrink-0 ${
+                              checked ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 dark:border-slate-600'
+                            }`}>
+                              {checked && <CheckCircle2 className="w-3 h-3 stroke-[3]" />}
+                            </div>
+                            <span className="truncate">{pr.name}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Section 3: Co-Applicant Details */}
+              {/* Section 3: Property Scope & Location */}
+              <div className="space-y-3 pt-2">
+                <div className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-1">
+                  <Building className="w-3.5 h-3.5 text-blue-500" /> 3. Property Scope & Location
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                        Property Scope
+                      </label>
+                      <a
+                        href="/admin/property-scopes"
+                        target="_blank"
+                        className="text-[10px] text-sky-600 hover:underline font-semibold"
+                      >
+                        + Manage Scopes
+                      </a>
+                    </div>
+                    <select
+                      value={editFormData.propertyType}
+                      onChange={(e) => setEditFormData({ ...editFormData, propertyType: e.target.value })}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold text-slate-800 dark:text-slate-200"
+                    >
+                      {availablePropertyScopes.map((ps) => (
+                        <option key={ps.id || ps.name} value={ps.name}>
+                          {ps.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Property State
+                    </label>
+                    <select
+                      value={editFormData.propertyState}
+                      onChange={(e) => {
+                        setIsCustomPropCityEdit(false);
+                        setEditFormData({
+                          ...editFormData,
+                          propertyState: e.target.value,
+                          propertyCity: '',
+                        });
+                      }}
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                    >
+                      <option value="">-- Select State --</option>
+                      {INDIAN_STATES.map((stateName) => (
+                        <option key={stateName} value={stateName}>
+                          {stateName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Property City
+                    </label>
+                    {(() => {
+                      const propStateObj = states.find((s) => s.name?.toLowerCase() === editFormData.propertyState?.toLowerCase());
+                      const propDbCities = propStateObj?.cities?.map((c) => c.name) || [];
+                      const propCities = Array.from(new Set([...propDbCities, ...getCitiesForIndianState(editFormData.propertyState)]));
+                      if (propCities.length > 0) {
+                        return (
+                          <div className="space-y-1">
+                            <select
+                              value={
+                                isCustomPropCityEdit
+                                  ? '__other__'
+                                  : propCities.some((c) => c === editFormData.propertyCity)
+                                  ? editFormData.propertyCity
+                                  : editFormData.propertyCity
+                                  ? '__other__'
+                                  : ''
+                              }
+                              onChange={(e) => {
+                                if (e.target.value === '__other__') {
+                                  setIsCustomPropCityEdit(true);
+                                  setEditFormData({ ...editFormData, propertyCity: '' });
+                                } else {
+                                  setIsCustomPropCityEdit(false);
+                                  setEditFormData({ ...editFormData, propertyCity: e.target.value });
+                                }
+                              }}
+                              className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                            >
+                              <option value="">-- Select City --</option>
+                              {propCities.map((cityName) => (
+                                <option key={cityName} value={cityName}>
+                                  {cityName}
+                                </option>
+                              ))}
+                              <option value="__other__">+ Other / Enter Manually</option>
+                            </select>
+                            {isCustomPropCityEdit && (
+                              <input
+                                type="text"
+                                placeholder="Enter property city..."
+                                value={editFormData.propertyCity}
+                                onChange={(e) => setEditFormData({ ...editFormData, propertyCity: e.target.value })}
+                                className="w-full glass-input px-3 py-1.5 rounded-xl text-xs"
+                                autoFocus
+                              />
+                            )}
+                          </div>
+                        );
+                      }
+                      return (
+                        <input
+                          type="text"
+                          placeholder="e.g. Pune"
+                          value={editFormData.propertyCity}
+                          onChange={(e) => setEditFormData({ ...editFormData, propertyCity: e.target.value })}
+                          className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                        />
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 4: Co-Applicant Details */}
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-1">
                   <div className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-amber-500" /> 3. Co-Applicant Details ({editCoApplicants.length})
+                    <Users className="w-3.5 h-3.5 text-amber-500" /> 4. Co-Applicant Details ({editCoApplicants.length})
                   </div>
                   <button
                     type="button"
@@ -1021,10 +1575,10 @@ export default function CaseListTable({
 
                 {editCoApplicants.length === 0 ? (
                   <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 text-slate-500 text-center text-xs">
-                    Sole applicant file (No co-applicants). Increase co-applicant count above to add co-applicant details.
+                    Sole applicant file (No co-applicants). Click "+ Add Co-Applicant" above to add co-applicant details.
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {editCoApplicants.map((coApp, idx) => (
                       <div
                         key={idx}
@@ -1075,8 +1629,30 @@ export default function CaseListTable({
                               placeholder={`Co-Applicant ${idx + 1} Name`}
                               value={coApp.name}
                               onChange={(e) => handleCoApplicantFieldChange(idx, 'name', sanitizeToAlphabetsOnly(e.target.value))}
-                              className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs"
+                              className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs font-semibold"
                             />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
+                              Relationship with Applicant
+                            </label>
+                            <select
+                              value={coApp.relationship || 'Spouse'}
+                              onChange={(e) => handleCoApplicantFieldChange(idx, 'relationship', e.target.value)}
+                              className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-900"
+                            >
+                              <option value="Spouse">Spouse</option>
+                              <option value="Father">Father</option>
+                              <option value="Mother">Mother</option>
+                              <option value="Brother">Brother</option>
+                              <option value="Sister">Sister</option>
+                              <option value="Son">Son</option>
+                              <option value="Daughter">Daughter</option>
+                              <option value="Business Partner">Business Partner</option>
+                              <option value="Director">Director</option>
+                              <option value="Other">Other</option>
+                            </select>
                           </div>
 
                           <div>
@@ -1113,6 +1689,41 @@ export default function CaseListTable({
 
                           <div>
                             <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
+                              Gender
+                            </label>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {['MALE', 'FEMALE', 'OTHER'].map((g) => (
+                                <button
+                                  key={g}
+                                  type="button"
+                                  onClick={() => handleCoApplicantFieldChange(idx, 'gender', g)}
+                                  className={`py-1 text-center rounded-lg text-[10px] font-bold border transition-all ${
+                                    coApp.gender === g
+                                      ? 'bg-indigo-600 text-white border-indigo-600'
+                                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                                  }`}
+                                >
+                                  {g}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
+                              Date of Birth (DOB)
+                            </label>
+                            <DatePickerInput
+                              value={coApp.dob || ''}
+                              onChange={(val) => handleCoApplicantFieldChange(idx, 'dob', val)}
+                              className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs"
+                              minYear={1930}
+                              maxYear={2026}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
                               State
                             </label>
                             <select
@@ -1131,15 +1742,86 @@ export default function CaseListTable({
 
                           <div>
                             <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                              Date of Birth (DOB)
+                              City
                             </label>
-                            <DatePickerInput
-                              value={coApp.dob || ''}
-                              onChange={(val) => handleCoApplicantFieldChange(idx, 'dob', val)}
+                            <input
+                              type="text"
+                              placeholder="City"
+                              value={coApp.city || ''}
+                              onChange={(e) => handleCoApplicantFieldChange(idx, 'city', e.target.value)}
                               className="w-full glass-input px-2.5 py-1.5 rounded-lg text-xs"
-                              minYear={1930}
-                              maxYear={2026}
                             />
+                          </div>
+                        </div>
+
+                        {/* Co-app Profiles */}
+                        <div className="pt-2 border-t border-slate-200/50 dark:border-slate-800/50 space-y-2">
+                          <label className="block text-[10px] font-semibold text-slate-500 uppercase">
+                            Co-Applicant Customer Entity (Multi-Select)
+                          </label>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                            {availableCustomerTypes.map((pr) => {
+                              const coCusts = coApp.customerTypes || [];
+                              const checked = coCusts.includes(pr.name);
+                              return (
+                                <button
+                                  key={pr.name}
+                                  type="button"
+                                  onClick={() => {
+                                    const next = checked
+                                      ? coCusts.filter((t) => t !== pr.name)
+                                      : [...coCusts, pr.name];
+                                    handleCoApplicantFieldChange(idx, 'customerTypes', next);
+                                  }}
+                                  className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-[11px] text-left ${
+                                    checked
+                                      ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-400 text-indigo-700 dark:text-indigo-300 font-semibold'
+                                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                                  }`}
+                                >
+                                  <div className={`w-3 h-3 rounded flex items-center justify-center border shrink-0 ${
+                                    checked ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 dark:border-slate-600'
+                                  }`}>
+                                    {checked && <CheckCircle2 className="w-2.5 h-2.5 stroke-[3]" />}
+                                  </div>
+                                  <span className="truncate">{pr.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <label className="block text-[10px] font-semibold text-slate-500 uppercase pt-1">
+                            Co-Applicant Income Profile (Multi-Select)
+                          </label>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                            {profiles.map((pr) => {
+                              const coIncs = coApp.incomeTypes || [];
+                              const checked = coIncs.includes(pr.name);
+                              return (
+                                <button
+                                  key={pr.name}
+                                  type="button"
+                                  onClick={() => {
+                                    const next = checked
+                                      ? coIncs.filter((t) => t !== pr.name)
+                                      : [...coIncs, pr.name];
+                                    handleCoApplicantFieldChange(idx, 'incomeTypes', next);
+                                  }}
+                                  className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-[11px] text-left ${
+                                    checked
+                                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-700 dark:text-emerald-300 font-semibold'
+                                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                                  }`}
+                                >
+                                  <div className={`w-3 h-3 rounded flex items-center justify-center border shrink-0 ${
+                                    checked ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 dark:border-slate-600'
+                                  }`}>
+                                    {checked && <CheckCircle2 className="w-2.5 h-2.5 stroke-[3]" />}
+                                  </div>
+                                  <span className="truncate">{pr.name}</span>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       </div>
@@ -1148,25 +1830,52 @@ export default function CaseListTable({
                 )}
               </div>
 
-              {/* Section 4: Lifecycle & Staff Assignments */}
+              {/* Section 5: Lifecycle & Multi-Select Staff Assignments */}
               <div className="space-y-3 pt-2">
                 <div className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-1">
-                  <Users className="w-3.5 h-3.5 text-emerald-500" /> 4. Stage, Status & Staff Assignments
+                  <Users className="w-3.5 h-3.5 text-emerald-500" /> 5. Stage, Status & Staff Assignments
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Processing Stage
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                        Processing Stage
+                      </label>
+                      {userRole === 'SUPER_ADMIN' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewStageData({
+                              stageNumber: (stagesList.length > 0 ? Math.max(...stagesList.map((s) => s.stageNumber)) : 0) + 1,
+                              name: '',
+                              description: '',
+                              color: '#3b82f6',
+                            });
+                            setStageManagerError('');
+                            setStageManagerSuccess('');
+                            setEditingStageId(null);
+                            setIsStageManagerOpen(true);
+                          }}
+                          className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                        >
+                          <Layers className="w-3 h-3" />
+                          + Manage Stages
+                        </button>
+                      )}
+                    </div>
                     <select
                       value={editFormData.stage}
                       onChange={(e) => setEditFormData({ ...editFormData, stage: parseInt(e.target.value) || 1 })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-bold text-indigo-600 dark:text-indigo-400"
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-bold"
+                      style={{
+                        color: stagesList.find((s) => s.stageNumber === editFormData.stage)?.color || '#4f46e5',
+                      }}
                     >
-                      <option value={1}>Stage 1 - Document Collection</option>
-                      <option value={2}>Stage 2 - Verification & Scrutiny</option>
-                      <option value={3}>Stage 3 - Credit & Underwriting</option>
-                      <option value={4}>Stage 4 - Sanction & Disbursal</option>
+                      {stagesList.map((stg) => (
+                        <option key={stg.id || stg.stageNumber} value={stg.stageNumber}>
+                          Stage {stg.stageNumber} — {stg.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -1197,9 +1906,9 @@ export default function CaseListTable({
                     <select
                       value={editFormData.assignedTeamId}
                       onChange={(e) => setEditFormData({ ...editFormData, assignedTeamId: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
                     >
-                      <option value="">-- Unassigned --</option>
+                      <option value="">-- No Specific Team --</option>
                       {teams.map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.name}
@@ -1208,59 +1917,35 @@ export default function CaseListTable({
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Channel Partner User
-                    </label>
-                    <select
-                      value={editFormData.channelUserId}
-                      onChange={(e) => setEditFormData({ ...editFormData, channelUserId: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
-                    >
-                      <option value="">-- Unassigned Channel --</option>
-                      {channelUsers.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name.replace(/\s*\([^)]*\)/g, '').trim()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Channel Partner Multi-Select */}
+                  <MultiSelectDropdown
+                    label="Channel Partner(s) (Multi-Select)"
+                    options={channelUsers.map((u) => ({ value: u.id, label: u.name.replace(/\s*\([^)]*\)/g, '').trim() }))}
+                    selected={editFormData.channelUserIds}
+                    onChange={(ids) => setEditFormData({ ...editFormData, channelUserIds: ids, channelUserId: ids.join(',') })}
+                    color="amber"
+                    placeholder="Select Channel Partners..."
+                  />
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Sales Lead User
-                    </label>
-                    <select
-                      value={editFormData.salesUserId}
-                      onChange={(e) => setEditFormData({ ...editFormData, salesUserId: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
-                    >
-                      <option value="">-- Unassigned Sales --</option>
-                      {salesUsers.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name.replace(/\s*\([^)]*\)/g, '').trim()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Sales Lead Multi-Select */}
+                  <MultiSelectDropdown
+                    label="Sales Executive(s) (Multi-Select)"
+                    options={salesUsers.map((u) => ({ value: u.id, label: u.name.replace(/\s*\([^)]*\)/g, '').trim() }))}
+                    selected={editFormData.salesUserIds}
+                    onChange={(ids) => setEditFormData({ ...editFormData, salesUserIds: ids, salesUserId: ids.join(',') })}
+                    color="blue"
+                    placeholder="Select Sales Executives..."
+                  />
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Operation Lead User
-                    </label>
-                    <select
-                      value={editFormData.operationUserId}
-                      onChange={(e) => setEditFormData({ ...editFormData, operationUserId: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
-                    >
-                      <option value="">-- Unassigned Operation --</option>
-                      {operationUsers.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name.replace(/\s*\([^)]*\)/g, '').trim()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Operation Lead Multi-Select */}
+                  <MultiSelectDropdown
+                    label="Operations Executive(s) (Multi-Select)"
+                    options={operationUsers.map((u) => ({ value: u.id, label: u.name.replace(/\s*\([^)]*\)/g, '').trim() }))}
+                    selected={editFormData.operationUserIds}
+                    onChange={(ids) => setEditFormData({ ...editFormData, operationUserIds: ids, operationUserId: ids.join(',') })}
+                    color="purple"
+                    placeholder="Select Operations Executives..."
+                  />
                 </div>
               </div>
 
@@ -1281,6 +1966,270 @@ export default function CaseListTable({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* -------------------- PROCESSING STAGES MANAGER MODAL -------------------- */}
+      {isStageManagerOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-2xl w-full space-y-4 shadow-2xl relative my-8 max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    Manage Processing Stages
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Add new stages, edit existing titles & colors, or delete stages dynamically
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsStageManagerOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error / Success Messages */}
+            {stageManagerError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-2 shrink-0">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{stageManagerError}</span>
+              </div>
+            )}
+            {stageManagerSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-2 shrink-0">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{stageManagerSuccess}</span>
+              </div>
+            )}
+
+            <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+              {/* Add New Stage Box */}
+              <form onSubmit={handleAddStage} className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Plus className="w-4 h-4 text-indigo-500" /> Add New Processing Stage
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Stage No. *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="99"
+                      value={newStageData.stageNumber}
+                      onChange={(e) => setNewStageData({ ...newStageData, stageNumber: parseInt(e.target.value) || 1 })}
+                      className="w-full glass-input px-3 py-1.5 rounded-lg text-xs font-bold"
+                      required
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Stage Title / Name *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Valuation & Legal Audit"
+                      value={newStageData.name}
+                      onChange={(e) => setNewStageData({ ...newStageData, name: e.target.value })}
+                      className="w-full glass-input px-3 py-1.5 rounded-lg text-xs"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Badge Color
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={newStageData.color}
+                        onChange={(e) => setNewStageData({ ...newStageData, color: e.target.value })}
+                        className="w-8 h-8 rounded-lg border border-slate-300 dark:border-slate-700 cursor-pointer p-0.5 bg-transparent"
+                      />
+                      <span className="text-[11px] font-mono text-slate-500">{newStageData.color}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <input
+                    type="text"
+                    placeholder="Short description / purpose (optional)"
+                    value={newStageData.description}
+                    onChange={(e) => setNewStageData({ ...newStageData, description: e.target.value })}
+                    className="flex-1 glass-input px-3 py-1.5 rounded-lg text-xs"
+                  />
+                  <button
+                    type="submit"
+                    disabled={stageManagerLoading}
+                    className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 shrink-0"
+                  >
+                    {stageManagerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    Add Stage
+                  </button>
+                </div>
+              </form>
+
+              {/* Existing Stages List */}
+              <div className="space-y-2">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                  <span>Active Stages ({stagesList.length})</span>
+                  <span className="text-[10px] lowercase font-normal">Sorted by stage sequence</span>
+                </div>
+
+                {stagesList.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
+                    No processing stages found. Add your first stage above.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {stagesList.map((stg) => {
+                      const isEditing = editingStageId === stg.id;
+                      return (
+                        <div
+                          key={stg.id}
+                          className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm transition-all"
+                        >
+                          {isEditing ? (
+                            <div className="space-y-2.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Stage No.</label>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="99"
+                                    value={editStageData.stageNumber}
+                                    onChange={(e) => setEditStageData({ ...editStageData, stageNumber: parseInt(e.target.value) || 1 })}
+                                    className="w-full glass-input px-2.5 py-1 rounded-lg text-xs font-bold"
+                                  />
+                                </div>
+                                <div className="sm:col-span-2">
+                                  <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Stage Title</label>
+                                  <input
+                                    type="text"
+                                    value={editStageData.name}
+                                    onChange={(e) => setEditStageData({ ...editStageData, name: e.target.value })}
+                                    className="w-full glass-input px-2.5 py-1 rounded-lg text-xs"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Color</label>
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="color"
+                                      value={editStageData.color}
+                                      onChange={(e) => setEditStageData({ ...editStageData, color: e.target.value })}
+                                      className="w-7 h-7 rounded border border-slate-300 dark:border-slate-700 cursor-pointer p-0.5 bg-transparent"
+                                    />
+                                    <span className="text-[10px] font-mono text-slate-400">{editStageData.color}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Description (Optional)</label>
+                                <input
+                                  type="text"
+                                  value={editStageData.description}
+                                  onChange={(e) => setEditStageData({ ...editStageData, description: e.target.value })}
+                                  placeholder="Description..."
+                                  className="w-full glass-input px-2.5 py-1 rounded-lg text-xs"
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingStageId(null)}
+                                  className="px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100 text-[11px] font-semibold"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={stageManagerLoading}
+                                  onClick={() => handleSaveEditStage(stg.id)}
+                                  className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold shadow-sm flex items-center gap-1"
+                                >
+                                  {stageManagerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                                  Save Stage
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <span
+                                  className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold border shrink-0"
+                                  style={{
+                                    backgroundColor: `${stg.color || '#3b82f6'}18`,
+                                    color: stg.color || '#3b82f6',
+                                    borderColor: `${stg.color || '#3b82f6'}40`,
+                                  }}
+                                >
+                                  Stage {stg.stageNumber}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                                    {stg.name}
+                                  </div>
+                                  {stg.description && (
+                                    <div className="text-[11px] text-slate-500 truncate">
+                                      {stg.description}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditStage(stg)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors"
+                                  title="Edit Stage"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteStage(stg.id, stg.stageNumber, stg.name)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                                  title="Delete Stage"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsStageManagerOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-bold text-xs transition-all"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

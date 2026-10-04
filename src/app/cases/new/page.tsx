@@ -3,6 +3,10 @@ import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import CaseIntakeForm from '@/components/CaseIntakeForm';
 import { prisma } from '@/lib/prisma';
+import { getProfilesAction } from '@/app/actions';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function NewCasePage() {
   const session = await getServerSession(authOptions);
@@ -20,7 +24,7 @@ export default async function NewCasePage() {
     states,
     users,
     productsRes,
-    profilesRes,
+    profilesData,
     subProductsRes,
     propertyScopesRes,
     targetCategoriesRes,
@@ -41,7 +45,7 @@ export default async function NewCasePage() {
       include: { subProducts: true },
       orderBy: { name: 'asc' },
     }),
-    prisma.profileMaster.findMany({ orderBy: { name: 'asc' } }),
+    getProfilesAction().then((res) => res.profiles || []),
     prisma.subProductMaster.findMany({ orderBy: { name: 'asc' } }),
     prisma.propertyScopeMaster.findMany({ orderBy: { name: 'asc' } }),
     prisma.targetCategoryMaster.findMany({ orderBy: { name: 'asc' } }),
@@ -65,7 +69,7 @@ export default async function NewCasePage() {
         states={states}
         users={users}
         products={productsRes}
-        profiles={profilesRes}
+        profiles={profilesData}
         subProducts={subProductsRes}
         propertyScopes={propertyScopesRes}
         targetCategories={targetCategoriesRes}

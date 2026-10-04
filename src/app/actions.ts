@@ -167,11 +167,14 @@ export async function updateCaseIntakeDetailsAction(
     clientName: string;
     mobile: string;
     email?: string | null;
+    gender?: string | null;
     clientState?: string | null;
     clientCity?: string | null;
     clientDob?: string | Date | null;
     product?: string;
+    subProduct?: string | null;
     customerType?: string;
+    incomeTypes?: string[] | string | null;
     propertyType?: string;
     propertyState?: string | null;
     propertyCity?: string | null;
@@ -308,11 +311,18 @@ export async function updateCaseIntakeDetailsAction(
       clientName: data.clientName.trim(),
       mobile: data.mobile.trim(),
       email: data.email?.trim() || null,
+      ...(data.gender !== undefined && { gender: data.gender || null }),
       clientState: data.clientState || null,
       clientCity: data.clientCity || null,
       ...(data.clientDob !== undefined && { clientDob: data.clientDob ? new Date(data.clientDob) : null }),
       ...(data.product && { product: data.product }),
+      ...(data.subProduct !== undefined && { subProduct: data.subProduct || null }),
       ...(data.customerType && { customerType: data.customerType }),
+      ...(data.incomeTypes !== undefined && {
+        incomeTypes: Array.isArray(data.incomeTypes)
+          ? JSON.stringify(data.incomeTypes)
+          : (typeof data.incomeTypes === 'string' ? data.incomeTypes : null),
+      }),
       ...(data.propertyType && { propertyType: data.propertyType }),
       ...(data.propertyState !== undefined && { propertyState: data.propertyState || null }),
       ...(data.propertyCity !== undefined && { propertyCity: data.propertyCity || null }),
@@ -2442,6 +2452,7 @@ export async function createProductAction(name: string, initialSubProducts?: str
 
   revalidatePath('/admin/products');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
   return { success: true, product };
 }
@@ -2467,6 +2478,7 @@ export async function updateProductAction(id: string, name: string) {
 
   revalidatePath('/admin/products');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
   return { success: true, product };
 }
@@ -2481,6 +2493,7 @@ export async function deleteProductAction(id: string) {
 
   revalidatePath('/admin/products');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
   return { success: true };
 }
@@ -2533,6 +2546,7 @@ export async function createProfileAction(name: string) {
 
   revalidatePath('/admin/profiles');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
   return { success: true, profile };
 }
@@ -2558,6 +2572,7 @@ export async function updateProfileAction(id: string, name: string) {
 
   revalidatePath('/admin/profiles');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
   return { success: true, profile };
 }
@@ -2572,6 +2587,7 @@ export async function deleteProfileAction(id: string) {
 
   revalidatePath('/admin/profiles');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
   return { success: true };
 }
@@ -4319,7 +4335,9 @@ export async function createCustomerTypeAction(data: { name: string; description
     create: { name: cleanName },
   });
 
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
+  revalidatePath('/admin/customer-types');
   revalidatePath('/admin/functionality');
   return { success: true, type };
 }
@@ -4380,6 +4398,7 @@ export async function updateCustomerTypeAction(id: string, data: { name: string;
     }
   }
 
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
   revalidatePath('/admin/customer-types');
   revalidatePath('/admin/functionality');
@@ -4398,6 +4417,7 @@ export async function deleteCustomerTypeAction(id: string) {
     await prisma.targetCategoryMaster.deleteMany({ where: { name: existing.name } });
   }
 
+  revalidatePath('/cases');
   revalidatePath('/cases/new');
   revalidatePath('/admin/customer-types');
   revalidatePath('/admin/functionality');
@@ -4589,6 +4609,8 @@ export async function createPropertyScopeAction(data: {
 
   revalidatePath('/admin/property-scopes');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
+  revalidatePath('/cases/new');
   return { success: true, scope };
 }
 
@@ -4638,6 +4660,8 @@ export async function updatePropertyScopeAction(
 
   revalidatePath('/admin/property-scopes');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
+  revalidatePath('/cases/new');
   return { success: true, scope: updated };
 }
 
@@ -4661,6 +4685,8 @@ export async function deletePropertyScopeAction(id: string) {
 
   revalidatePath('/admin/property-scopes');
   revalidatePath('/admin/checklist-templates');
+  revalidatePath('/cases');
+  revalidatePath('/cases/new');
   return { success: true };
 }
 
@@ -5315,6 +5341,51 @@ export async function deleteCustomRoleAction(roleId: string) {
   revalidatePath('/admin/users/roles');
   revalidatePath('/admin/users');
   return { success: true };
+}
+
+// ==========================================
+// 25.5. DYNAMIC DEPARTMENTS CONFIGURATION
+// ==========================================
+const DEFAULT_DEPARTMENTS = [
+  'Operations & Loan Processing',
+  'Sales & Business Development',
+  'Credit & Underwriting',
+  'Verification & Field Inspection',
+  'Accounts & Finance',
+  'HR & Administration',
+  'Customer Relationship & Support',
+  'Management & Executive',
+];
+
+export async function getDepartmentsAction(): Promise<string[]> {
+  try {
+    const setting = await prisma.systemSetting.findUnique({
+      where: { id: 'departments_config' },
+    });
+    if (setting?.dashboardConfig) {
+      const list = JSON.parse(setting.dashboardConfig);
+      if (Array.isArray(list) && list.length > 0) return list;
+    }
+  } catch (e) {
+    // fallback
+  }
+  return DEFAULT_DEPARTMENTS;
+}
+
+export async function saveDepartmentsAction(departments: string[]) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Super Admin access required to manage departments.' };
+  }
+  const cleanList = Array.from(new Set(departments.map((d) => d.trim()).filter(Boolean)));
+  await prisma.systemSetting.upsert({
+    where: { id: 'departments_config' },
+    update: { dashboardConfig: JSON.stringify(cleanList) },
+    create: { id: 'departments_config', dashboardConfig: JSON.stringify(cleanList) },
+  });
+  revalidatePath('/profile');
+  revalidatePath('/admin/users');
+  return { success: true, departments: cleanList };
 }
 
 // ==========================================

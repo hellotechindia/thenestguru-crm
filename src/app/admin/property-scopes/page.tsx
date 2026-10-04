@@ -6,6 +6,7 @@ import PropertyScopeMasterManager from '@/components/PropertyScopeMasterManager'
 import Link from 'next/link';
 import { Building2, ChevronRight, FileCheck2 } from 'lucide-react';
 
+export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function AdminPropertyScopesPage() {

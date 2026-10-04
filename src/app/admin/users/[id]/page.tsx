@@ -75,7 +75,23 @@ export default async function StaffPersonalDetailsPage({ params }: { params: { i
           teamName: user.team?.name || 'Unassigned',
         }}
         isSuperAdmin={currentUserRole === 'SUPER_ADMIN'}
-        recentSalaries={user.salaryRecords}
+        recentSalaries={user.salaryRecords.map((s) => ({
+          id: s.id,
+          month: s.month,
+          basicSalary: s.basicSalary,
+          allowances: s.allowances,
+          deductions: s.deductions,
+          netPayable: s.netPayable,
+          workingDays: s.workingDays,
+          paidDays: s.paidDays,
+          lwpDays: s.lwpDays,
+          incentiveEarned: s.incentiveEarned,
+          paymentStatus: s.paymentStatus,
+          paidDate: s.paidDate ? s.paidDate.toISOString() : null,
+          remarks: s.remarks,
+          createdAt: s.createdAt.toISOString(),
+          updatedAt: s.updatedAt.toISOString(),
+        }))}
       />
     </div>
   );

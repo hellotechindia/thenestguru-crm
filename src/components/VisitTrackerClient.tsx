@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -220,6 +220,263 @@ const DEFAULT_OBJECTIVES: VisitObjective[] = [
   { id: 'CLIENT_MEETING', name: 'Client Meeting' },
   { id: 'DOCUMENT_COLLECTION', name: 'Document Collection' },
 ];
+
+// Searchable Combobox for Builder and Channel Partner selection (instant search over 150+ items)
+interface SearchableBuilderCpSelectProps {
+  selectedType: 'BUILDER' | 'CP' | '';
+  selectedName: string;
+  builders: BuilderItem[];
+  channelPartners: Array<{
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+  }>;
+  onSelectBuilder: (builderName: string) => void;
+  onSelectCP: (cp: { id: string; name: string; phone?: string | null; address?: string | null }) => void;
+  onClear: () => void;
+}
+
+function SearchableBuilderCpSelect({
+  selectedType,
+  selectedName,
+  builders,
+  channelPartners,
+  onSelectBuilder,
+  onSelectCP,
+  onClear,
+}: SearchableBuilderCpSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const cleanQuery = query.trim().toLowerCase();
+
+  const filteredBuilders = useMemo(() => {
+    if (!cleanQuery) return builders;
+    return builders.filter((b) => {
+      return (
+        b.name.toLowerCase().includes(cleanQuery) ||
+        (b.reraNumber && b.reraNumber.toLowerCase().includes(cleanQuery)) ||
+        (b.contactPerson && b.contactPerson.toLowerCase().includes(cleanQuery)) ||
+        (b.phone && b.phone.includes(cleanQuery))
+      );
+    });
+  }, [builders, cleanQuery]);
+
+  const filteredCPs = useMemo(() => {
+    if (!cleanQuery) return channelPartners;
+    return channelPartners.filter((cp) => {
+      return (
+        (cp.name && cp.name.toLowerCase().includes(cleanQuery)) ||
+        (cp.phone && cp.phone.includes(cleanQuery)) ||
+        (cp.address && cp.address.toLowerCase().includes(cleanQuery))
+      );
+    });
+  }, [channelPartners, cleanQuery]);
+
+  const totalResults = filteredBuilders.length + filteredCPs.length;
+
+  return (
+    <div ref={dropdownRef} className="relative w-full">
+      {/* Trigger Button */}
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full glass-input px-3 py-2 rounded-xl text-xs flex items-center justify-between cursor-pointer border transition-all ${
+          isOpen
+            ? 'ring-2 ring-sky-500 border-sky-500 bg-white dark:bg-slate-900'
+            : 'bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700'
+        }`}
+      >
+        <div className="flex items-center gap-2 truncate">
+          {selectedType === 'BUILDER' && selectedName ? (
+            <span className="flex items-center gap-1.5 font-bold text-sky-600 dark:text-sky-400 truncate">
+              <span>🏢</span>
+              <span className="truncate">{selectedName}</span>
+              <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shrink-0">
+                Builder
+              </span>
+            </span>
+          ) : selectedType === 'CP' && selectedName ? (
+            <span className="flex items-center gap-1.5 font-bold text-teal-600 dark:text-teal-400 truncate">
+              <span>🤝</span>
+              <span className="truncate">{selectedName}</span>
+              <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 shrink-0">
+                Channel Partner
+              </span>
+            </span>
+          ) : (
+            <span className="text-slate-400 flex items-center gap-1.5 truncate">
+              <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="truncate">-- Search & Select Builder / CP ({builders.length + channelPartners.length} options) --</span>
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0 ml-2">
+          {selectedName && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClear();
+              }}
+              className="p-1 text-slate-400 hover:text-rose-500 rounded-lg transition"
+              title="Clear selection"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </div>
+      </div>
+
+      {/* Dropdown Popover */}
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+          {/* Instant Search Bar */}
+          <div className="p-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                ref={inputRef}
+                type="text"
+                placeholder={`Search ${builders.length + channelPartners.length} Builders & CPs by name, RERA, phone...`}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full pl-8 pr-7 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1 px-1">
+              <span>{totalResults} matches found</span>
+              <span>🏢 {filteredBuilders.length} Builders &bull; 🤝 {filteredCPs.length} CPs</span>
+            </div>
+          </div>
+
+          {/* Options List */}
+          <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 p-1">
+            {totalResults === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-400">
+                No Builder or Channel Partner matching "{query}"
+              </div>
+            ) : (
+              <>
+                {/* Builders Group */}
+                {filteredBuilders.length > 0 && (
+                  <div>
+                    <div className="px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-sky-700 dark:text-sky-300 bg-sky-50/70 dark:bg-sky-950/40 rounded-lg flex items-center justify-between my-1">
+                      <span>🏢 Builders ({filteredBuilders.length})</span>
+                    </div>
+                    {filteredBuilders.map((b) => (
+                      <div
+                        key={b.id}
+                        onClick={() => {
+                          onSelectBuilder(b.name);
+                          setIsOpen(false);
+                          setQuery('');
+                        }}
+                        className={`px-3 py-2 rounded-xl text-xs cursor-pointer transition flex items-center justify-between hover:bg-sky-50 dark:hover:bg-sky-950/40 ${
+                          selectedType === 'BUILDER' && selectedName === b.name
+                            ? 'bg-sky-500/10 font-bold text-sky-600 dark:text-sky-400'
+                            : 'text-slate-700 dark:text-slate-200'
+                        }`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="font-bold flex items-center gap-1.5 truncate">
+                            <span>🏢 {b.name}</span>
+                            {b.reraNumber && (
+                              <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 shrink-0">
+                                RERA: {b.reraNumber}
+                              </span>
+                            )}
+                          </div>
+                          {(b.contactPerson || b.phone) && (
+                            <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                              {b.contactPerson ? `${b.contactPerson} ` : ''}
+                              {b.phone ? `• 📞 ${b.phone}` : ''}
+                            </div>
+                          )}
+                        </div>
+                        {selectedType === 'BUILDER' && selectedName === b.name && (
+                          <CheckCircle2 className="w-4 h-4 text-sky-600 shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Channel Partners Group */}
+                {filteredCPs.length > 0 && (
+                  <div className="pt-1">
+                    <div className="px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-teal-700 dark:text-teal-300 bg-teal-50/70 dark:bg-teal-950/40 rounded-lg flex items-center justify-between my-1">
+                      <span>🤝 Channel Partners ({filteredCPs.length})</span>
+                    </div>
+                    {filteredCPs.map((cp) => (
+                      <div
+                        key={cp.id}
+                        onClick={() => {
+                          onSelectCP(cp);
+                          setIsOpen(false);
+                          setQuery('');
+                        }}
+                        className={`px-3 py-2 rounded-xl text-xs cursor-pointer transition flex items-center justify-between hover:bg-teal-50 dark:hover:bg-teal-950/40 ${
+                          selectedType === 'CP' && (selectedName === cp.name || selectedName === cp.id)
+                            ? 'bg-teal-500/10 font-bold text-teal-600 dark:text-teal-400'
+                            : 'text-slate-700 dark:text-slate-200'
+                        }`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="font-bold flex items-center gap-1.5 truncate">
+                            <span>🤝 {cp.name || 'Unnamed CP'}</span>
+                          </div>
+                          {(cp.phone || cp.address) && (
+                            <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                              {cp.phone ? `📞 ${cp.phone} ` : ''}
+                              {cp.address ? `• 📍 ${cp.address}` : ''}
+                            </div>
+                          )}
+                        </div>
+                        {selectedType === 'CP' && (selectedName === cp.name || selectedName === cp.id) && (
+                          <CheckCircle2 className="w-4 h-4 text-teal-600 shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function VisitTrackerClient({
   initialVisits = [],
@@ -2522,49 +2779,37 @@ export default function VisitTrackerClient({
                           </button>
                         )}
                       </div>
-                      <select
-                        value={form.builderName ? `BUILDER:${form.builderName}` : (form.cpName ? `CP:${form.cpName}` : '')}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (!val) {
-                            setForm({ ...form, builderName: '', cpName: '', cpContact: '', cpAddress: '' });
-                          } else if (val.startsWith('BUILDER:')) {
-                            const bName = val.replace('BUILDER:', '');
-                            handleSelectBuilder(bName, false);
-                            setForm((prev) => ({ ...prev, cpName: '', cpContact: '', cpAddress: '' }));
-                          } else if (val.startsWith('CP:')) {
-                            const cpVal = val.replace('CP:', '');
-                            const cp = channelPartners.find((c) => (c.name || c.id) === cpVal || c.id === cpVal || c.name === cpVal);
-                            setForm((prev) => ({
-                              ...prev,
-                              builderName: '',
-                              cpName: cp?.name || cpVal,
-                              cpContact: cp?.phone || '',
-                              cpAddress: cp?.address || '',
-                              concernedPersonName: prev.concernedPersonName || cp?.name || '',
-                              concernedPersonContact: prev.concernedPersonContact || cp?.phone || '',
-                              officeAddress: prev.officeAddress || cp?.address || '',
-                            }));
-                          }
+                      <SearchableBuilderCpSelect
+                        selectedType={form.builderName ? 'BUILDER' : form.cpName ? 'CP' : ''}
+                        selectedName={form.builderName || form.cpName || ''}
+                        builders={buildersList}
+                        channelPartners={channelPartners}
+                        onSelectBuilder={(bName) => {
+                          handleSelectBuilder(bName, false);
+                          setForm((prev) => ({ ...prev, cpName: '', cpContact: '', cpAddress: '' }));
                         }}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
-                      >
-                        <option value="">-- Select Builder or Channel Partner --</option>
-                        <optgroup label="🏢 Builders">
-                          {buildersList.map((b) => (
-                            <option key={b.id} value={`BUILDER:${b.name}`}>
-                              🏢 {b.name} {b.reraNumber ? `(RERA: ${b.reraNumber})` : ''}
-                            </option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="🤝 Channel Partners (CP)">
-                          {channelPartners.map((cp) => (
-                            <option key={cp.id} value={`CP:${cp.name || cp.id}`}>
-                              🤝 {cp.name || 'Unnamed CP'} {cp.phone ? `(${cp.phone})` : ''}
-                            </option>
-                          ))}
-                        </optgroup>
-                      </select>
+                        onSelectCP={(cp) => {
+                          setForm((prev) => ({
+                            ...prev,
+                            builderName: '',
+                            cpName: cp.name,
+                            cpContact: cp.phone || '',
+                            cpAddress: cp.address || '',
+                            concernedPersonName: prev.concernedPersonName || cp.name,
+                            concernedPersonContact: prev.concernedPersonContact || cp.phone || '',
+                            officeAddress: prev.officeAddress || cp.address || '',
+                          }));
+                        }}
+                        onClear={() => {
+                          setForm((prev) => ({
+                            ...prev,
+                            builderName: '',
+                            cpName: '',
+                            cpContact: '',
+                            cpAddress: '',
+                          }));
+                        }}
+                      />
                       {form.builderName && (
                         <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-sky-600 dark:text-sky-400">
                           <span>🏢 Selected Builder: <strong>{form.builderName}</strong></span>
@@ -3134,51 +3379,37 @@ export default function VisitTrackerClient({
                           </button>
                         )}
                       </div>
-                      <select
-                        value={editForm.builderName ? `BUILDER:${editForm.builderName}` : editForm.cpName ? `CP:${editForm.cpName}` : ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (!val) {
-                            setEditForm({ ...editForm, builderName: '', cpName: '', cpContact: '', cpAddress: '' });
-                            return;
-                          }
-                          if (val.startsWith('BUILDER:')) {
-                            const bName = val.replace('BUILDER:', '');
-                            handleSelectBuilder(bName, true);
-                            setEditForm((prev) => ({ ...prev, cpName: '', cpContact: '', cpAddress: '' }));
-                          } else if (val.startsWith('CP:')) {
-                            const cpVal = val.replace('CP:', '');
-                            const cp = channelPartners.find((c) => (c.name || c.id) === cpVal || c.id === cpVal || c.name === cpVal);
-                            setEditForm((prev) => ({
-                              ...prev,
-                              builderName: '',
-                              cpName: cp?.name || cpVal,
-                              cpContact: cp?.phone || '',
-                              cpAddress: cp?.address || '',
-                              concernedPersonName: prev.concernedPersonName || cp?.name || '',
-                              concernedPersonContact: prev.concernedPersonContact || cp?.phone || '',
-                              officeAddress: prev.officeAddress || cp?.address || '',
-                            }));
-                          }
+                      <SearchableBuilderCpSelect
+                        selectedType={editForm.builderName ? 'BUILDER' : editForm.cpName ? 'CP' : ''}
+                        selectedName={editForm.builderName || editForm.cpName || ''}
+                        builders={buildersList}
+                        channelPartners={channelPartners}
+                        onSelectBuilder={(bName) => {
+                          handleSelectBuilder(bName, true);
+                          setEditForm((prev) => ({ ...prev, cpName: '', cpContact: '', cpAddress: '' }));
                         }}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
-                      >
-                        <option value="">-- Select Builder or Channel Partner --</option>
-                        <optgroup label="🏢 Builders">
-                          {buildersList.map((b) => (
-                            <option key={b.id} value={`BUILDER:${b.name}`}>
-                              🏢 {b.name} {b.reraNumber ? `(RERA: ${b.reraNumber})` : ''}
-                            </option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="🤝 Channel Partners (CP)">
-                          {channelPartners.map((cp) => (
-                            <option key={cp.id} value={`CP:${cp.name || cp.id}`}>
-                              🤝 {cp.name || 'Unnamed CP'} {cp.phone ? `(${cp.phone})` : ''}
-                            </option>
-                          ))}
-                        </optgroup>
-                      </select>
+                        onSelectCP={(cp) => {
+                          setEditForm((prev) => ({
+                            ...prev,
+                            builderName: '',
+                            cpName: cp.name,
+                            cpContact: cp.phone || '',
+                            cpAddress: cp.address || '',
+                            concernedPersonName: prev.concernedPersonName || cp.name,
+                            concernedPersonContact: prev.concernedPersonContact || cp.phone || '',
+                            officeAddress: prev.officeAddress || cp.address || '',
+                          }));
+                        }}
+                        onClear={() => {
+                          setEditForm((prev) => ({
+                            ...prev,
+                            builderName: '',
+                            cpName: '',
+                            cpContact: '',
+                            cpAddress: '',
+                          }));
+                        }}
+                      />
                       {editForm.builderName && (
                         <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-sky-600 dark:text-sky-400">
                           <span>🏢 Selected Builder: <strong>{editForm.builderName}</strong></span>

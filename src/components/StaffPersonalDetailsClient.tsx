@@ -1,17 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { updateStaffPersonalDetailsAction } from '@/app/actions';
+import {
+  updateStaffPersonalDetailsAction,
+  getDepartmentsAction,
+  saveDepartmentsAction,
+} from '@/app/actions';
 import {
   User, Mail, Phone, MapPin, Shield, Calendar, CreditCard, Building,
   ArrowLeft, Edit3, CheckCircle2, ShieldAlert, Heart, Save, DollarSign,
   Upload, FileText, Image as ImageIcon, Briefcase, GraduationCap, Users2,
-  Trash2, Plus, ExternalLink, X, Lock, AtSign, Eye, EyeOff
+  Trash2, Plus, ExternalLink, X, Lock, AtSign, Eye, EyeOff, Loader2
 } from 'lucide-react';
 import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 import DatePickerInput from './DatePickerInput';
+
+const DEFAULT_DEPARTMENTS = [
+  'Operations & Loan Processing',
+  'Sales & Business Development',
+  'Credit & Underwriting',
+  'Verification & Field Inspection',
+  'Accounts & Finance',
+  'HR & Administration',
+  'Customer Relationship & Support',
+  'Management & Executive',
+];
 
 export interface PastExperienceItem {
   companyName: string;
@@ -80,6 +95,22 @@ export default function StaffPersonalDetailsClient({
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Dynamic Departments State
+  const [departments, setDepartments] = useState<string[]>(DEFAULT_DEPARTMENTS);
+  const [isDeptModalOpen, setIsDeptModalOpen] = useState(false);
+  const [newDeptInput, setNewDeptInput] = useState('');
+  const [deptSaving, setDeptSaving] = useState(false);
+  const [uploadingField, setUploadingField] = useState<string | null>(null);
+
+  // Load custom departments from database
+  useEffect(() => {
+    getDepartmentsAction().then((list) => {
+      if (list && list.length > 0) {
+        setDepartments(list);
+      }
+    });
+  }, []);
+
   // Parse past experience safely
   const initialExperience: PastExperienceItem[] = (() => {
     try {
@@ -135,57 +166,56 @@ export default function StaffPersonalDetailsClient({
 
   const [experiences, setExperiences] = useState<PastExperienceItem[]>(initialExperience);
 
-  // Client-side image compressor: keeps documents under 300KB to ensure fast saves and prevent payload overflow
-  const compressImage = (file: File, maxWidth = 1280, maxHeight = 1280, quality = 0.82): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      if (!file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-        return;
+  // Department Management Handlers
+  const handleAddDepartment = async () => {
+    const trimmed = newDeptInput.trim();
+    if (!trimmed) return;
+    if (departments.some((d) => d.toLowerCase() === trimmed.toLowerCase())) {
+      alert('This department already exists.');
+      return;
+    }
+
+    try {
+      setDeptSaving(true);
+      const updated = [...departments, trimmed];
+      const res = await saveDepartmentsAction(updated);
+      if (res.success && res.departments) {
+        setDepartments(res.departments);
+        setNewDeptInput('');
+        setFormData((prev) => ({ ...prev, department: trimmed }));
+      } else {
+        alert(res.error || 'Failed to save department.');
       }
-
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > maxWidth) {
-              height = Math.round((height * maxWidth) / width);
-              width = maxWidth;
-            }
-          } else {
-            if (height > maxHeight) {
-              width = Math.round((width * maxHeight) / height);
-              height = maxHeight;
-            }
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(e.target?.result as string);
-            return;
-          }
-          ctx.drawImage(img, 0, 0, width, height);
-          const dataUrl = canvas.toDataURL('image/jpeg', quality);
-          resolve(dataUrl);
-        };
-        img.onerror = () => resolve(e.target?.result as string);
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+    } catch (err: any) {
+      alert(err?.message || 'Error saving department.');
+    } finally {
+      setDeptSaving(false);
+    }
   };
 
-  // Helper for file to Base64 with compression
+  const handleDeleteDepartment = async (deptName: string) => {
+    if (!confirm(`Are you sure you want to remove the department "${deptName}"?`)) return;
+
+    try {
+      setDeptSaving(true);
+      const updated = departments.filter((d) => d !== deptName);
+      const res = await saveDepartmentsAction(updated);
+      if (res.success && res.departments) {
+        setDepartments(res.departments);
+        if (formData.department === deptName) {
+          setFormData((prev) => ({ ...prev, department: '' }));
+        }
+      } else {
+        alert(res.error || 'Failed to delete department.');
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Error deleting department.');
+    } finally {
+      setDeptSaving(false);
+    }
+  };
+
+  // Dedicated file upload to /api/upload (saves physically to disk in public/uploads/staff-docs)
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
     field: 'photographUrl' | 'panCardUrl' | 'aadhaarCardUrl'
@@ -193,17 +223,33 @@ export default function StaffPersonalDetailsClient({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 12 * 1024 * 1024) {
-      alert('File size must be under 12 MB.');
+    if (file.size > 20 * 1024 * 1024) {
+      alert('File size must be under 20 MB.');
       return;
     }
 
     try {
-      const base64String = await compressImage(file);
-      setFormData((prev) => ({ ...prev, [field]: base64String }));
-    } catch (err) {
-      console.error('File read error:', err);
-      alert('Failed to process image. Please try again.');
+      setUploadingField(field);
+      const uploadData = new FormData();
+      uploadData.append('file', file);
+      uploadData.append('category', field === 'photographUrl' ? 'photo' : field === 'panCardUrl' ? 'pan' : 'aadhaar');
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: uploadData,
+      });
+
+      const json = await res.json();
+      if (json.success && json.url) {
+        setFormData((prev) => ({ ...prev, [field]: json.url }));
+      } else {
+        alert(json.error || 'Failed to upload document. Please try again.');
+      }
+    } catch (err: any) {
+      console.error('File upload error:', err);
+      alert('Failed to upload file. Please try again.');
+    } finally {
+      setUploadingField(null);
     }
   };
 
@@ -379,7 +425,7 @@ export default function StaffPersonalDetailsClient({
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* 1. Basic Personal Information & Photograph */}
-        <div className="glass-panel p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
+        <div className="glass-panel p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-30">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
             <User className="w-4 h-4 text-sky-500" />
             <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">
@@ -403,6 +449,11 @@ export default function StaffPersonalDetailsClient({
                     <span>No Photo</span>
                   </div>
                 )}
+                {uploadingField === 'photographUrl' && (
+                  <div className="absolute inset-0 bg-slate-900/60 rounded-2xl flex items-center justify-center">
+                    <Loader2 className="w-6 h-6 text-white animate-spin" />
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1 text-center sm:text-left flex-1">
@@ -410,16 +461,26 @@ export default function StaffPersonalDetailsClient({
                   Profile Photograph (Soft Copy)
                 </label>
                 <p className="text-[11px] text-slate-400">
-                  Upload clear passport size photo or soft copy image (JPG, PNG under 3MB).
+                  Upload clear passport size photo or soft copy image (JPG, PNG under 20MB). Saved to /uploads/staff-docs.
                 </p>
                 {isEditing && (
                   <div className="pt-1.5 flex items-center gap-2 flex-wrap justify-center sm:justify-start">
-                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer shadow-sm transition">
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>{formData.photographUrl ? 'Change Photo' : 'Upload Photo'}</span>
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer shadow-sm transition disabled:opacity-50">
+                      {uploadingField === 'photographUrl' ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{formData.photographUrl ? 'Change Photo' : 'Upload Photo'}</span>
+                        </>
+                      )}
                       <input
                         type="file"
                         accept="image/*"
+                        disabled={uploadingField === 'photographUrl'}
                         onChange={(e) => handleFileUpload(e, 'photographUrl')}
                         className="hidden"
                       />
@@ -606,7 +667,7 @@ export default function StaffPersonalDetailsClient({
         </div>
 
         {/* 2. CURRENT EMPLOYMENT & COMPENSATION (HRMS & SALARY MASTER) */}
-        <div className="glass-panel p-6 rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-gradient-to-br from-indigo-50/20 via-white to-white dark:from-indigo-950/10 dark:via-slate-900 dark:to-slate-900 space-y-4 shadow-sm">
+        <div className="glass-panel p-6 rounded-2xl border border-indigo-200/80 dark:border-indigo-900/60 bg-gradient-to-br from-indigo-50/20 via-white to-white dark:from-indigo-950/10 dark:via-slate-900 dark:to-slate-900 space-y-4 shadow-sm relative z-20">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
             <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <Briefcase className="w-4 h-4 text-indigo-600" />
@@ -635,9 +696,21 @@ export default function StaffPersonalDetailsClient({
 
             {/* Department */}
             <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                Department
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  Department
+                </label>
+                {isSuperAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setIsDeptModalOpen(true)}
+                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Manage Departments
+                  </button>
+                )}
+              </div>
               <select
                 disabled={!isEditing}
                 value={formData.department}
@@ -645,14 +718,11 @@ export default function StaffPersonalDetailsClient({
                 className="w-full glass-input px-3 py-2 rounded-xl text-xs disabled:opacity-80 bg-white dark:bg-slate-900"
               >
                 <option value="">-- Select Department --</option>
-                <option value="Operations & Loan Processing">Operations & Loan Processing</option>
-                <option value="Sales & Business Development">Sales & Business Development</option>
-                <option value="Credit & Underwriting">Credit & Underwriting</option>
-                <option value="Verification & Field Inspection">Verification & Field Inspection</option>
-                <option value="Accounts & Finance">Accounts & Finance</option>
-                <option value="HR & Administration">HR & Administration</option>
-                <option value="Customer Relationship & Support">Customer Relationship & Support</option>
-                <option value="Management & Executive">Management & Executive</option>
+                {departments.map((dept) => (
+                  <option key={dept} value={dept}>
+                    {dept}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -846,7 +916,7 @@ export default function StaffPersonalDetailsClient({
         </div>
 
         {/* 3. KYC Verification & Soft Copies */}
-        <div className="glass-panel p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
+        <div className="glass-panel p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-10">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
             <Shield className="w-4 h-4 text-indigo-500" />
             <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">
@@ -876,39 +946,71 @@ export default function StaffPersonalDetailsClient({
                 <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                   PAN Card Soft Copy (Document Upload)
                 </label>
-                {formData.panCardUrl ? (
-                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="w-4 h-4 text-sky-500 shrink-0" />
-                      <span className="text-xs font-semibold truncate">PAN Card Document Attached</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <a
-                        href={formData.panCardUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-1 rounded-md text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/50 text-xs font-bold flex items-center gap-1"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" /> View
-                      </a>
-                      {isEditing && (
-                        <button
-                          type="button"
-                          onClick={() => setFormData((prev) => ({ ...prev, panCardUrl: '' }))}
-                          className="p-1 rounded-md text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50"
-                          title="Remove soft copy"
+                {uploadingField === 'panCardUrl' ? (
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-xs text-sky-700 dark:text-sky-300 font-semibold animate-pulse">
+                    <Loader2 className="w-4 h-4 animate-spin text-sky-600" />
+                    <span>Uploading PAN document to server storage...</span>
+                  </div>
+                ) : formData.panCardUrl ? (
+                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {formData.panCardUrl.toLowerCase().includes('.pdf') ? (
+                          <div className="p-1 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 border border-rose-200 dark:border-rose-800">
+                            <FileText className="w-4 h-4 shrink-0" />
+                          </div>
+                        ) : (
+                          <div className="p-1 rounded bg-sky-50 dark:bg-sky-950/40 text-sky-600 border border-sky-200 dark:border-sky-800">
+                            <ImageIcon className="w-4 h-4 shrink-0" />
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block truncate">
+                            {formData.panCardUrl.toLowerCase().includes('.pdf') ? 'PAN Card (PDF File)' : 'PAN Card (Photo / Image)'}
+                          </span>
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            Saved in server /uploads/staff-docs
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <a
+                          href={formData.panCardUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2.5 py-1 rounded-md bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/50 dark:hover:bg-sky-900/50 text-sky-600 dark:text-sky-400 text-xs font-bold flex items-center gap-1 transition"
                         >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                          <ExternalLink className="w-3.5 h-3.5" /> View / Download
+                        </a>
+                        {isEditing && (
+                          <button
+                            type="button"
+                            onClick={() => setFormData((prev) => ({ ...prev, panCardUrl: '' }))}
+                            className="p-1 rounded-md text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50"
+                            title="Remove soft copy"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    {!formData.panCardUrl.toLowerCase().includes('.pdf') && (
+                      <div className="pt-1">
+                        <img
+                          src={formData.panCardUrl}
+                          alt="PAN Preview"
+                          className="h-20 w-auto rounded-lg object-contain border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800"
+                        />
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center p-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900">
-                    <p className="text-[11px] text-slate-400 mb-1.5">No PAN soft copy uploaded yet.</p>
+                    <p className="text-[11px] text-slate-400 mb-1.5">No PAN soft copy uploaded yet. (JPG, PNG, PDF up to 20MB)</p>
                     {isEditing && (
                       <label className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 text-xs font-bold border border-sky-200 dark:border-sky-800 cursor-pointer hover:bg-sky-100 transition">
-                        <Upload className="w-3 h-3" /> Upload PAN Soft Copy
+                        <Upload className="w-3 h-3" /> Upload PAN Soft Copy (Image or PDF)
                         <input
                           type="file"
                           accept="image/*,application/pdf"
@@ -943,39 +1045,71 @@ export default function StaffPersonalDetailsClient({
                 <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                   Aadhaar Card Soft Copy (Document Upload)
                 </label>
-                {formData.aadhaarCardUrl ? (
-                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="w-4 h-4 text-sky-500 shrink-0" />
-                      <span className="text-xs font-semibold truncate">Aadhaar Card Document Attached</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <a
-                        href={formData.aadhaarCardUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-1 rounded-md text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/50 text-xs font-bold flex items-center gap-1"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" /> View
-                      </a>
-                      {isEditing && (
-                        <button
-                          type="button"
-                          onClick={() => setFormData((prev) => ({ ...prev, aadhaarCardUrl: '' }))}
-                          className="p-1 rounded-md text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50"
-                          title="Remove soft copy"
+                {uploadingField === 'aadhaarCardUrl' ? (
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-xs text-sky-700 dark:text-sky-300 font-semibold animate-pulse">
+                    <Loader2 className="w-4 h-4 animate-spin text-sky-600" />
+                    <span>Uploading Aadhaar document to server storage...</span>
+                  </div>
+                ) : formData.aadhaarCardUrl ? (
+                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {formData.aadhaarCardUrl.toLowerCase().includes('.pdf') ? (
+                          <div className="p-1 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 border border-rose-200 dark:border-rose-800">
+                            <FileText className="w-4 h-4 shrink-0" />
+                          </div>
+                        ) : (
+                          <div className="p-1 rounded bg-sky-50 dark:bg-sky-950/40 text-sky-600 border border-sky-200 dark:border-sky-800">
+                            <ImageIcon className="w-4 h-4 shrink-0" />
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block truncate">
+                            {formData.aadhaarCardUrl.toLowerCase().includes('.pdf') ? 'Aadhaar Card (PDF File)' : 'Aadhaar Card (Photo / Image)'}
+                          </span>
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            Saved in server /uploads/staff-docs
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <a
+                          href={formData.aadhaarCardUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2.5 py-1 rounded-md bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/50 dark:hover:bg-sky-900/50 text-sky-600 dark:text-sky-400 text-xs font-bold flex items-center gap-1 transition"
                         >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                          <ExternalLink className="w-3.5 h-3.5" /> View / Download
+                        </a>
+                        {isEditing && (
+                          <button
+                            type="button"
+                            onClick={() => setFormData((prev) => ({ ...prev, aadhaarCardUrl: '' }))}
+                            className="p-1 rounded-md text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50"
+                            title="Remove soft copy"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    {!formData.aadhaarCardUrl.toLowerCase().includes('.pdf') && (
+                      <div className="pt-1">
+                        <img
+                          src={formData.aadhaarCardUrl}
+                          alt="Aadhaar Preview"
+                          className="h-20 w-auto rounded-lg object-contain border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800"
+                        />
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center p-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900">
-                    <p className="text-[11px] text-slate-400 mb-1.5">No Aadhaar soft copy uploaded yet.</p>
+                    <p className="text-[11px] text-slate-400 mb-1.5">No Aadhaar soft copy uploaded yet. (JPG, PNG, PDF up to 20MB)</p>
                     {isEditing && (
                       <label className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 text-xs font-bold border border-sky-200 dark:border-sky-800 cursor-pointer hover:bg-sky-100 transition">
-                        <Upload className="w-3 h-3" /> Upload Aadhaar Soft Copy
+                        <Upload className="w-3 h-3" /> Upload Aadhaar Soft Copy (Image or PDF)
                         <input
                           type="file"
                           accept="image/*,application/pdf"
@@ -1344,6 +1478,88 @@ export default function StaffPersonalDetailsClient({
           </div>
         )}
       </form>
+
+      {/* Dynamic Department Manager Modal for Super Admin */}
+      {isDeptModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Building className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Manage Company Departments
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDeptModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Add new departments or remove obsolete departments. All staff profile forms and registers will dynamically show this list.
+            </p>
+
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. Legal & Compliance..."
+                  value={newDeptInput}
+                  onChange={(e) => setNewDeptInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddDepartment();
+                    }
+                  }}
+                  className="flex-1 glass-input px-3 py-2 rounded-xl text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddDepartment}
+                  disabled={deptSaving || !newDeptInput.trim()}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition disabled:opacity-50 flex items-center gap-1 shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add
+                </button>
+              </div>
+
+              <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1 divide-y divide-slate-100 dark:divide-slate-800">
+                {departments.map((dept) => (
+                  <div
+                    key={dept}
+                    className="flex items-center justify-between py-2 px-2 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-lg text-xs"
+                  >
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{dept}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDepartment(dept)}
+                      className="p-1 text-slate-400 hover:text-rose-500 rounded transition"
+                      title="Delete department"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsDeptModalOpen(false)}
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-semibold text-xs rounded-xl transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

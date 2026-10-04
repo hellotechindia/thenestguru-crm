@@ -10,6 +10,7 @@ import {
 import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 import { INDIAN_STATES, getCitiesForIndianState } from '@/lib/india-data';
 import DatePickerInput from '@/components/DatePickerInput';
+import MultiSelectDropdown from '@/components/MultiSelectDropdown';
 
 export interface CoApplicantEntry {
   name: string;
@@ -21,6 +22,7 @@ export interface CoApplicantEntry {
   state: string;
   city: string;
   customerType: string;
+  customerTypes?: string[];
   incomeTypes: string[];
   incomeRequired: boolean;
 }
@@ -73,14 +75,18 @@ export default function CaseIntakeForm({
     clientState: defaultState,
     clientCity: '',
     customerType: defaultCustomerType,
+    customerTypes: defaultCustomerType ? [defaultCustomerType] : [] as string[],
     incomeTypes: [] as string[],
     propertyType: defaultPropertyScope,
     propertyState: defaultState,
     propertyCity: '',
     coApplicantCount: 0,
     channelUserId: '',
+    channelUserIds: [] as string[],
     salesUserId: '',
+    salesUserIds: [] as string[],
     operationUserId: '',
+    operationUserIds: [] as string[],
     assignedTeamId: teams[0]?.id || '',
   });
 
@@ -109,8 +115,29 @@ export default function CaseIntakeForm({
       if (savedDraft) {
         const parsed = JSON.parse(savedDraft);
         if (parsed.formData && (parsed.formData.clientName || parsed.formData.mobile)) {
+          const restoredCustomerTypes = Array.isArray(parsed.formData.customerTypes)
+            ? parsed.formData.customerTypes
+            : (parsed.formData.customerType ? parsed.formData.customerType.split(',').map((s: string) => s.trim()).filter(Boolean) : [defaultCustomerType]);
+          const restoredChannelIds = Array.isArray(parsed.formData.channelUserIds)
+            ? parsed.formData.channelUserIds
+            : (parsed.formData.channelUserId ? parsed.formData.channelUserId.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+          const restoredSalesIds = Array.isArray(parsed.formData.salesUserIds)
+            ? parsed.formData.salesUserIds
+            : (parsed.formData.salesUserId ? parsed.formData.salesUserId.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+          const restoredOpIds = Array.isArray(parsed.formData.operationUserIds)
+            ? parsed.formData.operationUserIds
+            : (parsed.formData.operationUserId ? parsed.formData.operationUserId.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+
           setFormData({
             ...parsed.formData,
+            customerTypes: restoredCustomerTypes,
+            customerType: restoredCustomerTypes.join(', '),
+            channelUserIds: restoredChannelIds,
+            channelUserId: restoredChannelIds.join(','),
+            salesUserIds: restoredSalesIds,
+            salesUserId: restoredSalesIds.join(','),
+            operationUserIds: restoredOpIds,
+            operationUserId: restoredOpIds.join(','),
             incomeTypes: Array.isArray(parsed.formData.incomeTypes)
               ? parsed.formData.incomeTypes
               : [],
@@ -152,6 +179,19 @@ export default function CaseIntakeForm({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [formData]);
 
+  const handleCustomerTypeToggle = (cType: string) => {
+    setFormData((prev) => {
+      const current = prev.customerTypes || (prev.customerType ? prev.customerType.split(',').map((s) => s.trim()).filter(Boolean) : []);
+      const exists = current.includes(cType);
+      const updated = exists ? current.filter((t) => t !== cType) : [...current, cType];
+      return {
+        ...prev,
+        customerTypes: updated,
+        customerType: updated.join(', '),
+      };
+    });
+  };
+
   const handleIncomeTypeToggle = (type: string) => {
     setFormData(prev => {
       const current = prev.incomeTypes || [];
@@ -161,6 +201,21 @@ export default function CaseIntakeForm({
         return { ...prev, incomeTypes: [...current, type] };
       }
     });
+  };
+
+  const handleCoApplicantCustomerTypeToggle = (index: number, cType: string) => {
+    const updated = [...coApplicants];
+    const co = updated[index];
+    if (!co) return;
+    const currentTypes = co.customerTypes || (co.customerType ? co.customerType.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+    const exists = currentTypes.includes(cType);
+    const newTypes = exists ? currentTypes.filter((t: string) => t !== cType) : [...currentTypes, cType];
+    updated[index] = {
+      ...co,
+      customerTypes: newTypes,
+      customerType: newTypes.join(', '),
+    };
+    setCoApplicants(updated);
   };
 
   const handleCoApplicantCountChange = (count: number) => {
@@ -181,6 +236,7 @@ export default function CaseIntakeForm({
             state: formData.clientState || (states[0]?.name || ''),
             city: '',
             customerType: defaultCustomerType,
+            customerTypes: defaultCustomerType ? [defaultCustomerType] : [],
             incomeTypes: [],
             incomeRequired: false,
           });
@@ -264,9 +320,26 @@ export default function CaseIntakeForm({
       }
     }
 
+    // Validate Customer Types & Income
+    const selectedCustomerTypes = formData.customerTypes || (formData.customerType ? formData.customerType.split(',').map((s) => s.trim()).filter(Boolean) : []);
+    if (selectedCustomerTypes.length === 0) {
+      setError('Please select at least one Customer Type / Entity.');
+      return;
+    }
+
+    if (!formData.incomeTypes || formData.incomeTypes.length === 0) {
+      setError('Please select at least one Income Profile.');
+      return;
+    }
+
     setLoading(true);
 
     try {
+      const sanitizedCoApplicants = coApplicants.map((co) => ({
+        ...co,
+        customerType: co.customerTypes && co.customerTypes.length > 0 ? co.customerTypes.join(', ') : co.customerType,
+      }));
+
       const res = await createCaseAction({
         clientName: formData.clientName.trim(),
         mobile: formData.mobile.trim(),
@@ -277,16 +350,16 @@ export default function CaseIntakeForm({
         clientDob: formData.clientDob || null,
         product: formData.product,
         subProduct: formData.subProduct || undefined,
-        customerType: formData.customerType,
+        customerType: selectedCustomerTypes.join(', '),
         propertyType: formData.propertyType,
         propertyState: formData.propertyState || undefined,
         propertyCity: formData.propertyCity ? formData.propertyCity.trim() : undefined,
         incomeTypes: formData.incomeTypes,
         coApplicantCount: formData.coApplicantCount,
-        coApplicantsData: coApplicants,
-        channelUserId: formData.channelUserId || undefined,
-        salesUserId: formData.salesUserId || undefined,
-        operationUserId: formData.operationUserId || undefined,
+        coApplicantsData: sanitizedCoApplicants,
+        channelUserId: (formData.channelUserIds?.length ? formData.channelUserIds.join(',') : formData.channelUserId) || undefined,
+        salesUserId: (formData.salesUserIds?.length ? formData.salesUserIds.join(',') : formData.salesUserId) || undefined,
+        operationUserId: (formData.operationUserIds?.length ? formData.operationUserIds.join(',') : formData.operationUserId) || undefined,
         assignedTeamId: formData.assignedTeamId || undefined,
       });
 
@@ -492,23 +565,6 @@ export default function CaseIntakeForm({
 
           <div>
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-              Customer Type / Entity *
-            </label>
-            <select
-              value={formData.customerType}
-              onChange={(e) => setFormData({ ...formData, customerType: e.target.value })}
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
-            >
-              {targetCategories.map((tc) => (
-                <option key={tc.id} value={tc.name}>
-                  {tc.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
               Client State *
             </label>
             <select
@@ -525,7 +581,7 @@ export default function CaseIntakeForm({
             </select>
           </div>
 
-          <div>
+          <div className="sm:col-span-2">
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
               Client City
             </label>
@@ -545,18 +601,75 @@ export default function CaseIntakeForm({
           </div>
         </div>
 
-        {/* Multi-Income Types Checkboxes (Pointer 1.4 & 18) */}
+        {/* Multi-Customer Type / Entity Checkboxes */}
         <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-          <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-2">
-            Income Profile (Select Multiple if Applicable) *
-          </label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+              Customer Type / Entity (Select Multiple if Applicable) *
+            </label>
+            {isSuperAdmin && (
+              <a
+                href="/admin/customer-types"
+                target="_blank"
+                className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                title="Manage dynamic customer type options in Master settings"
+              >
+                + Manage Customer Types
+              </a>
+            )}
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {(() => {
-              const baseList = (profiles && profiles.length > 0)
-                ? profiles.map((p) => p.name)
-                : ['Salaried', 'Self Employed Professional', 'Business / Non-Professional', 'Rental Income'];
-              return baseList.includes('Housewife') ? baseList : [...baseList, 'Housewife'];
-            })().map((inc) => {
+            {Array.from(new Map(targetCategories.map((tc) => [tc.name, tc])).values()).map((tc) => {
+              const checked = (formData.customerTypes || []).includes(tc.name);
+              return (
+                <label
+                  key={tc.id || tc.name}
+                  className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all ${
+                    checked
+                      ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-500 text-indigo-700 dark:text-indigo-300 shadow-sm font-semibold'
+                      : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => handleCustomerTypeToggle(tc.name)}
+                    className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                  />
+                  <span className="truncate">{tc.name}</span>
+                </label>
+              );
+            })}
+          </div>
+          {(!formData.customerTypes || formData.customerTypes.length === 0) && (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 font-medium">
+              ⚠️ Please select at least one customer type / entity.
+            </p>
+          )}
+        </div>
+
+        {/* Multi-Income Types Checkboxes (Dynamic from Profile Master) */}
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+              Income Profile (Select Multiple if Applicable) *
+            </label>
+            {isSuperAdmin && (
+              <a
+                href="/admin/profiles"
+                target="_blank"
+                className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                title="Manage dynamic income profile options in Master settings"
+              >
+                + Manage Dynamic Profiles
+              </a>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {((profiles && profiles.length > 0)
+              ? profiles.map((p) => p.name)
+              : ['Salaried', 'Self Employed Professional', 'Business / Non-Professional', 'Rental Income']
+            ).map((inc) => {
               const checked = (formData.incomeTypes || []).includes(inc);
               return (
                 <label
@@ -775,12 +888,9 @@ export default function CaseIntakeForm({
               const coStateCities = Array.from(new Set([...coDbCities, ...getCitiesForIndianState(activeCoState)]));
               const coCityListId = `coCityList_${activeIdx}`;
 
-              const baseProfiles = (profiles && profiles.length > 0)
+              const availableIncomeProfiles = (profiles && profiles.length > 0)
                 ? profiles.map((p) => p.name)
                 : ['Salaried', 'Self Employed Professional', 'Business / Non-Professional', 'Rental Income'];
-              const availableIncomeProfiles = baseProfiles.includes('Housewife')
-                ? baseProfiles
-                : [...baseProfiles, 'Housewife'];
 
               return (
                 <div className="p-5 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-4">
@@ -945,22 +1055,36 @@ export default function CaseIntakeForm({
                         ))}
                       </datalist>
                     </div>
+                  </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                        Customer Type / Entity *
-                      </label>
-                      <select
-                        value={activeCo.customerType || defaultCustomerType}
-                        onChange={(e) => handleCoApplicantChange(activeIdx, 'customerType', e.target.value)}
-                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"
-                      >
-                        {targetCategories.map((tc) => (
-                          <option key={tc.id} value={tc.name}>
-                            {tc.name}
-                          </option>
-                        ))}
-                      </select>
+                  {/* Co-Applicant Customer Type / Entity Checkboxes */}
+                  <div className="pt-3 border-t border-slate-200/80 dark:border-slate-700">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-2">
+                      Co-Applicant Customer Type / Entity (Select Multiple if Applicable) *
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {Array.from(new Map(targetCategories.map((tc) => [tc.name, tc])).values()).map((tc) => {
+                        const coCustomerTypes = activeCo.customerTypes || (activeCo.customerType ? activeCo.customerType.split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+                        const checked = coCustomerTypes.includes(tc.name);
+                        return (
+                          <label
+                            key={tc.id || tc.name}
+                            className={`flex items-center gap-2 p-2 rounded-xl border text-xs font-medium cursor-pointer transition-all ${
+                              checked
+                                ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-500 text-indigo-700 dark:text-indigo-300 shadow-sm font-semibold'
+                                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => handleCoApplicantCustomerTypeToggle(activeIdx, tc.name)}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                            />
+                            <span className="truncate">{tc.name}</span>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1012,68 +1136,79 @@ export default function CaseIntakeForm({
       <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-4">
         <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
           <UserCheck className="w-5 h-5 text-indigo-500" />
-          <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
-            5. Source Assignment & Operations Desk
-          </h2>
+          <div>
+            <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
+              5. Source Assignment & Operations Desk
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Assign single or multiple Channel Partners, Sales Executives & Operations Leads (Multi-Select Checkboxes)
+            </p>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Pointer 5: Channel Partner visible ONLY to Super Admin */}
           {isSuperAdmin && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-                Channel Partner (Super Admin View Only)
-              </label>
-              <select
-                value={formData.channelUserId}
-                onChange={(e) => setFormData({ ...formData, channelUserId: e.target.value })}
-                className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
-              >
-                <option value="">-- Direct Lead / None --</option>
-                {channelUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} ({u.email || 'Channel'})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <MultiSelectDropdown
+              label="Channel Partner(s) (Super Admin View)"
+              placeholder="-- Direct Lead / None (Click to Select) --"
+              color="amber"
+              options={channelUsers.map((u) => ({
+                value: u.id,
+                label: u.name,
+                subtitle: u.email || 'Channel Partner',
+                badge: 'Channel',
+              }))}
+              selected={formData.channelUserIds}
+              onChange={(newIds) =>
+                setFormData({
+                  ...formData,
+                  channelUserIds: newIds,
+                  channelUserId: newIds.join(','),
+                })
+              }
+            />
           )}
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-              Sales Executive
-            </label>
-            <select
-              value={formData.salesUserId}
-              onChange={(e) => setFormData({ ...formData, salesUserId: e.target.value })}
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
-            >
-              <option value="">-- Unassigned --</option>
-              {salesUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <MultiSelectDropdown
+            label="Sales Executive(s)"
+            placeholder="-- Unassigned (Click to Select) --"
+            color="blue"
+            options={salesUsers.map((u) => ({
+              value: u.id,
+              label: u.name,
+              subtitle: u.email || 'Sales Team',
+              badge: 'Sales',
+            }))}
+            selected={formData.salesUserIds}
+            onChange={(newIds) =>
+              setFormData({
+                ...formData,
+                salesUserIds: newIds,
+                salesUserId: newIds.join(','),
+              })
+            }
+          />
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-              Operations Executive
-            </label>
-            <select
-              value={formData.operationUserId}
-              onChange={(e) => setFormData({ ...formData, operationUserId: e.target.value })}
-              className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
-            >
-              <option value="">-- Unassigned --</option>
-              {operationUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <MultiSelectDropdown
+            label="Operations Executive(s)"
+            placeholder="-- Unassigned (Click to Select) --"
+            color="purple"
+            options={operationUsers.map((u) => ({
+              value: u.id,
+              label: u.name,
+              subtitle: u.email || 'Operations Team',
+              badge: 'Ops',
+            }))}
+            selected={formData.operationUserIds}
+            onChange={(newIds) =>
+              setFormData({
+                ...formData,
+                operationUserIds: newIds,
+                operationUserId: newIds.join(','),
+              })
+            }
+          />
         </div>
       </div>
 
