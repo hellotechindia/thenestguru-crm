@@ -32,6 +32,11 @@ import {
   ChevronDown,
   ChevronRight,
   CornerDownRight,
+  LayoutGrid,
+  List,
+  Mail,
+  Phone,
+  ExternalLink,
 } from 'lucide-react';
 import { isValidEmail, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
 import DatePickerInput from './DatePickerInput';
@@ -47,6 +52,8 @@ interface UserItem {
   team: { id?: string; name: string } | null;
   teamId?: string | null;
   dob?: Date | string | null;
+  photographUrl?: string | null;
+  avatarUrl?: string | null;
   parentChannelId?: string | null;
   childChannels?: Array<{
     id: string;
@@ -79,6 +86,7 @@ export default function UserManagementClient({
   const router = useRouter();
   const isSuperAdmin = currentUserRole === 'SUPER_ADMIN';
   const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('ALL');
+  const [directoryViewMode, setDirectoryViewMode] = useState<'TABLE' | 'GRID'>('TABLE');
   const [loading, setLoading] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -565,8 +573,8 @@ export default function UserManagementClient({
             </p>
           </div>
 
-          {/* Quick Filter Pill for All vs Teams */}
-          <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
+          {/* Quick Filter Pill for All vs Teams & Layout Toggle */}
+          <div className="flex items-center gap-2 overflow-x-auto text-xs">
             <button
               type="button"
               onClick={() => setSelectedTeamFilter('ALL')}
@@ -578,6 +586,35 @@ export default function UserManagementClient({
             >
               All Personnel ({users.filter((u) => !u.parentChannelId).length})
             </button>
+
+            <div className="flex items-center gap-1 p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setDirectoryViewMode('TABLE')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                  directoryViewMode === 'TABLE'
+                    ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+                title="Table Layout"
+              >
+                <List className="w-3.5 h-3.5" />
+                <span>Table</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDirectoryViewMode('GRID')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                  directoryViewMode === 'GRID'
+                    ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+                title="Grid Cards Layout"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Grid</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -655,135 +692,302 @@ export default function UserManagementClient({
           </div>
         </div>
 
-        <div className="overflow-x-auto pt-2">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase tracking-wider">
-                <th className="py-3 px-4 font-semibold">User & Login ID</th>
-                <th className="py-3 px-4 font-semibold">Role</th>
-                <th className="py-3 px-4 font-semibold text-center">Access Level</th>
-                <th className="py-3 px-4 font-semibold">Team</th>
-                <th className="py-3 px-4 font-semibold text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {users
-                .filter((u) => !u.parentChannelId)
-                .filter((u) => {
-                  if (selectedTeamFilter === 'ALL') return true;
-                  if (selectedTeamFilter === 'UNASSIGNED') return !u.teamId && !u.team?.id && u.role !== 'CHANNEL';
-                  return u.teamId === selectedTeamFilter || u.team?.id === selectedTeamFilter;
-                })
-                .map((u) => (
-                  <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                    <td className="py-3 px-4">
-                      <div>
-                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
-                          <span>{u.name}</span>
-                          {u.username && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
-                              @{u.username}
-                            </span>
+        {/* DIRECTORY DISPLAY: TABLE OR GRID VIEW */}
+        {(() => {
+          const filteredPersonnel = users
+            .filter((u) => !u.parentChannelId)
+            .filter((u) => {
+              if (selectedTeamFilter === 'ALL') return true;
+              if (selectedTeamFilter === 'UNASSIGNED') return !u.teamId && !u.team?.id && u.role !== 'CHANNEL';
+              return u.teamId === selectedTeamFilter || u.team?.id === selectedTeamFilter;
+            });
+
+          if (directoryViewMode === 'GRID') {
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pt-3">
+                {filteredPersonnel.length === 0 ? (
+                  <div className="col-span-full py-12 text-center text-slate-400 text-xs italic">
+                    No personnel found matching this team filter.
+                  </div>
+                ) : (
+                  filteredPersonnel.map((u) => {
+                    const photo = u.photographUrl || u.avatarUrl;
+                    return (
+                      <div
+                        key={u.id}
+                        className="glass-panel p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-md hover:shadow-xl hover:border-indigo-300 dark:hover:border-indigo-700 transition-all flex flex-col justify-between space-y-4 bg-white/70 dark:bg-slate-900/70"
+                      >
+                        <div className="flex items-start gap-3.5">
+                          {photo ? (
+                            <img
+                              src={photo}
+                              alt={u.name}
+                              className="w-14 h-14 rounded-2xl object-cover border-2 border-indigo-200 dark:border-indigo-800 shadow-sm shrink-0"
+                            />
+                          ) : (
+                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-500 to-sky-400 text-white font-extrabold text-lg flex items-center justify-center shadow-sm shrink-0 uppercase">
+                              {u.name.slice(0, 2)}
+                            </div>
                           )}
-                          {u.dob && (
-                            <span
-                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-pink-500/10 text-pink-600 dark:text-pink-400 border border-pink-500/20"
-                              title={`Date of Birth: ${new Date(u.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                          <div className="min-w-0 flex-1">
+                            <h4 className="font-extrabold text-sm text-slate-900 dark:text-white truncate" title={u.name}>
+                              {u.name}
+                            </h4>
+                            {u.username && (
+                              <p className="text-[10px] font-mono text-sky-600 dark:text-sky-400 truncate">
+                                @{u.username}
+                              </p>
+                            )}
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                              <span className="px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 text-[10px] font-bold">
+                                {u.role}
+                              </span>
+                              {u.dob && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-pink-500/10 text-pink-600 dark:text-pink-400 border border-pink-500/20"
+                                  title={`DOB: ${new Date(u.dob).toLocaleDateString('en-IN')}`}
+                                >
+                                  🎂 {new Date(u.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Mail, Phone & Team Details */}
+                        <div className="space-y-1.5 text-xs border-t border-slate-100 dark:border-slate-800 pt-3">
+                          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                            <Mail className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                            {u.email ? (
+                              <a href={`mailto:${u.email}`} className="truncate hover:text-indigo-600 hover:underline">
+                                {u.email}
+                              </a>
+                            ) : (
+                              <span className="italic text-slate-400 text-[11px]">No email</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                            <Phone className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            {u.phone ? (
+                              <a href={`tel:${u.phone}`} className="truncate hover:text-emerald-600 font-mono font-semibold">
+                                {u.phone}
+                              </a>
+                            ) : (
+                              <span className="italic text-slate-400 text-[11px]">No phone</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 text-[11px]">
+                            <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="truncate">{u.team?.name || 'Unassigned Team'}</span>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                          {u.role !== 'CHANNEL' ? (
+                            <Link
+                              href={`/admin/users/${u.id}`}
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition shadow-xs"
+                              title="Open and edit full profile & KYC"
                             >
-                              🎂 {new Date(u.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                            </span>
+                              <UserCheck className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                              <span>Edit Profile</span>
+                            </Link>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedParentPartner(u);
+                                setChildMessage('');
+                              }}
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-300 text-xs font-bold transition shadow-xs"
+                            >
+                              <Network className="w-3.5 h-3.5 text-amber-600" />
+                              <span>Child IDs ({u.childChannels?.length || 0})</span>
+                            </button>
                           )}
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          {u.email ? u.email : <span className="italic text-slate-400">No email registered</span>}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 font-semibold">
-                      <span className="px-2.5 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 text-[10px]">
-                        {u.role}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      {u.accessPermission === 'VIEW' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-bold">
-                          <Eye className="w-3 h-3" /> View Only
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
-                          <Edit3 className="w-3 h-3" /> Edit Access
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 font-medium text-slate-600 dark:text-slate-300">
-                      {u.team?.name || 'Unassigned'}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {u.role === 'CHANNEL' && (
+
                           <button
                             type="button"
-                            onClick={() => {
-                              setSelectedParentPartner(u);
-                              setChildMessage('');
-                            }}
-                            title="Manage Sub-Accounts (Strict VIEW Access)"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors mr-1 cursor-pointer shadow-sm"
+                            onClick={() =>
+                              setEditingUser({
+                                id: u.id,
+                                name: u.name,
+                                username: u.username || '',
+                                email: u.email || '',
+                                password: '',
+                                role: u.role as any,
+                                accessPermission: (u.accessPermission as any) || (u.role === 'CHANNEL' ? 'VIEW' : 'EDIT'),
+                                teamId: u.teamId || '',
+                                dob:
+                                  u.dob && !isNaN(new Date(u.dob).getTime())
+                                    ? new Date(u.dob).toISOString().split('T')[0]
+                                    : '',
+                              })
+                            }
+                            className="p-1.5 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-slate-200 dark:border-slate-800 transition"
+                            title="Quick Edit Credentials"
                           >
-                            <Network className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Child IDs ({u.childChannels?.length || 0})</span>
+                            <Edit3 className="w-3.5 h-3.5" />
                           </button>
-                        )}
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setEditingUser({
-                              id: u.id,
-                              name: u.name,
-                              username: u.username || '',
-                              email: u.email || '',
-                              password: '',
-                              role: u.role as any,
-                              accessPermission: (u.accessPermission as any) || (u.role === 'CHANNEL' ? 'VIEW' : 'EDIT'),
-                              teamId: u.teamId || '',
-                              dob:
-                                u.dob && !isNaN(new Date(u.dob).getTime())
-                                  ? new Date(u.dob).toISOString().split('T')[0]
-                                  : '',
-                            })
-                          }
-                          title="Edit User Profile (Name, Username, Email, Password, Role)"
-                          className="px-2.5 py-1 rounded-lg text-slate-600 dark:text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-slate-200 dark:border-slate-800 transition-colors inline-flex items-center gap-1 font-bold text-xs cursor-pointer shadow-sm"
-                        >
-                          <Edit3 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                          <span>Edit</span>
-                        </button>
-
-                        {u.role !== 'CHANNEL' && (
-                          <Link
-                            href={`/admin/users/${u.id}`}
-                            title="Full KYC & Personal Details"
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/40 border border-slate-200 dark:border-slate-800 transition-colors cursor-pointer"
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteUser(u.id, u.name)}
+                            className="p-1.5 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-slate-200 dark:border-slate-800 transition"
+                            title="Delete User"
                           >
-                            <UserCheck className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                          </Link>
-                        )}
-
-                        <button
-                          onClick={() => handleDeleteUser(u.id, u.name)}
-                          title="Delete User"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                    </td>
+                    );
+                  })
+                )}
+              </div>
+            );
+          }
+
+          return (
+            <div className="overflow-x-auto pt-2">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase tracking-wider">
+                    <th className="py-3 px-4 font-semibold">User & Login ID</th>
+                    <th className="py-3 px-4 font-semibold">Role</th>
+                    <th className="py-3 px-4 font-semibold text-center">Access Level</th>
+                    <th className="py-3 px-4 font-semibold">Team</th>
+                    <th className="py-3 px-4 font-semibold text-right">Action</th>
                   </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {filteredPersonnel.map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2.5">
+                          {u.photographUrl || u.avatarUrl ? (
+                            <img
+                              src={u.photographUrl || u.avatarUrl!}
+                              alt={u.name}
+                              className="w-8 h-8 rounded-full object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center justify-center shrink-0 uppercase">
+                              {u.name.slice(0, 2)}
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
+                              <span>{u.name}</span>
+                              {u.username && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
+                                  @{u.username}
+                                </span>
+                              )}
+                              {u.dob && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-pink-500/10 text-pink-600 dark:text-pink-400 border border-pink-500/20"
+                                  title={`Date of Birth: ${new Date(u.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                                >
+                                  🎂 {new Date(u.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              {u.email ? u.email : <span className="italic text-slate-400">No email registered</span>}
+                              {u.phone && <span className="ml-2 font-mono">• {u.phone}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-semibold">
+                        <span className="px-2.5 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 text-[10px]">
+                          {u.role}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        {u.accessPermission === 'VIEW' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                            <Eye className="w-3 h-3" /> View Only
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                            <Edit3 className="w-3 h-3" /> Edit Access
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 font-medium text-slate-600 dark:text-slate-300">
+                        {u.team?.name || 'Unassigned'}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {u.role === 'CHANNEL' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedParentPartner(u);
+                                setChildMessage('');
+                              }}
+                              title="Manage Sub-Accounts (Strict VIEW Access)"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 text-xs font-bold hover:bg-amber-100 transition-colors mr-1 cursor-pointer shadow-sm"
+                            >
+                              <Network className="w-3.5 h-3.5 text-amber-600" />
+                              <span>Child IDs ({u.childChannels?.length || 0})</span>
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditingUser({
+                                id: u.id,
+                                name: u.name,
+                                username: u.username || '',
+                                email: u.email || '',
+                                password: '',
+                                role: u.role as any,
+                                accessPermission: (u.accessPermission as any) || (u.role === 'CHANNEL' ? 'VIEW' : 'EDIT'),
+                                teamId: u.teamId || '',
+                                dob:
+                                  u.dob && !isNaN(new Date(u.dob).getTime())
+                                    ? new Date(u.dob).toISOString().split('T')[0]
+                                    : '',
+                              })
+                            }
+                            title="Edit User Credentials"
+                            className="px-2.5 py-1 rounded-lg text-slate-600 dark:text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-slate-200 dark:border-slate-800 transition-colors inline-flex items-center gap-1 font-bold text-xs cursor-pointer shadow-sm"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                            <span>Edit</span>
+                          </button>
+
+                          {u.role !== 'CHANNEL' && (
+                            <Link
+                              href={`/admin/users/${u.id}`}
+                              title="Full Profile & Personal Details"
+                              className="px-2.5 py-1 rounded-lg text-slate-600 dark:text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-slate-200 dark:border-slate-800 transition-colors inline-flex items-center gap-1 font-bold text-xs cursor-pointer shadow-sm"
+                            >
+                              <UserCheck className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                              <span>Full Profile</span>
+                            </Link>
+                          )}
+
+                          <button
+                            onClick={() => handleDeleteUser(u.id, u.name)}
+                            title="Delete User"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Edit User Modal */}

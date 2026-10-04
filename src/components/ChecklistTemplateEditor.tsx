@@ -98,36 +98,69 @@ function MultiSelectDropdown({
   const [search, setSearch] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close when clicking outside
+  // Close when clicking outside - never close when clicking a submit button to prevent layout shift cancelling clicks
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.closest('button[type="submit"]') || target.closest('[data-submit-btn]'))) {
+        return;
+      }
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
     }
     if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
+      const timer = setTimeout(() => {
+        document.addEventListener('click', handleClickOutside);
+      }, 50);
+      return () => {
+        clearTimeout(timer);
+        document.removeEventListener('click', handleClickOutside);
+      };
     }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
   }, [isOpen]);
 
+  const isValueMatch = (a: string, b: string) => {
+    const aNorm = a.trim().toLowerCase();
+    const bNorm = b.trim().toLowerCase();
+    if (aNorm === bNorm) return true;
+    if (aNorm.endsWith(' - ' + bNorm) || bNorm.endsWith(' - ' + aNorm)) return true;
+    if (aNorm.replace(/_/g, ' ') === bNorm.replace(/_/g, ' ')) return true;
+    return false;
+  };
+
+  const isSelected = (val: string) => {
+    return selected.some((s) => isValueMatch(s, val));
+  };
+
   const toggleOption = (val: string) => {
-    if (selected.includes(val)) {
-      onChange(selected.filter((v) => v !== val));
+    if (isSelected(val)) {
+      onChange(selected.filter((s) => !isValueMatch(s, val)));
     } else {
       onChange([...selected, val]);
     }
   };
 
-  const selectAll = () => onChange(options.map((o) => o.value));
-  const clearAll = () => onChange([]);
+  const selectAll = () => {
+    if (search.trim()) {
+      const newVals = filteredOptions.map((o) => o.value).filter((v) => !isSelected(v));
+      onChange([...selected, ...newVals]);
+    } else {
+      onChange(options.map((o) => o.value));
+    }
+  };
 
-  const isExplicit = mode === 'explicit';
-  const isAll = isExplicit
-    ? selected.length === options.length && options.length > 0
-    : selected.length === 0;
+  const clearAll = () => {
+    if (search.trim()) {
+      const filteredSet = new Set(filteredOptions.map((o) => o.value.trim().toLowerCase()));
+      onChange(selected.filter((s) => !filteredSet.has(s.trim().toLowerCase())));
+    } else {
+      onChange([]);
+    }
+  };
+
+  const isAll = options.length > 0 && selected.length === options.length;
+  const isDefaultAll = selected.length === 0;
 
   const filteredOptions = options.filter((o) =>
     o.label.toLowerCase().includes(search.toLowerCase())
@@ -178,14 +211,14 @@ function MultiSelectDropdown({
 
   // Dynamic summary text for the trigger button
   let summaryText = allLabel;
-  if (isExplicit && selected.length === 0) {
-    summaryText = placeholder || 'Select options (0 selected)';
-  } else if (isExplicit && isAll) {
+  if (isDefaultAll) {
+    summaryText = allLabel;
+  } else if (isAll) {
     summaryText = `All Selected (${options.length})`;
   } else if (selected.length === 1) {
-    const matched = options.find((o) => o.value === selected[0]);
+    const matched = options.find((o) => isValueMatch(o.value, selected[0]));
     summaryText = matched ? matched.label : selected[0];
-  } else if (selected.length > 1) {
+  } else {
     summaryText = `${selected.length} Selected`;
   }
 
@@ -195,7 +228,7 @@ function MultiSelectDropdown({
         <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
           {Icon && <Icon className={`w-3.5 h-3.5 ${themeColors.text}`} />}
           <span>{label}</span>
-          {isExplicit && (
+          {options.length > 0 && (
             <span className="text-[10px] text-slate-400 font-normal">
               ({selected.length}/{options.length})
             </span>
@@ -206,21 +239,17 @@ function MultiSelectDropdown({
         ) : (
           <span
             className={`text-[9.5px] font-bold px-2 py-0.5 rounded-full border transition-all ${
-              isAll
-                ? isExplicit
-                  ? themeColors.badge
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'
-                : selected.length === 0
-                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700'
+              isDefaultAll
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                : isAll
+                ? `${themeColors.badge} font-extrabold shadow-sm`
                 : themeColors.badge
             }`}
           >
-            {isExplicit
-              ? isAll
-                ? `All (${options.length})`
-                : `${selected.length} Selected`
-              : isAll
+            {isDefaultAll
               ? 'All (Default)'
+              : isAll
+              ? `All (${options.length}) Selected`
               : `${selected.length} Selected`}
           </span>
         )}
@@ -230,7 +259,7 @@ function MultiSelectDropdown({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border transition-all text-left shadow-sm ${
+        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border transition-all text-left shadow-sm cursor-pointer ${
           isOpen
             ? `${themeColors.border} ring-2 ${themeColors.ring}`
             : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
@@ -238,10 +267,10 @@ function MultiSelectDropdown({
       >
         <div className="flex items-center gap-2 overflow-hidden">
           <span className="text-slate-800 dark:text-slate-200 truncate font-medium">
-            {!isExplicit && isAll ? (
+            {isDefaultAll ? (
               <span className="text-slate-400 font-normal">All / Any (No restriction)</span>
-            ) : selected.length === 0 ? (
-              <span className="text-slate-400 font-normal">{placeholder || 'None selected (0)'}</span>
+            ) : isAll ? (
+              <span className="font-semibold text-emerald-600 dark:text-emerald-400">All Selected ({options.length})</span>
             ) : (
               <span className="font-semibold">{summaryText}</span>
             )}
@@ -254,39 +283,40 @@ function MultiSelectDropdown({
         />
       </button>
 
-      {/* Dismissible Selected Badges Preview (shown when closed) */}
-      {selected.length > 0 && (!isAll || isExplicit) && !isOpen && (
+      {/* Dismissible Selected Badges Preview (ALWAYS shown whenever items are selected) */}
+      {selected.length > 0 && !isOpen && (
         <div className="flex flex-wrap gap-1 pt-0.5">
-          {selected.slice(0, 3).map((val) => {
-            const opt = options.find((o) => o.value === val);
+          {selected.slice(0, 4).map((val) => {
+            const opt = options.find((o) => isValueMatch(o.value, val));
             return (
               <span
                 key={val}
                 className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${themeColors.badge}`}
               >
-                <span className="max-w-[130px] truncate">{opt ? opt.label : val}</span>
+                <span className="max-w-[140px] truncate">{opt ? opt.label : val}</span>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleOption(val);
                   }}
-                  className="hover:opacity-75 p-0.5"
+                  className="hover:opacity-75 p-0.5 cursor-pointer"
+                  title="Remove selection"
                 >
                   <X className="w-2.5 h-2.5" />
                 </button>
               </span>
             );
           })}
-          {selected.length > 3 && (
+          {selected.length > 4 && (
             <span className="text-[10px] text-slate-400 font-semibold self-center">
-              +{selected.length - 3} more
+              +{selected.length - 4} more
             </span>
           )}
         </div>
       )}
 
-      {/* Options Container: Inline expanding panel (prevents overlapping fields/cards) */}
+      {/* Options Container: Inline expanding panel */}
       {isOpen && (
         <div
           className={
@@ -318,7 +348,7 @@ function MultiSelectDropdown({
                 <button
                   type="button"
                   onClick={clearAll}
-                  className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 font-semibold hover:underline"
+                  className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 font-semibold hover:underline cursor-pointer"
                 >
                   Deselect All
                 </button>
@@ -326,7 +356,7 @@ function MultiSelectDropdown({
                 <button
                   type="button"
                   onClick={selectAll}
-                  className={`font-semibold hover:underline ${themeColors.text}`}
+                  className={`font-semibold hover:underline cursor-pointer ${themeColors.text}`}
                 >
                   Select All
                 </button>
@@ -340,7 +370,7 @@ function MultiSelectDropdown({
               <div className="p-3 text-center text-xs text-slate-400">No matching options</div>
             ) : (
               filteredOptions.map((opt) => {
-                const checked = selected.includes(opt.value);
+                const checked = isSelected(opt.value);
                 return (
                   <button
                     key={opt.value}
@@ -367,6 +397,22 @@ function MultiSelectDropdown({
                 );
               })
             )}
+          </div>
+
+          {/* Explicit Done / Close Button */}
+          <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between">
+            <span className="text-[10px] text-slate-400 font-medium">
+              {selected.length === 0
+                ? 'All options included (no filter)'
+                : `${selected.length} of ${options.length} item(s) selected`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="px-2.5 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+            >
+              Done
+            </button>
           </div>
         </div>
       )}
@@ -498,68 +544,84 @@ export default function ChecklistTemplateEditor({
   // 4. Create Template Item
   const handleCreateItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCatId || !newItemLabel.trim()) return;
+    if (!selectedCatId || !newItemLabel.trim()) {
+      setErrorMsg('Target Category and Document Title are required.');
+      return;
+    }
     setLoading(true);
     setErrorMsg('');
-    const res = await createTemplateItemAction({
-      categoryId: selectedCatId,
-      label: newItemLabel,
-      applicantRequirement: applicantReq as any,
-      coApplicantRequirement: coApplicantReq as any,
-      propertyTypeScope: selectedPropScopes.length > 0 ? selectedPropScopes.join(', ') : undefined,
-      subProduct: selectedSubProducts.length > 0 ? selectedSubProducts.join(', ') : undefined,
-      incomeType: selectedProfiles.length > 0 ? selectedProfiles.join(', ') : undefined,
-      customerType: selectedCustomerTypes.length > 0 ? selectedCustomerTypes.join(', ') : undefined,
-      stages: selectedStages.length > 0 ? selectedStages.join(', ') : undefined,
-      stage: selectedStages.length > 0 ? selectedStages[0] : 1,
-      requireOnedrive,
-      requireRemark,
-      remarkPlaceholder: requireRemark ? remarkPlaceholder : undefined,
-    });
-    setLoading(false);
-    if (res.success) {
-      setNewItemLabel('');
-      setRemarkPlaceholder('');
-      setRequireRemark(false);
-      setRequireOnedrive(true);
-      setSelectedPropScopes([]);
-      setSelectedSubProducts([]);
-      setSelectedProfiles([]);
-      setSelectedCustomerTypes([]);
-      setSelectedStages([1]);
-      router.refresh();
-    } else {
-      setErrorMsg(res.error || 'Failed to create item');
+    try {
+      const res = await createTemplateItemAction({
+        categoryId: selectedCatId,
+        label: newItemLabel.trim(),
+        applicantRequirement: applicantReq as any,
+        coApplicantRequirement: coApplicantReq as any,
+        propertyTypeScope: selectedPropScopes.length > 0 ? selectedPropScopes.join(', ') : undefined,
+        subProduct: selectedSubProducts.length > 0 ? selectedSubProducts.join(', ') : undefined,
+        incomeType: selectedProfiles.length > 0 ? selectedProfiles.join(', ') : undefined,
+        customerType: selectedCustomerTypes.length > 0 ? selectedCustomerTypes.join(', ') : undefined,
+        stages: selectedStages.length > 0 ? selectedStages.join(', ') : undefined,
+        stage: selectedStages.length > 0 ? selectedStages[0] : 1,
+        requireOnedrive,
+        requireRemark,
+        remarkPlaceholder: requireRemark ? remarkPlaceholder.trim() : undefined,
+      });
+      setLoading(false);
+      if (res.success) {
+        setNewItemLabel('');
+        setRemarkPlaceholder('');
+        setRequireRemark(false);
+        setRequireOnedrive(true);
+        setSelectedPropScopes([]);
+        setSelectedSubProducts([]);
+        setSelectedProfiles([]);
+        setSelectedCustomerTypes([]);
+        setSelectedStages([1]);
+        router.refresh();
+      } else {
+        setErrorMsg(res.error || 'Failed to create item');
+      }
+    } catch (err: any) {
+      setLoading(false);
+      setErrorMsg(err?.message || 'Error occurred while saving item');
     }
   };
 
   // 5. Update Template Item
   const handleUpdateItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingItem || !editingItem.label.trim()) return;
+    if (!editingItem || !editingItem.label.trim()) {
+      setErrorMsg('Document Title is required.');
+      return;
+    }
     setLoading(true);
     setErrorMsg('');
-    const res = await updateTemplateItemAction(editingItem.id, {
-      categoryId: editingItem.categoryId,
-      label: editingItem.label,
-      applicantRequirement: editingItem.applicantRequirement as any,
-      coApplicantRequirement: editingItem.coApplicantRequirement as any,
-      propertyTypeScope: editingItem.selectedPropScopes.length > 0 ? editingItem.selectedPropScopes.join(', ') : undefined,
-      subProduct: editingItem.selectedSubProducts.length > 0 ? editingItem.selectedSubProducts.join(', ') : undefined,
-      incomeType: editingItem.selectedProfiles.length > 0 ? editingItem.selectedProfiles.join(', ') : undefined,
-      customerType: editingItem.selectedCustomerTypes.length > 0 ? editingItem.selectedCustomerTypes.join(', ') : undefined,
-      stages: editingItem.selectedStages.length > 0 ? editingItem.selectedStages.join(', ') : undefined,
-      stage: editingItem.selectedStages.length > 0 ? editingItem.selectedStages[0] : 1,
-      requireOnedrive: editingItem.requireOnedrive,
-      requireRemark: editingItem.requireRemark,
-      remarkPlaceholder: editingItem.requireRemark ? editingItem.remarkPlaceholder : undefined,
-    });
-    setLoading(false);
-    if (res.success) {
-      setEditingItem(null);
-      router.refresh();
-    } else {
-      setErrorMsg(res.error || 'Failed to update item');
+    try {
+      const res = await updateTemplateItemAction(editingItem.id, {
+        categoryId: editingItem.categoryId,
+        label: editingItem.label.trim(),
+        applicantRequirement: editingItem.applicantRequirement as any,
+        coApplicantRequirement: editingItem.coApplicantRequirement as any,
+        propertyTypeScope: editingItem.selectedPropScopes.length > 0 ? editingItem.selectedPropScopes.join(', ') : undefined,
+        subProduct: editingItem.selectedSubProducts.length > 0 ? editingItem.selectedSubProducts.join(', ') : undefined,
+        incomeType: editingItem.selectedProfiles.length > 0 ? editingItem.selectedProfiles.join(', ') : undefined,
+        customerType: editingItem.selectedCustomerTypes.length > 0 ? editingItem.selectedCustomerTypes.join(', ') : undefined,
+        stages: editingItem.selectedStages.length > 0 ? editingItem.selectedStages.join(', ') : undefined,
+        stage: editingItem.selectedStages.length > 0 ? editingItem.selectedStages[0] : 1,
+        requireOnedrive: editingItem.requireOnedrive,
+        requireRemark: editingItem.requireRemark,
+        remarkPlaceholder: editingItem.requireRemark ? (editingItem.remarkPlaceholder || '').trim() : undefined,
+      });
+      setLoading(false);
+      if (res.success) {
+        setEditingItem(null);
+        router.refresh();
+      } else {
+        setErrorMsg(res.error || 'Failed to update item');
+      }
+    } catch (err: any) {
+      setLoading(false);
+      setErrorMsg(err?.message || 'Error occurred while updating item');
     }
   };
 
@@ -879,12 +941,25 @@ export default function ChecklistTemplateEditor({
                 allLabel="All Stages (1 to 4)"
               />
 
+              {errorMsg && (
+                <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{errorMsg}</span>
+                  </div>
+                  <button type="button" onClick={() => setErrorMsg('')} className="p-0.5 hover:opacity-75">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               <button
                 type="submit"
+                data-submit-btn="true"
                 disabled={loading || !selectedCatId}
-                className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all disabled:opacity-50"
+                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
               >
-                + Add Item to Template
+                {loading ? 'Adding Item...' : '+ Add Item to Template'}
               </button>
             </form>
           </div>
@@ -1061,14 +1136,27 @@ export default function ChecklistTemplateEditor({
                     {/* Actions on Item */}
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() =>
+                        onClick={() => {
+                          setErrorMsg('');
                           setEditingItem({
                             id: item.id,
                             categoryId: cat.id,
                             label: item.label,
                             applicantRequirement: item.applicantRequirement,
                             coApplicantRequirement: item.coApplicantRequirement,
-                            selectedPropScopes: item.propertyTypeScope ? item.propertyTypeScope.split(',').map((s) => s.trim()).filter(Boolean) : [],
+                            selectedPropScopes: item.propertyTypeScope
+                              ? item.propertyTypeScope.split(',').map((s) => {
+                                  const trimmed = s.trim();
+                                  const lower = trimmed.toLowerCase();
+                                  if (lower === 'resale') return 'Resale';
+                                  if (lower === 'takeover_seller_bt' || lower.includes('seller bt')) return 'Takeover / Seller BT';
+                                  if (lower === 'direct_allotment' || lower.includes('direct allotment - flat')) return 'Direct Allotment - Flat';
+                                  if (lower.includes('direct allotment - plot')) return 'Direct Allotment - Plot';
+                                  if (lower.includes('commercial')) return 'Commercial Property';
+                                  if (lower.includes('industrial')) return 'Industrial Plot';
+                                  return trimmed;
+                                }).filter(Boolean)
+                              : [],
                             selectedSubProducts: item.subProduct ? item.subProduct.split(',').map((s) => s.trim()).filter(Boolean) : [],
                             selectedProfiles: item.incomeType ? item.incomeType.split(',').map((s) => s.trim()).filter(Boolean) : [],
                             selectedCustomerTypes: item.customerType ? item.customerType.split(',').map((s) => s.trim()).filter(Boolean) : [],
@@ -1079,8 +1167,8 @@ export default function ChecklistTemplateEditor({
                             requireOnedrive: item.requireOnedrive !== false,
                             requireRemark: item.requireRemark === true,
                             remarkPlaceholder: item.remarkPlaceholder || '',
-                          })
-                        }
+                          });
+                        }}
                         className="p-1.5 rounded-lg text-slate-500 hover:text-sky-500 hover:bg-sky-500/10 transition-colors"
                         title="Edit Item"
                       >
@@ -1177,6 +1265,17 @@ export default function ChecklistTemplateEditor({
             </div>
 
             <form onSubmit={handleUpdateItem} className="space-y-3">
+              {errorMsg && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{errorMsg}</span>
+                  </div>
+                  <button type="button" onClick={() => setErrorMsg('')} className="p-1 hover:opacity-75">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
               {/* Target Category */}
               <div>
                 <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -1432,10 +1531,11 @@ export default function ChecklistTemplateEditor({
                 </button>
                 <button
                   type="submit"
+                  data-submit-btn="true"
                   disabled={loading}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-all disabled:opacity-50"
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
                 >
-                  Save Changes
+                  {loading ? 'Saving Changes...' : 'Save Changes'}
                 </button>
               </div>
             </form>

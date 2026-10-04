@@ -1330,31 +1330,40 @@ export async function createTemplateItemAction(data: {
   requireRemark?: boolean;
   remarkPlaceholder?: string;
 }) {
-  const user = await getAuthUser();
-  if (!user || !can(user, 'manage_templates', 'template')) {
-    return { success: false, error: 'Permission denied' };
+  try {
+    const user = await getAuthUser();
+    if (!user || !can(user, 'manage_templates', 'template')) {
+      return { success: false, error: 'Permission denied' };
+    }
+
+    if (!data.label || !data.label.trim()) {
+      return { success: false, error: 'Document label is required' };
+    }
+
+    await prisma.checklistItemTemplate.create({
+      data: {
+        categoryId: data.categoryId,
+        label: data.label.trim(),
+        applicantRequirement: data.applicantRequirement,
+        coApplicantRequirement: data.coApplicantRequirement,
+        propertyTypeScope: data.propertyTypeScope || null,
+        subProduct: data.subProduct || null,
+        incomeType: data.incomeType || null,
+        customerType: data.customerType || null,
+        stages: data.stages || null,
+        stage: data.stage || 1,
+        requireOnedrive: data.requireOnedrive !== false,
+        requireRemark: data.requireRemark === true,
+        remarkPlaceholder: data.remarkPlaceholder?.trim() || null,
+      },
+    });
+
+    revalidatePath('/admin/checklist-templates');
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error creating template item:', err);
+    return { success: false, error: err?.message || 'Failed to create template item' };
   }
-
-  await prisma.checklistItemTemplate.create({
-    data: {
-      categoryId: data.categoryId,
-      label: data.label.trim(),
-      applicantRequirement: data.applicantRequirement,
-      coApplicantRequirement: data.coApplicantRequirement,
-      propertyTypeScope: data.propertyTypeScope || null,
-      subProduct: data.subProduct || null,
-      incomeType: data.incomeType || null,
-      customerType: data.customerType || null,
-      stages: data.stages || null,
-      stage: data.stage,
-      requireOnedrive: data.requireOnedrive !== false,
-      requireRemark: data.requireRemark === true,
-      remarkPlaceholder: data.remarkPlaceholder?.trim() || null,
-    },
-  });
-
-  revalidatePath('/admin/checklist-templates');
-  return { success: true };
 }
 
 export async function updateTemplateItemAction(
@@ -1375,32 +1384,41 @@ export async function updateTemplateItemAction(
     remarkPlaceholder?: string;
   }
 ) {
-  const user = await getAuthUser();
-  if (!user || !can(user, 'manage_templates', 'template')) {
-    return { success: false, error: 'Permission denied' };
+  try {
+    const user = await getAuthUser();
+    if (!user || !can(user, 'manage_templates', 'template')) {
+      return { success: false, error: 'Permission denied' };
+    }
+
+    if (!data.label || !data.label.trim()) {
+      return { success: false, error: 'Document label is required' };
+    }
+
+    await prisma.checklistItemTemplate.update({
+      where: { id },
+      data: {
+        categoryId: data.categoryId,
+        label: data.label.trim(),
+        applicantRequirement: data.applicantRequirement,
+        coApplicantRequirement: data.coApplicantRequirement,
+        propertyTypeScope: data.propertyTypeScope || null,
+        subProduct: data.subProduct || null,
+        incomeType: data.incomeType || null,
+        customerType: data.customerType || null,
+        stages: data.stages || null,
+        stage: data.stage || 1,
+        requireOnedrive: data.requireOnedrive !== false,
+        requireRemark: data.requireRemark === true,
+        remarkPlaceholder: data.remarkPlaceholder?.trim() || null,
+      },
+    });
+
+    revalidatePath('/admin/checklist-templates');
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error updating template item:', err);
+    return { success: false, error: err?.message || 'Failed to update template item' };
   }
-
-  await prisma.checklistItemTemplate.update({
-    where: { id },
-    data: {
-      categoryId: data.categoryId,
-      label: data.label.trim(),
-      applicantRequirement: data.applicantRequirement,
-      coApplicantRequirement: data.coApplicantRequirement,
-      propertyTypeScope: data.propertyTypeScope || null,
-      subProduct: data.subProduct || null,
-      incomeType: data.incomeType || null,
-      customerType: data.customerType || null,
-      stages: data.stages || null,
-      stage: data.stage,
-      requireOnedrive: data.requireOnedrive !== false,
-      requireRemark: data.requireRemark === true,
-      remarkPlaceholder: data.remarkPlaceholder?.trim() || null,
-    },
-  });
-
-  revalidatePath('/admin/checklist-templates');
-  return { success: true };
 }
 
 export async function deleteTemplateItemAction(templateId: string) {
@@ -1950,9 +1968,9 @@ export async function getAllStaffAttendanceTodayAction() {
 
   const todayIST = getTodayISTDate();
 
-  // Fetch all staff members (non-super-admins)
+  // Fetch all staff members (excluding outsider Channel role)
   const staff = await prisma.user.findMany({
-    where: { role: { not: 'SUPER_ADMIN' } },
+    where: { role: { not: 'CHANNEL' } },
     select: {
       id: true,
       name: true,
@@ -2049,6 +2067,125 @@ export async function getStaffMonthlyAttendanceAction(targetUserId?: string, mon
     month: currentMonth,
     records,
   };
+}
+
+export async function markStaffAttendanceStatusAction(data: {
+  userId: string;
+  date?: string;
+  status: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ABSENT';
+  punchInTime?: string;
+  punchOutTime?: string;
+  notes?: string;
+}) {
+  const user = await getAuthUser();
+  if (!user || user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Unauthorized: Only Super Admin can override staff attendance.' };
+  }
+
+  const dateIST = data.date?.trim() || getTodayISTDate();
+
+  const createDateWithTime = (dateStr: string, timeStr?: string, defaultHour = 9, defaultMin = 30) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    let hour = defaultHour;
+    let min = defaultMin;
+    if (timeStr && timeStr.includes(':')) {
+      const parts = timeStr.split(':').map(Number);
+      if (!isNaN(parts[0])) hour = parts[0];
+      if (!isNaN(parts[1])) min = parts[1];
+    }
+    const d = new Date(Date.UTC(year, month - 1, day, hour, min, 0));
+    d.setMinutes(d.getMinutes() - 330);
+    return d;
+  };
+
+  let punchInDate: Date;
+  let punchOutDate: Date | null = null;
+  let totalMinutes = 0;
+
+  if (data.status === 'PRESENT') {
+    punchInDate = createDateWithTime(dateIST, data.punchInTime, 9, 30);
+    punchOutDate = data.punchOutTime ? createDateWithTime(dateIST, data.punchOutTime, 18, 30) : createDateWithTime(dateIST, '18:30', 18, 30);
+    totalMinutes = Math.max(0, Math.round((punchOutDate.getTime() - punchInDate.getTime()) / (1000 * 60)));
+  } else if (data.status === 'LATE') {
+    punchInDate = createDateWithTime(dateIST, data.punchInTime, 10, 45);
+    punchOutDate = data.punchOutTime ? createDateWithTime(dateIST, data.punchOutTime, 18, 30) : createDateWithTime(dateIST, '18:30', 18, 30);
+    totalMinutes = Math.max(0, Math.round((punchOutDate.getTime() - punchInDate.getTime()) / (1000 * 60)));
+  } else if (data.status === 'HALF_DAY') {
+    punchInDate = createDateWithTime(dateIST, data.punchInTime, 9, 30);
+    punchOutDate = createDateWithTime(dateIST, data.punchOutTime, 13, 30);
+    totalMinutes = 240;
+  } else {
+    // ABSENT
+    punchInDate = createDateWithTime(dateIST, '00:00', 0, 0);
+    punchOutDate = createDateWithTime(dateIST, '00:00', 0, 0);
+    totalMinutes = 0;
+  }
+
+  const record = await prisma.attendanceRecord.upsert({
+    where: {
+      userId_date: {
+        userId: data.userId,
+        date: dateIST,
+      },
+    },
+    update: {
+      status: data.status,
+      punchIn: punchInDate,
+      punchOut: punchOutDate,
+      totalMinutes,
+      notes: data.notes?.trim() || `Marked ${data.status} by Super Admin`,
+    },
+    create: {
+      userId: data.userId,
+      date: dateIST,
+      status: data.status,
+      punchIn: punchInDate,
+      punchOut: punchOutDate,
+      totalMinutes,
+      notes: data.notes?.trim() || `Marked ${data.status} by Super Admin`,
+    },
+  });
+
+  revalidatePath('/hrms');
+  revalidatePath('/dashboard');
+  revalidatePath('/salary');
+
+  return { success: true, record };
+}
+
+export async function getStaffPunchHistoryAction(userId?: string, monthPrefix?: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized', records: [] };
+
+  const targetUserId = user.role === 'SUPER_ADMIN' ? userId : user.id;
+
+  const where: any = {};
+  if (targetUserId && targetUserId !== 'ALL') {
+    where.userId = targetUserId;
+  }
+  if (monthPrefix) {
+    where.date = { startsWith: monthPrefix };
+  }
+
+  const records = await prisma.attendanceRecord.findMany({
+    where,
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          email: true,
+          monthlySalary: true,
+          team: { select: { name: true } },
+        },
+      },
+    },
+    orderBy: { date: 'desc' },
+    take: 200,
+  });
+
+  return { success: true, records };
 }
 
 // 9. HRMS Leave Management Actions
@@ -3295,13 +3432,6 @@ export async function createTaskWithMultipleAssigneesAction(data: {
     return { success: false, error: 'Due Time is required.' };
   }
 
-  if (!data.caseId) {
-    const activeCaseCount = await prisma.case.count();
-    if (activeCaseCount > 0) {
-      return { success: false, error: 'Link to Loan Case is required.' };
-    }
-  }
-
   const primaryAssigneeId = data.assigneeIds[0];
   const dueDateTime = new Date(data.dueDate);
 
@@ -3728,6 +3858,11 @@ export async function updateSalaryRecordStatusAction(id: string, paymentStatus: 
     return { success: false, error: 'Unauthorized: Super Admin access required.' };
   }
 
+  const existing = await prisma.salaryRecord.findUnique({ where: { id } });
+  if (!existing) {
+    return { success: false, error: 'Salary record not found.' };
+  }
+
   const updated = await prisma.salaryRecord.update({
     where: { id },
     data: {
@@ -3737,7 +3872,19 @@ export async function updateSalaryRecordStatusAction(id: string, paymentStatus: 
     },
   });
 
+  // Automatically count into Company Expenses when marked as PAID
+  if (paymentStatus === 'PAID' && existing.paymentStatus !== 'PAID') {
+    await prisma.expenseRecord.create({
+      data: {
+        amount: updated.netPayable,
+        month: updated.month,
+      },
+    });
+  }
+
   revalidatePath('/salary');
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/functionality');
   return { success: true, record: updated };
 }
 
@@ -3790,7 +3937,19 @@ export async function editSalaryRecordAction(
     },
   });
 
+  // Automatically count into Company Expenses when marked as PAID
+  if (data.paymentStatus === 'PAID' && existing.paymentStatus !== 'PAID') {
+    await prisma.expenseRecord.create({
+      data: {
+        amount: updated.netPayable,
+        month: updated.month,
+      },
+    });
+  }
+
   revalidatePath('/salary');
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/functionality');
   return { success: true, record: updated };
 }
 
@@ -5447,7 +5606,19 @@ export async function calculateAndCreateSalaryAction(data: {
     },
   });
 
+  // Automatically count into Company Expenses when created as PAID
+  if (data.paymentStatus === 'PAID') {
+    await prisma.expenseRecord.create({
+      data: {
+        amount: netPayable,
+        month: data.month,
+      },
+    });
+  }
+
   revalidatePath('/salary');
+  revalidatePath('/dashboard');
+  revalidatePath('/admin/functionality');
   return { success: true, record };
 }
 
@@ -5829,6 +6000,52 @@ export async function markNotificationAsReadAction(id?: string, all?: boolean) {
     await prisma.notification.update({
       where: { id },
       data: { isRead: true },
+    });
+  }
+
+  return { success: true };
+}
+
+export async function deleteNotificationAction(notificationId?: string, deleteAll?: boolean, deleteRead?: boolean) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  if (deleteAll) {
+    if (user.role === 'SUPER_ADMIN') {
+      await prisma.notification.deleteMany({});
+    } else {
+      await prisma.notification.deleteMany({
+        where: {
+          OR: [
+            { userId: user.id },
+            {
+              userId: null,
+              OR: [{ role: null }, { role: user.role }],
+            },
+          ],
+        },
+      });
+    }
+  } else if (deleteRead) {
+    if (user.role === 'SUPER_ADMIN') {
+      await prisma.notification.deleteMany({ where: { isRead: true } });
+    } else {
+      await prisma.notification.deleteMany({
+        where: {
+          isRead: true,
+          OR: [
+            { userId: user.id },
+            {
+              userId: null,
+              OR: [{ role: null }, { role: user.role }],
+            },
+          ],
+        },
+      });
+    }
+  } else if (notificationId) {
+    await prisma.notification.delete({
+      where: { id: notificationId },
     });
   }
 

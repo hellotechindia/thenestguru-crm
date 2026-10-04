@@ -1605,14 +1605,16 @@ export default function VisitTrackerClient({
 
           {/* Action Buttons: Export & Schedule */}
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={handleExportVisitsCSV}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition border border-slate-200 dark:border-slate-700"
-              title="Export filtered visits to Excel / CSV"
-            >
-              <Download className="w-3.5 h-3.5 text-indigo-500" />
-              <span>Export CSV</span>
-            </button>
+            {isSuperAdmin && (
+              <button
+                onClick={handleExportVisitsCSV}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition border border-slate-200 dark:border-slate-700"
+                title="Export filtered visits to Excel / CSV"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Export CSV</span>
+              </button>
+            )}
 
             <button
               onClick={() => {

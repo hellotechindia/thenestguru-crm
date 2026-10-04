@@ -44,7 +44,7 @@ export default async function VisitsPage() {
       orderBy: { visitDate: 'asc' },
     }),
     prisma.user.findMany({
-      where: { role: { not: 'SUPER_ADMIN' } },
+      where: { role: { not: 'CHANNEL' } },
       select: { id: true, name: true, role: true },
       orderBy: { name: 'asc' },
     }),

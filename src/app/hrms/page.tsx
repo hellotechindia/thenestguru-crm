@@ -22,6 +22,9 @@ export default async function HRMSPage() {
   const userRole = (session.user as any).role || 'TEAM_MEMBER';
 
   const staffList = await prisma.user.findMany({
+    where: {
+      role: { not: 'CHANNEL' },
+    },
     select: {
       id: true,
       name: true,

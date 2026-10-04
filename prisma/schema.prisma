@@ -225,20 +225,20 @@ model ChecklistItemTemplate {
   id                     String            @id @default(cuid())
   categoryId             String
   category               ChecklistCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  label                  String
+  label                  String            @db.Text
   applicantRequirement   RequirementType   @default(YES)
   coApplicantRequirement RequirementType   @default(IF_APPLICABLE)
-  propertyTypeScope      String?           // null or comma-separated scopes or ALL
-  subProduct             String?           // null or comma-separated subProducts or ALL
-  incomeType             String?           // null or comma-separated income profiles or ALL
-  customerType           String?           // null or comma-separated customer types or ALL
-  stages                 String?           // null or comma-separated stages e.g. "1,2" or ALL
+  propertyTypeScope      String?           @db.Text // null or comma-separated scopes or ALL
+  subProduct             String?           @db.Text // null or comma-separated subProducts or ALL
+  incomeType             String?           @db.Text // null or comma-separated income profiles or ALL
+  customerType           String?           @db.Text // null or comma-separated customer types or ALL
+  stages                 String?           @db.Text // null or comma-separated stages e.g. "1,2" or ALL
   categoryPart           String?           // "KYC" | "INCOME" | "PERSONAL" | "PROPERTY" | "OTHER"
   isMandatory            Boolean           @default(true)
   stage                  Int               @default(1)
   requireOnedrive        Boolean           @default(true)
   requireRemark          Boolean           @default(false)
-  remarkPlaceholder      String?
+  remarkPlaceholder      String?           @db.Text
   createdAt              DateTime          @default(now())
 }
 

@@ -436,6 +436,7 @@ export default function TaskManagementClient({
   const [newIsImportant, setNewIsImportant] = useState(false);
   const [newAssigneeId, setNewAssigneeId] = useState('');
   const [newAssigneeIds, setNewAssigneeIds] = useState<string[]>([]);
+  const [staffSearchQuery, setStaffSearchQuery] = useState('');
   const [newDueDate, setNewDueDate] = useState('');
   const [newDueTime, setNewDueTime] = useState('');
   const [newCaseId, setNewCaseId] = useState('');
@@ -449,6 +450,7 @@ export default function TaskManagementClient({
   const [editStatus, setEditStatus] = useState<TaskItem['status']>('PENDING');
   const [editAssigneeId, setEditAssigneeId] = useState('');
   const [editAssigneeIds, setEditAssigneeIds] = useState<string[]>([]);
+  const [editStaffSearchQuery, setEditStaffSearchQuery] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
   const [editDueTime, setEditDueTime] = useState('');
   const [editCaseId, setEditCaseId] = useState('');
@@ -550,15 +552,39 @@ export default function TaskManagementClient({
       });
   }, [scopedTasks, statusFilter, priorityFilter, eisenhowerFilter, assigneeFilter, searchQuery]);
 
-  // Summary Metrics scoped by role visibility
-  const visibleTasksForStats = useMemo(() => {
-    if (isSuperAdmin) return initialTasks;
-    return initialTasks.filter((task) => {
-      const isAssigned = task.assignedToId === currentUser.id || task.assignees?.some((a) => a.userId === currentUser.id);
-      const isCreator = task.createdById === currentUser.id;
-      return isAssigned || isCreator;
+  // Summary Metrics dynamically updated based on active tab & filters
+  const baseFilteredForStats = useMemo(() => {
+    return scopedTasks.filter((task) => {
+      // Priority filter
+      if (priorityFilter !== 'ALL' && task.priority !== priorityFilter) return false;
+
+      // Eisenhower Matrix Tag Filter
+      if (eisenhowerFilter !== 'ALL') {
+        const quad = getEisenhowerQuadrant(task.isUrgent, task.isImportant);
+        if (quad.id !== eisenhowerFilter) return false;
+      }
+
+      // Assignee filter
+      if (assigneeFilter !== 'ALL') {
+        const hasAssignee = task.assignedToId === assigneeFilter || task.assignees?.some((a) => a.userId === assigneeFilter);
+        if (!hasAssignee) return false;
+      }
+
+      // Search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const titleMatch = (task.title || '').toLowerCase().includes(q);
+        const descMatch = task.description?.toLowerCase().includes(q);
+        const assigneeMatch =
+          (task.assignedTo?.name || '').toLowerCase().includes(q) ||
+          task.assignees?.some((a) => a.user?.name?.toLowerCase().includes(q));
+        const caseMatch = (task.case?.clientName || '').toLowerCase().includes(q);
+        if (!titleMatch && !descMatch && !assigneeMatch && !caseMatch) return false;
+      }
+
+      return true;
     });
-  }, [initialTasks, isSuperAdmin, currentUser.id]);
+  }, [scopedTasks, priorityFilter, eisenhowerFilter, assigneeFilter, searchQuery]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -567,7 +593,7 @@ export default function TaskManagementClient({
     let completed = 0;
     let overdue = 0;
 
-    for (const t of visibleTasksForStats) {
+    for (const t of baseFilteredForStats) {
       if (t.status === 'PENDING') pending++;
       if (t.status === 'IN_PROGRESS' || t.status === 'IN_REVIEW') inProgress++;
       if (t.status === 'COMPLETED') completed++;
@@ -578,14 +604,16 @@ export default function TaskManagementClient({
       }
     }
 
+    const total = statusFilter === 'ALL' ? baseFilteredForStats.length : filteredTasks.length;
+
     return {
-      total: visibleTasksForStats.length,
-      pending,
-      inProgress,
-      completed,
-      overdue,
+      total,
+      pending: statusFilter === 'ALL' || statusFilter === 'PENDING' ? pending : 0,
+      inProgress: statusFilter === 'ALL' || statusFilter === 'IN_PROGRESS' || statusFilter === 'IN_REVIEW' ? inProgress : 0,
+      completed: statusFilter === 'ALL' || statusFilter === 'COMPLETED' ? completed : 0,
+      overdue: statusFilter === 'ALL' ? overdue : filteredTasks.filter((t) => t.dueDate && t.status !== 'COMPLETED' && t.status !== 'CANCELLED' && new Date(t.dueDate) < now).length,
     };
-  }, [visibleTasksForStats]);
+  }, [baseFilteredForStats, filteredTasks, statusFilter]);
 
   // Handle Quick Status Change
   const handleQuickStatusChange = async (taskId: string, newStatus: TaskItem['status']) => {
@@ -707,10 +735,6 @@ export default function TaskManagementClient({
     }
     if (!newDueTime) {
       setErrorMsg('Due Time is required.');
-      return;
-    }
-    if (activeCases.length > 0 && !newCaseId) {
-      setErrorMsg('Link to Loan Case is required.');
       return;
     }
 
@@ -2108,7 +2132,7 @@ export default function TaskManagementClient({
       {/* Create Task Modal */}
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-          <div className="glass-panel w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl bg-white dark:bg-slate-900 max-h-[90vh] flex flex-col overflow-hidden">
+          <div className="glass-panel w-full max-w-[800px] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl bg-white dark:bg-slate-900 max-h-[90vh] flex flex-col overflow-hidden">
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -2194,30 +2218,49 @@ export default function TaskManagementClient({
                         {newAssigneeIds.length > 0 ? `${newAssigneeIds.length} Selected` : 'Select at least 1 *'}
                       </span>
                     </div>
+
+                    {/* Staff Search Box */}
+                    <div className="relative mb-1.5">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                      <input
+                        type="text"
+                        placeholder="Search staff by name or role..."
+                        value={staffSearchQuery}
+                        onChange={(e) => setStaffSearchQuery(e.target.value)}
+                        className="w-full pl-8 pr-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs"
+                      />
+                    </div>
+
                     <div className="max-h-28 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
-                      {assignableUsers.map((u) => {
-                        const isChecked = newAssigneeIds.includes(u.id);
-                        return (
-                          <label key={u.id} className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer p-1 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => {
-                                if (isChecked) {
-                                  newAssigneeIds.length > 1
-                                    ? setNewAssigneeIds(newAssigneeIds.filter(id => id !== u.id))
-                                    : setNewAssigneeIds([]);
-                                } else {
-                                  setNewAssigneeIds([...newAssigneeIds, u.id]);
-                                }
-                              }}
-                              className="w-3.5 h-3.5 text-sky-600 rounded border-slate-300 shrink-0"
-                            />
-                            <span className="font-semibold truncate">{u.name}</span>
-                            <span className="text-[10px] text-slate-400 truncate">({u.role})</span>
-                          </label>
-                        );
-                      })}
+                      {assignableUsers
+                        .filter((u) => {
+                          if (!staffSearchQuery.trim()) return true;
+                          const q = staffSearchQuery.toLowerCase();
+                          return u.name.toLowerCase().includes(q) || u.role.toLowerCase().includes(q) || (u.email && u.email.toLowerCase().includes(q));
+                        })
+                        .map((u) => {
+                          const isChecked = newAssigneeIds.includes(u.id);
+                          return (
+                            <label key={u.id} className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer p-1 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  if (isChecked) {
+                                    newAssigneeIds.length > 1
+                                      ? setNewAssigneeIds(newAssigneeIds.filter(id => id !== u.id))
+                                      : setNewAssigneeIds([]);
+                                  } else {
+                                    setNewAssigneeIds([...newAssigneeIds, u.id]);
+                                  }
+                                }}
+                                className="w-3.5 h-3.5 text-sky-600 rounded border-slate-300 shrink-0"
+                              />
+                              <span className="font-semibold truncate">{u.name}</span>
+                              <span className="text-[10px] text-slate-400 truncate">({u.role})</span>
+                            </label>
+                          );
+                        })}
                     </div>
                     <p className="text-[10px] text-slate-400 mt-1">One task can be assigned to multiple staff members simultaneously.</p>
                   </div>
@@ -2254,15 +2297,14 @@ export default function TaskManagementClient({
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Link to Loan Case <span className="text-rose-500 font-bold">*</span>
+                      Link to Loan Case <span className="text-slate-400 font-normal">(Optional)</span>
                     </label>
                     <select
-                      required={activeCases.length > 0}
                       value={newCaseId}
                       onChange={(e) => setNewCaseId(e.target.value)}
                       className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
                     >
-                      <option value="">{activeCases.length > 0 ? '-- Select Loan Case * --' : 'No active cases'}</option>
+                      <option value="">{activeCases.length > 0 ? '-- None / General Task (Optional) --' : 'No active cases'}</option>
                       {activeCases.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.clientName} ({c.product})
@@ -2762,7 +2804,7 @@ export default function TaskManagementClient({
       {/* Edit Task Modal */}
       {isEditingTask && selectedTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-          <div className="glass-panel w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl bg-white dark:bg-slate-900 max-h-[90vh] flex flex-col overflow-hidden">
+          <div className="glass-panel w-full max-w-[800px] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl bg-white dark:bg-slate-900 max-h-[90vh] flex flex-col overflow-hidden">
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -2857,8 +2899,27 @@ export default function TaskManagementClient({
                       {editAssigneeIds.length} Selected
                     </span>
                   </div>
+
+                  {/* Edit Staff Search Box */}
+                  <div className="relative mb-1.5">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search staff by name or role..."
+                      value={editStaffSearchQuery}
+                      onChange={(e) => setEditStaffSearchQuery(e.target.value)}
+                      className="w-full pl-8 pr-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs"
+                    />
+                  </div>
+
                   <div className="max-h-36 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
-                    {assignableUsers.map((u) => {
+                    {assignableUsers
+                      .filter((u) => {
+                        if (!editStaffSearchQuery.trim()) return true;
+                        const q = editStaffSearchQuery.toLowerCase();
+                        return u.name.toLowerCase().includes(q) || u.role.toLowerCase().includes(q) || (u.email && u.email.toLowerCase().includes(q));
+                      })
+                      .map((u) => {
                       const isChecked = editAssigneeIds.includes(u.id);
                       return (
                         <label

@@ -61,15 +61,33 @@ export default function AddFunctionalityClient({
   const [quickCityName, setQuickCityName] = useState('');
   const [modalCityName, setModalCityName] = useState('');
 
+  // Month / Year Constants
+  const MONTH_NAMES = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  const CURRENT_YEAR = new Date().getFullYear();
+  // 1990 to 2050 Year list
+  const YEAR_OPTIONS = Array.from({ length: 2050 - 1990 + 1 }, (_, i) => String(1990 + i));
+
+  const parseMonthAndYear = (val?: string) => {
+    const parts = (val || '').trim().split(/\s+/);
+    const foundMonth = MONTH_NAMES.find((m) => m.toLowerCase() === parts[0]?.toLowerCase()) || MONTH_NAMES[new Date().getMonth()];
+    const foundYear = parts[1] || String(new Date().getFullYear());
+    return { month: foundMonth, year: foundYear };
+  };
+
   // Revenue Form
   const [revenueAmount, setRevenueAmount] = useState('');
-  const [revenueMonth, setRevenueMonth] = useState('September 2026');
+  const [revMonth, setRevMonth] = useState(() => MONTH_NAMES[new Date().getMonth()] || 'October');
+  const [revYear, setRevYear] = useState(() => String(new Date().getFullYear()));
   const [revenueState, setRevenueState] = useState(states[0]?.name || 'Karnataka');
   const [revenueCaseId, setRevenueCaseId] = useState('');
 
   // Expense Form
   const [expenseAmount, setExpenseAmount] = useState('');
-  const [expenseMonth, setExpenseMonth] = useState('September 2026');
+  const [expMonth, setExpMonth] = useState(() => MONTH_NAMES[new Date().getMonth()] || 'October');
+  const [expYear, setExpYear] = useState(() => String(new Date().getFullYear()));
 
   // Edit States
   const [editingBank, setEditingBank] = useState<{ id: string; bankName: string; requiredSalaryMonths: number } | null>(null);
@@ -189,7 +207,8 @@ export default function AddFunctionalityClient({
     e.preventDefault();
     if (!revenueAmount) return;
     setLoading(true);
-    const res = await createRevenueAction(parseFloat(revenueAmount), revenueMonth, revenueState, revenueCaseId || undefined);
+    const formattedPeriod = `${revMonth} ${revYear}`;
+    const res = await createRevenueAction(parseFloat(revenueAmount), formattedPeriod, revenueState, revenueCaseId || undefined);
     setLoading(false);
     if (res.success) {
       setRevenueAmount('');
@@ -224,7 +243,8 @@ export default function AddFunctionalityClient({
     e.preventDefault();
     if (!expenseAmount) return;
     setLoading(true);
-    const res = await createExpenseAction(parseFloat(expenseAmount), expenseMonth);
+    const formattedPeriod = `${expMonth} ${expYear}`;
+    const res = await createExpenseAction(parseFloat(expenseAmount), formattedPeriod);
     setLoading(false);
     if (res.success) {
       setExpenseAmount('');
@@ -248,6 +268,11 @@ export default function AddFunctionalityClient({
       router.refresh();
     }
   };
+
+  // Financial Ledger Totals
+  const totalRevenue = revenues.reduce((sum, r) => sum + (r.amount || 0), 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+  const netProfit = totalRevenue - totalExpenses;
 
   return (
     <div className="space-y-6">
@@ -579,134 +604,211 @@ export default function AddFunctionalityClient({
 
       {/* Tab 3: Revenue Management */}
       {activeTab === 'revenue' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Plus className="w-4 h-4 text-emerald-500" /> Add Revenue Entry
-            </h3>
-            <form onSubmit={handleAddRevenue} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Revenue Amount (₹)</label>
-                <input
-                  type="number"
-                  required
-                  placeholder="e.g. 100000"
-                  value={revenueAmount}
-                  onChange={(e) => setRevenueAmount(e.target.value)}
-                  className="w-full glass-input px-3 py-2.5 rounded-xl text-xs font-bold text-emerald-600 dark:text-emerald-400"
-                />
+        <div className="space-y-6">
+          {/* Financial KPI Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="glass-panel p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 shadow-md">
+              <div className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                Total Revenue
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Month / Period</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. September 2026"
-                  value={revenueMonth}
-                  onChange={(e) => setRevenueMonth(e.target.value)}
-                  className="w-full glass-input px-3 py-2.5 rounded-xl text-xs"
-                />
+              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                ₹{totalRevenue.toLocaleString()}
               </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">{revenues.length} Total recorded receipts</div>
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">State</label>
-                <select
-                  value={revenueState}
-                  onChange={(e) => setRevenueState(e.target.value)}
-                  className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                >
-                  {states.map((s) => (
-                    <option key={s.id} value={s.name}>{s.name}</option>
-                  ))}
-                </select>
+            <div className="glass-panel p-4 rounded-2xl border border-rose-500/30 bg-rose-500/5 shadow-md">
+              <div className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
+                Total Expenses
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Link to Client Case (Optional)</label>
-                <select
-                  value={revenueCaseId}
-                  onChange={(e) => setRevenueCaseId(e.target.value)}
-                  className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                >
-                  <option value="">-- No specific case --</option>
-                  {cases.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.clientName} ({c.product})
-                    </option>
-                  ))}
-                </select>
+              <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
+                ₹{totalExpenses.toLocaleString()}
               </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">{expenses.length} Total recorded expenses</div>
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all shadow"
-              >
-                Record Revenue Entry
-              </button>
-            </form>
+            <div className={`glass-panel p-4 rounded-2xl border shadow-md ${
+              netProfit >= 0
+                ? 'border-indigo-500/30 bg-indigo-500/5 text-indigo-600 dark:text-indigo-400'
+                : 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400'
+            }`}>
+              <div className="text-[11px] font-bold uppercase tracking-wider">
+                Net Operating Margin
+              </div>
+              <div className="text-2xl font-black mt-1">
+                ₹{netProfit.toLocaleString()}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                {totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : 0}% Net Margin
+              </div>
+            </div>
           </div>
 
-          <div className="lg:col-span-2 glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Revenue Ledger</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase tracking-wider">
-                    <th className="py-3 px-4 font-semibold">Amount</th>
-                    <th className="py-3 px-4 font-semibold">Month</th>
-                    <th className="py-3 px-4 font-semibold">State</th>
-                    <th className="py-3 px-4 font-semibold">Linked Case</th>
-                    <th className="py-3 px-4 font-semibold text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                  {revenues.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3 px-4 font-bold text-emerald-600 dark:text-emerald-400">
-                        ₹{r.amount.toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300 font-medium">{r.month}</td>
-                      <td className="py-3 px-4 text-indigo-600 dark:text-indigo-400 font-semibold">{r.state}</td>
-                      <td className="py-3 px-4 text-slate-500">{r.case?.clientName || 'General'}</td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => {
-                              setEditError('');
-                              const matchedCase = cases.find((c) => c.clientName === r.case?.clientName);
-                              setEditingRevenue({
-                                id: r.id,
-                                amount: r.amount,
-                                month: r.month,
-                                state: r.state,
-                                caseId: matchedCase?.id || '',
-                              });
-                            }}
-                            title="Edit Revenue"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={async () => {
-                              if (confirm('Delete revenue entry?')) {
-                                await deleteRevenueAction(r.id);
-                                router.refresh();
-                              }
-                            }}
-                            title="Delete Revenue"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Plus className="w-4 h-4 text-emerald-500" /> Add Revenue Entry
+              </h3>
+              <form onSubmit={handleAddRevenue} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Revenue Amount (₹)</label>
+                  <input
+                    type="number"
+                    required
+                    placeholder="e.g. 100000"
+                    value={revenueAmount}
+                    onChange={(e) => setRevenueAmount(e.target.value)}
+                    className="w-full glass-input px-3 py-2.5 rounded-xl text-xs font-bold text-emerald-600 dark:text-emerald-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Month & Year Selection</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={revMonth}
+                      onChange={(e) => setRevMonth(e.target.value)}
+                      className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                    >
+                      {MONTH_NAMES.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        list="revenue-years-datalist"
+                        value={revYear}
+                        onChange={(e) => setRevYear(e.target.value)}
+                        placeholder="Year (e.g. 2026)"
+                        maxLength={4}
+                        className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                      />
+                      <datalist id="revenue-years-datalist">
+                        {YEAR_OPTIONS.map((y) => (
+                          <option key={y} value={y} />
+                        ))}
+                      </datalist>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">State</label>
+                  <select
+                    value={revenueState}
+                    onChange={(e) => setRevenueState(e.target.value)}
+                    className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                  >
+                    {states.map((s) => (
+                      <option key={s.id} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Link to Client Case (Optional)</label>
+                  <select
+                    value={revenueCaseId}
+                    onChange={(e) => setRevenueCaseId(e.target.value)}
+                    className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                  >
+                    <option value="">-- No specific case --</option>
+                    {cases.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.clientName} ({c.product})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all shadow"
+                >
+                  Record Revenue Entry
+                </button>
+              </form>
+            </div>
+
+            <div className="lg:col-span-2 glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Revenue Ledger</h3>
+                <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg">
+                  Total: ₹{totalRevenue.toLocaleString()}
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase tracking-wider">
+                      <th className="py-3 px-4 font-semibold">Amount</th>
+                      <th className="py-3 px-4 font-semibold">Month</th>
+                      <th className="py-3 px-4 font-semibold">State</th>
+                      <th className="py-3 px-4 font-semibold">Linked Case</th>
+                      <th className="py-3 px-4 font-semibold text-right">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {revenues.map((r) => (
+                      <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 px-4 font-bold text-emerald-600 dark:text-emerald-400">
+                          ₹{r.amount.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-slate-700 dark:text-slate-300 font-medium">{r.month}</td>
+                        <td className="py-3 px-4 text-indigo-600 dark:text-indigo-400 font-semibold">{r.state}</td>
+                        <td className="py-3 px-4 text-slate-500">{r.case?.clientName || 'General'}</td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => {
+                                setEditError('');
+                                const matchedCase = cases.find((c) => c.clientName === r.case?.clientName);
+                                setEditingRevenue({
+                                  id: r.id,
+                                  amount: r.amount,
+                                  month: r.month,
+                                  state: r.state,
+                                  caseId: matchedCase?.id || '',
+                                });
+                              }}
+                              title="Edit Revenue"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (confirm('Delete revenue entry?')) {
+                                  await deleteRevenueAction(r.id);
+                                  router.refresh();
+                                }
+                              }}
+                              title="Delete Revenue"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {revenues.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-emerald-500/30 bg-emerald-500/5 font-bold">
+                        <td className="py-3 px-4 text-emerald-600 dark:text-emerald-400 font-black">
+                          Total: ₹{totalRevenue.toLocaleString()}
+                        </td>
+                        <td colSpan={4} className="py-3 px-4 text-slate-500 text-right">
+                          {revenues.length} Total Revenue Transactions
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -714,94 +816,171 @@ export default function AddFunctionalityClient({
 
       {/* Tab 4: Expense Management */}
       {activeTab === 'expenses' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Plus className="w-4 h-4 text-rose-500" /> Add Expense Entry
-            </h3>
-            <form onSubmit={handleAddExpense} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Expense Amount (₹)</label>
-                <input
-                  type="number"
-                  required
-                  placeholder="e.g. 45000"
-                  value={expenseAmount}
-                  onChange={(e) => setExpenseAmount(e.target.value)}
-                  className="w-full glass-input px-3 py-2.5 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400"
-                />
+        <div className="space-y-6">
+          {/* Financial KPI Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="glass-panel p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 shadow-md">
+              <div className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                Total Revenue
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Month / Period</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. September 2026"
-                  value={expenseMonth}
-                  onChange={(e) => setExpenseMonth(e.target.value)}
-                  className="w-full glass-input px-3 py-2.5 rounded-xl text-xs"
-                />
+              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                ₹{totalRevenue.toLocaleString()}
               </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">{revenues.length} Total recorded receipts</div>
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-all shadow"
-              >
-                Record Expense Entry
-              </button>
-            </form>
+            <div className="glass-panel p-4 rounded-2xl border border-rose-500/30 bg-rose-500/5 shadow-md">
+              <div className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
+                Total Expenses
+              </div>
+              <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
+                ₹{totalExpenses.toLocaleString()}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">{expenses.length} Total recorded expenses</div>
+            </div>
+
+            <div className={`glass-panel p-4 rounded-2xl border shadow-md ${
+              netProfit >= 0
+                ? 'border-indigo-500/30 bg-indigo-500/5 text-indigo-600 dark:text-indigo-400'
+                : 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400'
+            }`}>
+              <div className="text-[11px] font-bold uppercase tracking-wider">
+                Net Operating Margin
+              </div>
+              <div className="text-2xl font-black mt-1">
+                ₹{netProfit.toLocaleString()}
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                {totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : 0}% Net Margin
+              </div>
+            </div>
           </div>
 
-          <div className="lg:col-span-2 glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Expense Ledger</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase tracking-wider">
-                    <th className="py-3 px-4 font-semibold">Amount</th>
-                    <th className="py-3 px-4 font-semibold">Month</th>
-                    <th className="py-3 px-4 font-semibold text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                  {expenses.map((e) => (
-                    <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3 px-4 font-bold text-rose-600 dark:text-rose-400">
-                        ₹{e.amount.toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300 font-medium">{e.month}</td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => {
-                              setEditError('');
-                              setEditingExpense({ ...e });
-                            }}
-                            title="Edit Expense"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={async () => {
-                              if (confirm('Delete expense entry?')) {
-                                await deleteExpenseAction(e.id);
-                                router.refresh();
-                              }
-                            }}
-                            title="Delete Expense"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Plus className="w-4 h-4 text-rose-500" /> Add Expense Entry
+              </h3>
+              <form onSubmit={handleAddExpense} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Expense Amount (₹)</label>
+                  <input
+                    type="number"
+                    required
+                    placeholder="e.g. 45000"
+                    value={expenseAmount}
+                    onChange={(e) => setExpenseAmount(e.target.value)}
+                    className="w-full glass-input px-3 py-2.5 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Month & Year Selection</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={expMonth}
+                      onChange={(e) => setExpMonth(e.target.value)}
+                      className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                    >
+                      {MONTH_NAMES.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        list="expense-years-datalist"
+                        value={expYear}
+                        onChange={(e) => setExpYear(e.target.value)}
+                        placeholder="Year (e.g. 2026)"
+                        maxLength={4}
+                        className="w-full glass-input px-3 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                      />
+                      <datalist id="expense-years-datalist">
+                        {YEAR_OPTIONS.map((y) => (
+                          <option key={y} value={y} />
+                        ))}
+                      </datalist>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-all shadow"
+                >
+                  Record Expense Entry
+                </button>
+              </form>
+            </div>
+
+            <div className="lg:col-span-2 glass-panel p-6 rounded-2xl space-y-4 shadow-xl">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Expense Ledger</h3>
+                <span className="text-xs font-extrabold text-rose-600 dark:text-rose-400 bg-rose-500/10 px-2.5 py-1 rounded-lg">
+                  Total: ₹{totalExpenses.toLocaleString()}
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase tracking-wider">
+                      <th className="py-3 px-4 font-semibold">Amount</th>
+                      <th className="py-3 px-4 font-semibold">Month</th>
+                      <th className="py-3 px-4 font-semibold text-right">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {expenses.map((e) => (
+                      <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 px-4 font-bold text-rose-600 dark:text-rose-400">
+                          ₹{e.amount.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-slate-700 dark:text-slate-300 font-medium">{e.month}</td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => {
+                                setEditError('');
+                                setEditingExpense({ ...e });
+                              }}
+                              title="Edit Expense"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (confirm('Delete expense entry?')) {
+                                  await deleteExpenseAction(e.id);
+                                  router.refresh();
+                                }
+                              }}
+                              title="Delete Expense"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {expenses.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-rose-500/30 bg-rose-500/5 font-bold">
+                        <td className="py-3 px-4 text-rose-600 dark:text-rose-400 font-black">
+                          Total: ₹{totalExpenses.toLocaleString()}
+                        </td>
+                        <td colSpan={2} className="py-3 px-4 text-slate-500 text-right">
+                          {expenses.length} Total Expense Transactions
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -1033,15 +1212,40 @@ export default function AddFunctionalityClient({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Month / Period
+                  Month & Year Selection
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editingRevenue.month}
-                  onChange={(e) => setEditingRevenue({ ...editingRevenue, month: e.target.value })}
-                  className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                />
+                {(() => {
+                  const { month: curM, year: curY } = parseMonthAndYear(editingRevenue.month);
+                  return (
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={curM}
+                        onChange={(e) => setEditingRevenue({ ...editingRevenue, month: `${e.target.value} ${curY}` })}
+                        className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                      >
+                        {MONTH_NAMES.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          list="edit-revenue-years-datalist"
+                          value={curY}
+                          onChange={(e) => setEditingRevenue({ ...editingRevenue, month: `${curM} ${e.target.value}` })}
+                          placeholder="Year (e.g. 2026)"
+                          maxLength={4}
+                          className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                        />
+                        <datalist id="edit-revenue-years-datalist">
+                          {YEAR_OPTIONS.map((y) => (
+                            <option key={y} value={y} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div>
@@ -1136,15 +1340,40 @@ export default function AddFunctionalityClient({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Month / Period
+                  Month & Year Selection
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editingExpense.month}
-                  onChange={(e) => setEditingExpense({ ...editingExpense, month: e.target.value })}
-                  className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                />
+                {(() => {
+                  const { month: curM, year: curY } = parseMonthAndYear(editingExpense.month);
+                  return (
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={curM}
+                        onChange={(e) => setEditingExpense({ ...editingExpense, month: `${e.target.value} ${curY}` })}
+                        className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                      >
+                        {MONTH_NAMES.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          list="edit-expense-years-datalist"
+                          value={curY}
+                          onChange={(e) => setEditingExpense({ ...editingExpense, month: `${curM} ${e.target.value}` })}
+                          placeholder="Year (e.g. 2026)"
+                          maxLength={4}
+                          className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                        />
+                        <datalist id="edit-expense-years-datalist">
+                          {YEAR_OPTIONS.map((y) => (
+                            <option key={y} value={y} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">

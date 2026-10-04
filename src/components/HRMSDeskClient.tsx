@@ -30,7 +30,11 @@ import {
   Info,
   Edit3,
   Lock,
-  Plus
+  Plus,
+  History,
+  RefreshCw,
+  Calculator,
+  FileSpreadsheet
 } from 'lucide-react';
 import DatePickerInput from './DatePickerInput';
 import { getPanchangForDate, PanchangDayInfo } from '@/lib/panchang';
@@ -45,7 +49,9 @@ import {
   deleteLeaveAction,
   createHolidayAction,
   updateHolidayAction,
-  deleteHolidayAction
+  deleteHolidayAction,
+  markStaffAttendanceStatusAction,
+  getStaffPunchHistoryAction
 } from '@/app/actions';
 import { formatTimeIST, formatDuration } from '@/lib/ist-time';
 import { isValid10DigitPhone, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
@@ -68,8 +74,33 @@ interface HRMSDeskClientProps {
 export default function HRMSDeskClient({ currentUserId, userName, userRole, staffList = [] }: HRMSDeskClientProps) {
   const isSuperAdmin = userRole === 'SUPER_ADMIN';
 
-  // Tabs: 'attendance' | 'calendar' | 'leaves' | 'holidays'
-  const [activeTab, setActiveTab] = useState<'attendance' | 'calendar' | 'leaves' | 'holidays'>('attendance');
+  // Tabs: 'attendance' | 'punchlogs' | 'calendar' | 'leaves' | 'holidays'
+  const [activeTab, setActiveTab] = useState<'attendance' | 'punchlogs' | 'calendar' | 'leaves' | 'holidays'>('attendance');
+
+  // Staff Punch Logs & Timesheet State
+  const [punchLogs, setPunchLogs] = useState<any[]>([]);
+  const [punchLogStaffId, setPunchLogStaffId] = useState<string>('ALL');
+  const [punchLogMonth, setPunchLogMonth] = useState<string>(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  });
+  const [loadingPunchLogs, setLoadingPunchLogs] = useState(false);
+
+  // Super Admin Punch Override & Attendance Override Modal State
+  const [isPunchModalOpen, setIsPunchModalOpen] = useState(false);
+  const [punchOverrideForm, setPunchOverrideForm] = useState({
+    userId: '',
+    userName: '',
+    date: '',
+    status: 'PRESENT' as 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ABSENT',
+    punchInTime: '09:30',
+    punchOutTime: '18:30',
+    notes: '',
+  });
+  const [punchOverrideLoading, setPunchOverrideLoading] = useState(false);
+  const [attendanceActionMsg, setAttendanceActionMsg] = useState('');
 
   // Month Calendar View State
   const [calendarDate, setCalendarDate] = useState(() => new Date());
@@ -174,11 +205,89 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
     }
   };
 
+  const loadPunchLogs = async (staffId?: string, month?: string) => {
+    setLoadingPunchLogs(true);
+    try {
+      const sId = staffId !== undefined ? staffId : punchLogStaffId;
+      const m = month !== undefined ? month : punchLogMonth;
+      const res = await getStaffPunchHistoryAction(sId, m);
+      if (res.success) {
+        setPunchLogs(res.records || []);
+      }
+    } catch (e) {
+      console.error('Failed to load punch logs', e);
+    } finally {
+      setLoadingPunchLogs(false);
+    }
+  };
+
+  const handleQuickMarkStatus = async (
+    userId: string,
+    status: 'PRESENT' | 'LATE' | 'HALF_DAY' | 'ABSENT'
+  ) => {
+    try {
+      setAttendanceActionMsg(`Marking staff as ${status}...`);
+      const res = await markStaffAttendanceStatusAction({
+        userId,
+        status,
+      });
+      if (res.success) {
+        setAttendanceActionMsg(`Staff successfully marked as ${status}`);
+        setTimeout(() => setAttendanceActionMsg(''), 2500);
+        await loadAttendance();
+        if (activeTab === 'punchlogs') {
+          await loadPunchLogs();
+        }
+      } else {
+        alert(res.error || 'Failed to update attendance status');
+        setAttendanceActionMsg('');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error updating attendance');
+      setAttendanceActionMsg('');
+    }
+  };
+
+  const handleSavePunchOverride = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!punchOverrideForm.userId) return;
+    setPunchOverrideLoading(true);
+    try {
+      const res = await markStaffAttendanceStatusAction({
+        userId: punchOverrideForm.userId,
+        date: punchOverrideForm.date || undefined,
+        status: punchOverrideForm.status,
+        punchInTime: punchOverrideForm.punchInTime,
+        punchOutTime: punchOverrideForm.punchOutTime,
+        notes: punchOverrideForm.notes,
+      });
+      if (res.success) {
+        setIsPunchModalOpen(false);
+        setAttendanceActionMsg(`Attendance & punch details saved for ${punchOverrideForm.userName}`);
+        setTimeout(() => setAttendanceActionMsg(''), 2500);
+        await loadAttendance();
+        await loadPunchLogs();
+      } else {
+        alert(res.error || 'Failed to override attendance');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error saving punch override');
+    } finally {
+      setPunchOverrideLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadAttendance();
     loadLeaves();
     loadHolidays();
   }, [isSuperAdmin]);
+
+  useEffect(() => {
+    if (activeTab === 'punchlogs') {
+      loadPunchLogs(punchLogStaffId, punchLogMonth);
+    }
+  }, [activeTab, punchLogStaffId, punchLogMonth]);
 
   // Handle Apply Leave
   const handleApplyLeave = async (e: React.FormEvent) => {
@@ -428,6 +537,18 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
           </button>
 
           <button
+            onClick={() => setActiveTab('punchlogs')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'punchlogs'
+                ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>Punch Logs & Timesheet</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('calendar')}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
               activeTab === 'calendar'
@@ -468,6 +589,18 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
           </button>
         </div>
       </div>
+
+      {attendanceActionMsg && (
+        <div className="p-3.5 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 text-xs font-bold flex items-center justify-between shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-sky-500" />
+            <span>{attendanceActionMsg}</span>
+          </div>
+          <button onClick={() => setAttendanceActionMsg('')} className="text-slate-400 hover:text-slate-600">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* TAB 1: ATTENDANCE & TIMESHEET */}
       {activeTab === 'attendance' && (
@@ -548,12 +681,15 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                         <th className="py-3 px-4 font-semibold text-center">First Punch In (IST)</th>
                         <th className="py-3 px-4 font-semibold text-center">Last Punch Out (IST)</th>
                         <th className="py-3 px-4 font-semibold text-right">Active Working Time</th>
+                        {isSuperAdmin && (
+                          <th className="py-3 px-4 font-semibold text-center">Mark Attendance (Super Admin)</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                       {filteredAttendance.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
+                          <td colSpan={isSuperAdmin ? 7 : 6} className="py-8 text-center text-slate-400 text-xs">
                             No matching staff records found for today.
                           </td>
                         </tr>
@@ -597,6 +733,63 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                             <td className="py-3 px-4 text-right font-mono font-black text-slate-900 dark:text-white">
                               {formatDuration(emp.totalMinutes * 60)}
                             </td>
+                            {isSuperAdmin && (
+                              <td className="py-3 px-4 text-center">
+                                <div className="flex items-center justify-center gap-1 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickMarkStatus(emp.userId, 'PRESENT')}
+                                    title="Mark Present (09:30 - 18:30)"
+                                    className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white border border-emerald-500/30 transition-all cursor-pointer"
+                                  >
+                                    Present
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickMarkStatus(emp.userId, 'LATE')}
+                                    title="Mark Late (10:45 - 18:30)"
+                                    className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-500/10 text-amber-600 hover:bg-amber-500 hover:text-white border border-amber-500/30 transition-all cursor-pointer"
+                                  >
+                                    Late
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickMarkStatus(emp.userId, 'HALF_DAY')}
+                                    title="Mark Half Day (09:30 - 13:30)"
+                                    className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-500/10 text-purple-600 hover:bg-purple-500 hover:text-white border border-purple-500/30 transition-all cursor-pointer"
+                                  >
+                                    Half Day
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickMarkStatus(emp.userId, 'ABSENT')}
+                                    title="Mark Absent"
+                                    className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-rose-500/10 text-rose-600 hover:bg-rose-500 hover:text-white border border-rose-500/30 transition-all cursor-pointer"
+                                  >
+                                    Absent
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPunchOverrideForm({
+                                        userId: emp.userId,
+                                        userName: emp.name,
+                                        date: todaySummary?.todayIST || new Date().toISOString().split('T')[0],
+                                        status: 'PRESENT',
+                                        punchInTime: emp.punchIn ? new Date(emp.punchIn).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '09:30',
+                                        punchOutTime: emp.punchOut ? new Date(emp.punchOut).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '18:30',
+                                        notes: '',
+                                      });
+                                      setIsPunchModalOpen(true);
+                                    }}
+                                    title="Edit Punch In/Out Time & Notes"
+                                    className="p-1 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            )}
                           </tr>
                         ))
                       )}
@@ -672,6 +865,248 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
           )}
         </div>
       )}
+
+      {/* TAB 2: STAFF PUNCH LOGS & TIMESHEET (Verification & Automated Salary) */}
+      {activeTab === 'punchlogs' && (() => {
+        const filteredPunchLogs = punchLogs.filter((p) => {
+          if (searchTerm && searchTerm.trim()) {
+            const q = searchTerm.toLowerCase();
+            const nameMatch = p.user?.name?.toLowerCase().includes(q);
+            const roleMatch = p.user?.role?.toLowerCase().includes(q);
+            const dateMatch = p.date?.includes(q);
+            return nameMatch || roleMatch || dateMatch;
+          }
+          return true;
+        });
+
+        const selectedStaffUser = staffList.find((s) => s.id === punchLogStaffId);
+        const totalLogged = filteredPunchLogs.length;
+        const presentCount = filteredPunchLogs.filter((p) => p.status === 'PRESENT').length;
+        const lateCount = filteredPunchLogs.filter((p) => p.status === 'LATE').length;
+        const halfDayCount = filteredPunchLogs.filter((p) => p.status === 'HALF_DAY').length;
+        const absentCount = filteredPunchLogs.filter((p) => p.status === 'ABSENT').length;
+
+        // Payable Days = Present + Late + (HalfDay * 0.5)
+        const payableDays = presentCount + lateCount + (halfDayCount * 0.5);
+        // Base monthly salary from staff or record
+        const staffMonthlySalary = filteredPunchLogs[0]?.user?.monthlySalary || (selectedStaffUser as any)?.monthlySalary || 0;
+        const estimatedSalary = staffMonthlySalary > 0 ? Math.round((staffMonthlySalary / 30) * payableDays) : 0;
+
+        return (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Filter Bar & Header */}
+            <div className="glass-panel p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <History className="w-5 h-5 text-sky-500" /> Staff Daily Punch Logs & Timesheet
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Complete daily punch-in & punch-out audit history for individual staff members & automated salary preview.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Staff Member Filter */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-slate-500">Staff:</span>
+                  <select
+                    value={punchLogStaffId}
+                    onChange={(e) => setPunchLogStaffId(e.target.value)}
+                    className="glass-input px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-bold"
+                  >
+                    <option value="ALL">All Staff Members</option>
+                    {staffList.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Month Picker */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-slate-500">Month:</span>
+                  <input
+                    type="month"
+                    value={punchLogMonth}
+                    onChange={(e) => setPunchLogMonth(e.target.value)}
+                    className="glass-input px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-bold"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => loadPunchLogs(punchLogStaffId, punchLogMonth)}
+                  disabled={loadingPunchLogs}
+                  className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs flex items-center gap-1 shadow transition cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingPunchLogs ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Automated Attendance & Base Salary Calculation Card */}
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+              <div className="glass-panel p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Logged Days</div>
+                <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{totalLogged}</div>
+                <div className="text-[9px] text-slate-400">Total sessions</div>
+              </div>
+
+              <div className="glass-panel p-3.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 shadow-sm">
+                <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Present (Full)</div>
+                <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-0.5">{presentCount}</div>
+                <div className="text-[9px] text-emerald-600/70">Full duty days</div>
+              </div>
+
+              <div className="glass-panel p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/5 shadow-sm">
+                <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Late Marked</div>
+                <div className="text-xl font-black text-amber-600 dark:text-amber-400 mt-0.5">{lateCount}</div>
+                <div className="text-[9px] text-amber-600/70">Late arrival days</div>
+              </div>
+
+              <div className="glass-panel p-3.5 rounded-2xl border border-purple-500/30 bg-purple-500/5 shadow-sm">
+                <div className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider">Half Days</div>
+                <div className="text-xl font-black text-purple-600 dark:text-purple-400 mt-0.5">{halfDayCount}</div>
+                <div className="text-[9px] text-purple-600/70">0.5 day credit</div>
+              </div>
+
+              <div className="glass-panel p-3.5 rounded-2xl border border-rose-500/30 bg-rose-500/5 shadow-sm">
+                <div className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">Absent</div>
+                <div className="text-xl font-black text-rose-600 dark:text-rose-400 mt-0.5">{absentCount}</div>
+                <div className="text-[9px] text-rose-600/70">0 day credit</div>
+              </div>
+
+              <div className="glass-panel p-3.5 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 shadow-sm">
+                <div className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Payable Days</div>
+                <div className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-0.5">{payableDays}</div>
+                <div className="text-[9px] text-indigo-600/70">Pres + Late + 0.5×Half</div>
+              </div>
+
+              <div className="glass-panel p-3.5 rounded-2xl border border-sky-500/30 bg-sky-500/10 shadow-sm">
+                <div className="text-[10px] font-bold text-sky-600 dark:text-sky-400 uppercase tracking-wider flex items-center gap-1">
+                  <Calculator className="w-3 h-3" /> Auto Salary
+                </div>
+                <div className="text-xl font-black text-sky-600 dark:text-sky-400 mt-0.5">
+                  ₹{estimatedSalary.toLocaleString()}
+                </div>
+                <div className="text-[9px] text-slate-500">
+                  {staffMonthlySalary > 0 ? `Base: ₹${staffMonthlySalary.toLocaleString()}` : 'Base: Not Set'}
+                </div>
+              </div>
+            </div>
+
+            {/* Daily Punch Log Listing */}
+            <div className="glass-panel rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-sky-500" />
+                  <span className="text-sm font-bold text-slate-900 dark:text-white">
+                    Daily Punch In / Punch Out Verification Table ({filteredPunchLogs.length} Records)
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search date, staff name, or role..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="glass-input px-3.5 py-1.5 rounded-xl text-xs w-full sm:w-64"
+                />
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase tracking-wider bg-slate-50/50 dark:bg-slate-900/50">
+                      <th className="py-3 px-4 font-semibold">Date (IST)</th>
+                      <th className="py-3 px-4 font-semibold">Staff Employee</th>
+                      <th className="py-3 px-4 font-semibold text-center">Status</th>
+                      <th className="py-3 px-4 font-semibold text-center">Punch In (IST)</th>
+                      <th className="py-3 px-4 font-semibold text-center">Punch Out (IST)</th>
+                      <th className="py-3 px-4 font-semibold text-right">Total Duration</th>
+                      <th className="py-3 px-4 font-semibold">Verification Notes / Audit</th>
+                      {isSuperAdmin && (
+                        <th className="py-3 px-4 font-semibold text-right">Action</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {filteredPunchLogs.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
+                          {loadingPunchLogs ? 'Loading punch records...' : 'No punch logs found for this period. Mark staff attendance or select another month.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredPunchLogs.map((p) => {
+                        const statusColors: Record<string, string> = {
+                          PRESENT: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30',
+                          LATE: 'bg-amber-500/10 text-amber-600 border-amber-500/30',
+                          HALF_DAY: 'bg-purple-500/10 text-purple-600 border-purple-500/30',
+                          ABSENT: 'bg-rose-500/10 text-rose-600 border-rose-500/30',
+                        };
+
+                        return (
+                          <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                            <td className="py-3 px-4 font-bold text-slate-900 dark:text-white font-mono">
+                              {p.date}
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="font-bold text-slate-900 dark:text-white">{p.user?.name || 'Staff'}</div>
+                              <div className="text-[10px] text-slate-500">{p.user?.role} {p.user?.team?.name ? `• ${p.user.team.name}` : ''}</div>
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${statusColors[p.status] || 'bg-slate-100 text-slate-600'}`}>
+                                {p.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                              {formatTimeIST(p.punchIn)}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                              {formatTimeIST(p.punchOut)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-black text-slate-900 dark:text-white">
+                              {formatDuration((p.totalMinutes || 0) * 60)}
+                            </td>
+                            <td className="py-3 px-4 text-slate-500 text-xs italic max-w-xs truncate" title={p.notes || ''}>
+                              {p.notes || 'Daily biometric / user punch record'}
+                            </td>
+                            {isSuperAdmin && (
+                              <td className="py-3 px-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPunchOverrideForm({
+                                      userId: p.userId,
+                                      userName: p.user?.name || 'Staff',
+                                      date: p.date,
+                                      status: p.status,
+                                      punchInTime: p.punchIn ? new Date(p.punchIn).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '09:30',
+                                      punchOutTime: p.punchOut ? new Date(p.punchOut).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '18:30',
+                                      notes: p.notes || '',
+                                    });
+                                    setIsPunchModalOpen(true);
+                                  }}
+                                  className="p-1 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+                                  title="Edit Punch Details & Status"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* TAB: MONTH CALENDAR VIEW */}
       {activeTab === 'calendar' && (() => {
@@ -2070,6 +2505,126 @@ export default function HRMSDeskClient({ currentUserId, userName, userRole, staf
                 >
                   <Check className="w-4 h-4" />
                   {holidayLoading ? 'Saving...' : editingHolidayId ? 'Update Holiday' : 'Add Holiday'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Super Admin Punch Override & Daily Attendance Modal */}
+      {isPunchModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="glass-panel p-6 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl max-w-md w-full space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Clock className="w-4 h-4 text-sky-500" />
+                <span>Override Staff Attendance & Punch Record</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsPunchModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePunchOverride} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Staff Member
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={punchOverrideForm.userName}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-300 cursor-not-allowed"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Attendance Date (YYYY-MM-DD)
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={punchOverrideForm.date}
+                  onChange={(e) => setPunchOverrideForm({ ...punchOverrideForm, date: e.target.value })}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Attendance Status *
+                </label>
+                <select
+                  value={punchOverrideForm.status}
+                  onChange={(e) => setPunchOverrideForm({ ...punchOverrideForm, status: e.target.value as any })}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-bold"
+                >
+                  <option value="PRESENT">PRESENT (Full Day Duty)</option>
+                  <option value="LATE">LATE (Late Arrival)</option>
+                  <option value="HALF_DAY">HALF_DAY (Half Day Shift)</option>
+                  <option value="ABSENT">ABSENT (No Duty Credit)</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Punch In Time (IST)
+                  </label>
+                  <input
+                    type="time"
+                    value={punchOverrideForm.punchInTime}
+                    onChange={(e) => setPunchOverrideForm({ ...punchOverrideForm, punchInTime: e.target.value })}
+                    className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Punch Out Time (IST)
+                  </label>
+                  <input
+                    type="time"
+                    value={punchOverrideForm.punchOutTime}
+                    onChange={(e) => setPunchOverrideForm({ ...punchOverrideForm, punchOutTime: e.target.value })}
+                    className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Verification Notes / Audit Remarks
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Approved by Super Admin due to client site visit"
+                  value={punchOverrideForm.notes}
+                  onChange={(e) => setPunchOverrideForm({ ...punchOverrideForm, notes: e.target.value })}
+                  className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsPunchModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={punchOverrideLoading}
+                  className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow-md transition disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  {punchOverrideLoading ? 'Saving...' : 'Save Attendance & Punch'}
                 </button>
               </div>
             </form>

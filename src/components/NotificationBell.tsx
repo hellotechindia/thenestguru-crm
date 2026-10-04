@@ -18,11 +18,13 @@ import {
   Sparkles,
   X,
   ArrowRight,
-  Radio
+  Radio,
+  Trash2,
 } from 'lucide-react';
 import {
   getNotificationsAction,
   markNotificationAsReadAction,
+  deleteNotificationAction,
 } from '@/app/actions';
 
 interface NotificationItem {
@@ -289,6 +291,21 @@ export default function NotificationBell() {
     setLiveToasts([]);
   };
 
+  const handleDeleteNotification = async (id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    setUnreadCount((c) => Math.max(0, c - 1));
+    dismissToast(id);
+    await deleteNotificationAction(id);
+  };
+
+  const handleClearAll = async () => {
+    if (!confirm('Are you sure you want to delete all notifications?')) return;
+    setNotifications([]);
+    setUnreadCount(0);
+    setLiveToasts([]);
+    await deleteNotificationAction(undefined, true);
+  };
+
   const handleNotificationClick = async (notif: NotificationItem) => {
     if (!notif.isRead) {
       await markNotificationAsReadAction(notif.id);
@@ -418,9 +435,22 @@ export default function NotificationBell() {
                         >
                           {notif.title}
                         </span>
-                        <span className="text-[10px] text-slate-400 whitespace-nowrap">
-                          {timeAgo(notif.createdAt)}
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                            {timeAgo(notif.createdAt)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteNotification(notif.id);
+                            }}
+                            title="Delete notification"
+                            className="p-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
                       <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">
                         {notif.message}
@@ -452,14 +482,25 @@ export default function NotificationBell() {
               <span className="text-slate-400 text-[10px] flex items-center gap-1">
                 <Radio className="w-3 h-3 text-emerald-500 animate-pulse" /> Live Real-time Sync Active
               </span>
-              {unreadCount > 0 && (
-                <button
-                  onClick={handleMarkAllRead}
-                  className="font-semibold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  <Check className="w-3 h-3" /> Mark all read
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {unreadCount > 0 && (
+                  <button
+                    onClick={handleMarkAllRead}
+                    className="font-semibold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Check className="w-3 h-3" /> Mark read
+                  </button>
+                )}
+                {notifications.length > 0 && (
+                  <button
+                    onClick={handleClearAll}
+                    className="font-semibold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-1 cursor-pointer ml-1"
+                    title="Delete all notifications"
+                  >
+                    <Trash2 className="w-3 h-3" /> Clear all
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
