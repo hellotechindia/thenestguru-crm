@@ -48,6 +48,8 @@ export default async function CasesPage() {
       (item) => item.status === 'Received' || item.status === 'Not Applicable'
     ).length;
 
+    const creator = users.find((u) => u.id === c.createdById);
+
     return {
       id: c.id,
       clientName: c.clientName,
@@ -68,6 +70,9 @@ export default async function CasesPage() {
       salesUserId: c.salesUserId || '',
       operationUserId: c.operationUserId || '',
       assignedTeamId: c.assignedTeamId || '',
+      createdById: c.createdById || '',
+      createdByName: creator?.name || 'Staff',
+      createdByRole: creator?.role || '',
       coApplicantsData: c.coApplicantsData || '',
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),

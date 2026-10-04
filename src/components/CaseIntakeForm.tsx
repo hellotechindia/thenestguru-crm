@@ -35,6 +35,7 @@ interface Props {
   propertyScopes?: Array<{ id: string; name: string }>;
   targetCategories?: Array<{ id: string; name: string }>;
   isSuperAdmin?: boolean;
+  currentUser?: { name: string; role: string };
 }
 
 export default function CaseIntakeForm({
@@ -47,6 +48,7 @@ export default function CaseIntakeForm({
   propertyScopes = [],
   targetCategories = [],
   isSuperAdmin = false,
+  currentUser,
 }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -330,6 +332,23 @@ export default function CaseIntakeForm({
           >
             Clear Draft
           </button>
+        </div>
+      )}
+
+      {/* Case Originator / Creator Attribution Banner */}
+      {currentUser && (
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 rounded-2xl bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-sky-950/40 dark:to-indigo-950/40 border border-sky-200 dark:border-sky-800 shadow-xs">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs text-slate-600 dark:text-slate-300 font-medium">Case File Intake By:</span>
+            <strong className="text-xs font-bold text-slate-900 dark:text-white">{currentUser.name}</strong>
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-700">
+              {currentUser.role.replace('_', ' ')}
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+            This account will be permanently recorded as the Creator / Originator of this loan case.
+          </span>
         </div>
       )}
 

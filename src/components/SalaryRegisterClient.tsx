@@ -10,9 +10,9 @@ import {
   deleteSalaryRecordAction,
 } from '@/app/actions';
 import {
-  DollarSign, Plus, Search, Filter, Download, CheckCircle2,
+  Plus, Search, Filter, Download, CheckCircle2,
   Clock, AlertCircle, User, ShieldAlert, ArrowUpDown, X, Zap, Calculator,
-  FileText, Edit3, Trash2, Printer, Building2
+  FileText, Edit3, Trash2, Printer, Building2, IndianRupee, Link2
 } from 'lucide-react';
 import { exportToCSV } from '@/lib/excel-export';
 
@@ -54,6 +54,16 @@ interface SalaryRecordItem {
   createdAt: Date | string;
 }
 
+interface ActiveCaseItem {
+  id: string;
+  clientName: string;
+  product: string;
+  stage: number;
+  salesUserId?: string | null;
+  operationUserId?: string | null;
+  createdById?: string | null;
+}
+
 interface Props {
   staffUsers: StaffUser[];
   initialRecords: SalaryRecordItem[];
@@ -63,6 +73,7 @@ interface Props {
     crmTagline: string;
     crmLogoUrl: string;
   };
+  activeCases?: ActiveCaseItem[];
 }
 
 // Indian Number to Words Helper
@@ -123,6 +134,7 @@ export default function SalaryRegisterClient({
     crmTagline: 'Loan Processing Desk',
     crmLogoUrl: 'https://thenestguru.com/thenestgurulogo.png',
   },
+  activeCases = [],
 }: Props) {
   const router = useRouter();
   const [records, setRecords] = useState<SalaryRecordItem[]>(initialRecords);
@@ -145,6 +157,9 @@ export default function SalaryRegisterClient({
     lwpDays: '0',
     allowances: '0',
     deductions: '0',
+    incentiveEarned: '0',
+    linkedCaseId: '',
+    linkedCaseName: '',
     paymentStatus: 'UNPAID',
     remarks: '',
   });
@@ -175,14 +190,18 @@ export default function SalaryRegisterClient({
     const proratedBasic = Math.round((monthly / wDays) * effectivePaidDays);
     const a = parseFloat(form.allowances) || 0;
     const d = parseFloat(form.deductions) || 0;
+    const inc = parseFloat(form.incentiveEarned) || 0;
     return {
       wDays,
       lwp,
       effectivePaidDays,
       proratedBasic,
-      netPayable: Math.max(0, proratedBasic + a - d),
+      allowances: a,
+      deductions: d,
+      incentiveEarned: inc,
+      netPayable: Math.max(0, proratedBasic + a + inc - d),
     };
-  }, [form.monthlySalary, form.workingDays, form.lwpDays, form.allowances, form.deductions]);
+  }, [form.monthlySalary, form.workingDays, form.lwpDays, form.allowances, form.deductions, form.incentiveEarned]);
 
   // Unique Months
   const availableMonths = useMemo(() => {
@@ -206,13 +225,13 @@ export default function SalaryRegisterClient({
     });
   }, [records, monthFilter, statusFilter, searchTerm]);
 
-  // KPI Metrics
+  // KPI Metrics - DYNAMICALLY COMPUTED ON FILTERED VIEW
   const stats = useMemo(() => {
     let totalPayroll = 0;
     let totalPaid = 0;
     let totalUnpaid = 0;
 
-    records.forEach((r) => {
+    filteredRecords.forEach((r) => {
       totalPayroll += r.netPayable;
       if (r.paymentStatus === 'PAID') {
         totalPaid += r.netPayable;
@@ -225,9 +244,9 @@ export default function SalaryRegisterClient({
       totalPayroll,
       totalPaid,
       totalUnpaid,
-      count: records.length,
+      count: filteredRecords.length,
     };
-  }, [records]);
+  }, [filteredRecords]);
 
   // Handle Create Salary
   const handleCreateSalary = async (e: React.FormEvent) => {
@@ -249,6 +268,9 @@ export default function SalaryRegisterClient({
       lwpDays: parseFloat(form.lwpDays) || 0,
       allowances: parseFloat(form.allowances) || 0,
       deductions: parseFloat(form.deductions) || 0,
+      incentiveEarned: parseFloat(form.incentiveEarned) || 0,
+      linkedCaseId: form.linkedCaseId || null,
+      linkedCaseName: form.linkedCaseName || null,
       paymentStatus: form.paymentStatus,
       remarks: form.remarks || undefined,
     });
@@ -271,6 +293,9 @@ export default function SalaryRegisterClient({
         lwpDays: '0',
         allowances: '0',
         deductions: '0',
+        incentiveEarned: '0',
+        linkedCaseId: '',
+        linkedCaseName: '',
         paymentStatus: 'UNPAID',
         remarks: '',
       });
@@ -629,8 +654,10 @@ export default function SalaryRegisterClient({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
           <div className="w-full max-w-lg p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <DollarSign className="w-5 h-5 text-indigo-600" />
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-sm border border-indigo-200 dark:border-indigo-800/60">
+                  <IndianRupee className="w-4 h-4" />
+                </div>
                 Generate Employee Salary Slip
               </h3>
               <button
@@ -791,8 +818,63 @@ export default function SalaryRegisterClient({
                 </div>
               </div>
 
+              {/* CASE LINKED FOR INCENTIVE OPTION */}
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+                  <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Link Case for Incentive (Optional)</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Select Loan Case
+                    </label>
+                    <select
+                      value={form.linkedCaseId}
+                      onChange={(e) => {
+                        const selCase = activeCases.find((c) => c.id === e.target.value);
+                        setForm({
+                          ...form,
+                          linkedCaseId: e.target.value,
+                          linkedCaseName: selCase ? `${selCase.clientName} (${selCase.product})` : '',
+                        });
+                      }}
+                      className="w-full glass-input px-2.5 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-900"
+                    >
+                      <option value="">-- No Case Linked / General Incentive --</option>
+                      {activeCases.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.clientName} — {c.product} (Stage {c.stage})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 mb-1">
+                      Incentive / Bonus Amount (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      placeholder="0"
+                      value={form.incentiveEarned}
+                      onChange={(e) => setForm({ ...form, incentiveEarned: e.target.value })}
+                      className="w-full glass-input px-2.5 py-1.5 rounded-xl text-xs font-mono font-bold text-indigo-600"
+                    />
+                  </div>
+                </div>
+
+                {form.linkedCaseName && (
+                  <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
+                    ✓ Incentive will be recorded against: <strong>{form.linkedCaseName}</strong>
+                  </p>
+                )}
+              </div>
+
               {/* Live Proration Breakdown Banner */}
-              <div className="p-3.5 bg-indigo-50/80 dark:bg-indigo-950/40 rounded-xl border border-indigo-200 dark:border-indigo-800 space-y-2">
+              <div className="p-3.5 bg-indigo-50/80 dark:bg-indigo-950/40 rounded-xl border border-indigo-200 dark:border-indigo-800 space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-600 dark:text-slate-400">Effective Paid Days:</span>
                   <span className="font-bold text-slate-900 dark:text-white font-mono">
@@ -805,18 +887,41 @@ export default function SalaryRegisterClient({
                     ₹{netPreview.proratedBasic.toLocaleString('en-IN')}
                   </span>
                 </div>
-                <div className="flex items-center justify-between text-xs pt-1 border-t border-indigo-200 dark:border-indigo-800/80">
+                {netPreview.incentiveEarned > 0 && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-indigo-600 dark:text-indigo-400">+ Case / Stage Incentive:</span>
+                    <span className="font-bold text-indigo-600 dark:text-indigo-400 font-mono">
+                      +₹{netPreview.incentiveEarned.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                )}
+                {netPreview.allowances > 0 && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-emerald-600 dark:text-emerald-400">+ Allowances / Bonuses:</span>
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                      +₹{netPreview.allowances.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                )}
+                {netPreview.deductions > 0 && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-rose-600 dark:text-rose-400">- Deductions / Advance:</span>
+                    <span className="font-bold text-rose-600 dark:text-rose-400 font-mono">
+                      -₹{netPreview.deductions.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs pt-1.5 border-t border-indigo-200 dark:border-indigo-800/80">
                   <span className="font-bold text-indigo-900 dark:text-indigo-200 flex items-center gap-1">
                     <Calculator className="w-3.5 h-3.5 text-indigo-600" />
-                    Calculated Net (Before Auto Stage Incentives):
+                    Calculated Net Payable:
                   </span>
                   <span className="text-base font-extrabold text-indigo-600 dark:text-indigo-400 font-mono">
                     ₹{netPreview.netPayable.toLocaleString('en-IN')}
                   </span>
                 </div>
-                <p className="text-[10px] text-indigo-700 dark:text-indigo-300 italic flex items-center gap-1">
-                  <Zap className="w-3 h-3 text-amber-500 shrink-0" />
-                  Stage-linked incentives earned by this staff on processed cases will be calculated & included automatically on generation!
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 italic">
+                  Note: Calculation is strictly based on the explicit values entered above (Prorated Basic + Allowances + Incentive - Deductions).
                 </p>
               </div>
 

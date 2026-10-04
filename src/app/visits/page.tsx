@@ -31,7 +31,7 @@ export default async function VisitsPage() {
   // Role-based visits query: Super Admin and Team Leader can see all sales visits to combine by builder
   const whereCondition = (isSuperAdmin || isTeamLeader) ? {} : { staffUserId: userId };
 
-  let [visits, staffUsers, activeCases, builders] = await Promise.all([
+  let [visits, staffUsers, activeCases, builders, channelPartners] = await Promise.all([
     prisma.visitRecord.findMany({
       where: whereCondition,
       include: {
@@ -57,6 +57,11 @@ export default async function VisitsPage() {
       include: {
         _count: { select: { visits: true } },
       },
+    }),
+    prisma.user.findMany({
+      where: { role: 'CHANNEL' },
+      select: { id: true, name: true, phone: true, email: true, address: true },
+      orderBy: { name: 'asc' },
     }),
   ]);
 
@@ -106,6 +111,7 @@ export default async function VisitsPage() {
         currentUserId={userId}
         isSuperAdmin={isSuperAdmin}
         isTeamLeader={isTeamLeader}
+        channelPartners={channelPartners as any}
       />
     </div>
   );

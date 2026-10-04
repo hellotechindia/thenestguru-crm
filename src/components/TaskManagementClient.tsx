@@ -192,6 +192,206 @@ const statusConfig: Record<string, { label: string; color: string; dot: string }
   CANCELLED: { label: 'Cancelled', color: 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700', dot: 'bg-slate-400' },
 };
 
+// Eisenhower Time Management Matrix Quadrant definition
+export type EisenhowerQuadrantKey = 'DO_FIRST' | 'SCHEDULE' | 'DELEGATE' | 'ELIMINATE';
+
+export const EISENHOWER_MATRIX_QUADRANTS: {
+  id: EisenhowerQuadrantKey;
+  qNumber: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  title: string;
+  tag: string;
+  fullTitle: string;
+  desc: string;
+  isUrgent: boolean;
+  isImportant: boolean;
+  suggestedPriority: 'URGENT' | 'HIGH' | 'MEDIUM' | 'LOW';
+  icon: typeof Flame;
+  color: {
+    badge: string;
+    border: string;
+    activeBg: string;
+    hoverBg: string;
+    text: string;
+    tagText: string;
+    dot: string;
+    chipBg: string;
+  };
+}[] = [
+  {
+    id: 'DO_FIRST',
+    qNumber: 'Q1',
+    title: 'Do First',
+    tag: 'Urgent & Important',
+    fullTitle: 'Do First (Urgent & Important)',
+    desc: 'Crises, critical deadlines, urgent approvals',
+    isUrgent: true,
+    isImportant: true,
+    suggestedPriority: 'URGENT',
+    icon: Flame,
+    color: {
+      badge: 'bg-rose-600 text-white',
+      border: 'border-rose-500',
+      activeBg: 'bg-rose-50 dark:bg-rose-950/50 border-rose-500 text-rose-900 dark:text-rose-100 ring-2 ring-rose-500/30 shadow-sm',
+      hoverBg: 'hover:border-rose-400 hover:bg-rose-50/30',
+      text: 'text-rose-600 dark:text-rose-400',
+      tagText: 'text-rose-600 dark:text-rose-400 font-bold',
+      dot: 'bg-rose-600',
+      chipBg: 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800',
+    },
+  },
+  {
+    id: 'SCHEDULE',
+    qNumber: 'Q2',
+    title: 'Schedule',
+    tag: 'Important, Not Urgent',
+    fullTitle: 'Schedule (Important, Not Urgent)',
+    desc: 'Planning, milestones, strategy & prevention',
+    isUrgent: false,
+    isImportant: true,
+    suggestedPriority: 'HIGH',
+    icon: Calendar,
+    color: {
+      badge: 'bg-emerald-600 text-white',
+      border: 'border-emerald-500',
+      activeBg: 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-500 text-emerald-900 dark:text-emerald-100 ring-2 ring-emerald-500/30 shadow-sm',
+      hoverBg: 'hover:border-emerald-400 hover:bg-emerald-50/30',
+      text: 'text-emerald-600 dark:text-emerald-400',
+      tagText: 'text-emerald-600 dark:text-emerald-400 font-bold',
+      dot: 'bg-emerald-600',
+      chipBg: 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800',
+    },
+  },
+  {
+    id: 'DELEGATE',
+    qNumber: 'Q3',
+    title: 'Delegate',
+    tag: 'Urgent, Not Important',
+    fullTitle: 'Delegate (Urgent, Not Important)',
+    desc: 'Time-sensitive routine tasks, queries & follow-ups',
+    isUrgent: true,
+    isImportant: false,
+    suggestedPriority: 'MEDIUM',
+    icon: Zap,
+    color: {
+      badge: 'bg-amber-500 text-white',
+      border: 'border-amber-500',
+      activeBg: 'bg-amber-50 dark:bg-amber-950/50 border-amber-500 text-amber-900 dark:text-amber-100 ring-2 ring-amber-500/30 shadow-sm',
+      hoverBg: 'hover:border-amber-400 hover:bg-amber-50/30',
+      text: 'text-amber-600 dark:text-amber-400',
+      tagText: 'text-amber-600 dark:text-amber-400 font-bold',
+      dot: 'bg-amber-500',
+      chipBg: 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800',
+    },
+  },
+  {
+    id: 'ELIMINATE',
+    qNumber: 'Q4',
+    title: 'Eliminate / Backlog',
+    tag: 'Not urgent, not important',
+    fullTitle: 'Eliminate / Backlog (Not urgent, not important)',
+    desc: 'Low-priority backlog, optional research, non-pressing',
+    isUrgent: false,
+    isImportant: false,
+    suggestedPriority: 'LOW',
+    icon: Clock,
+    color: {
+      badge: 'bg-slate-500 text-white',
+      border: 'border-slate-500',
+      activeBg: 'bg-slate-100 dark:bg-slate-800 border-slate-500 text-slate-900 dark:text-slate-100 ring-2 ring-slate-500/30 shadow-sm',
+      hoverBg: 'hover:border-slate-400 hover:bg-slate-50/40',
+      text: 'text-slate-500 dark:text-slate-400',
+      tagText: 'text-slate-500 dark:text-slate-400 font-bold',
+      dot: 'bg-slate-500',
+      chipBg: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700',
+    },
+  },
+];
+
+export function getEisenhowerQuadrant(isUrgent?: boolean | null, isImportant?: boolean | null) {
+  if (isUrgent && isImportant) return EISENHOWER_MATRIX_QUADRANTS[0];
+  if (!isUrgent && isImportant) return EISENHOWER_MATRIX_QUADRANTS[1];
+  if (isUrgent && !isImportant) return EISENHOWER_MATRIX_QUADRANTS[2];
+  return EISENHOWER_MATRIX_QUADRANTS[3];
+}
+
+function EisenhowerSelector({
+  isUrgent,
+  isImportant,
+  onChange,
+  onPriorityChange,
+}: {
+  isUrgent: boolean;
+  isImportant: boolean;
+  onChange: (urgent: boolean, important: boolean) => void;
+  onPriorityChange?: (priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT') => void;
+}) {
+  const currentQuad = getEisenhowerQuadrant(isUrgent, isImportant);
+
+  return (
+    <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+            <Zap className="w-4 h-4 text-amber-500" />
+            Priority Tags (Eisenhower Time Management Matrix)
+          </span>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Select quadrant to classify task by urgency and importance:
+          </p>
+        </div>
+        <span
+          className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full border shadow-xs ${currentQuad.color.chipBg}`}
+        >
+          {currentQuad.qNumber}: {currentQuad.fullTitle}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+        {EISENHOWER_MATRIX_QUADRANTS.map((quad) => {
+          const isSelected = currentQuad.id === quad.id;
+          const Icon = quad.icon;
+          return (
+            <button
+              key={quad.id}
+              type="button"
+              onClick={() => {
+                onChange(quad.isUrgent, quad.isImportant);
+                if (onPriorityChange) {
+                  onPriorityChange(quad.suggestedPriority);
+                }
+              }}
+              className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 relative ${
+                isSelected
+                  ? quad.color.activeBg
+                  : `bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 ${quad.color.hoverBg}`
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 font-bold text-xs">
+                  <span className={`px-1.5 py-0.2 rounded text-[10px] font-black ${quad.color.badge}`}>
+                    {quad.qNumber}
+                  </span>
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{quad.title}</span>
+                </div>
+                <span className={`text-[10px] ${quad.color.tagText}`}>
+                  {quad.tag}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
+                {quad.desc}
+              </p>
+              {isSelected && (
+                <div className={`absolute top-2.5 right-2.5 w-2 h-2 rounded-full ${quad.color.dot} ring-2 ring-white dark:ring-slate-900`} />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function TaskManagementClient({
   initialTasks,
   assignableUsers,
@@ -210,6 +410,7 @@ export default function TaskManagementClient({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
+  const [eisenhowerFilter, setEisenhowerFilter] = useState<'ALL' | EisenhowerQuadrantKey>('ALL');
   const [assigneeFilter, setAssigneeFilter] = useState('ALL');
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
 
@@ -315,6 +516,12 @@ export default function TaskManagementClient({
         // Priority filter
         if (priorityFilter !== 'ALL' && task.priority !== priorityFilter) return false;
 
+        // Eisenhower Matrix Tag Filter
+        if (eisenhowerFilter !== 'ALL') {
+          const quad = getEisenhowerQuadrant(task.isUrgent, task.isImportant);
+          if (quad.id !== eisenhowerFilter) return false;
+        }
+
         // Assignee filter
         if (assigneeFilter !== 'ALL') {
           const hasAssignee = task.assignedToId === assigneeFilter || task.assignees?.some((a) => a.userId === assigneeFilter);
@@ -341,7 +548,7 @@ export default function TaskManagementClient({
         const timeB = new Date(b.createdAt || b.assignedAt).getTime();
         return timeB - timeA;
       });
-  }, [scopedTasks, statusFilter, priorityFilter, assigneeFilter, searchQuery]);
+  }, [scopedTasks, statusFilter, priorityFilter, eisenhowerFilter, assigneeFilter, searchQuery]);
 
   // Summary Metrics scoped by role visibility
   const visibleTasksForStats = useMemo(() => {
@@ -700,6 +907,32 @@ export default function TaskManagementClient({
     }
   };
 
+  // Eisenhower Matrix grouping (Active tasks in Q1-Q4, completed tasks in Completed section)
+  const activeEisenhowerTasks = useMemo(
+    () => filteredTasks.filter((t) => t.status !== 'COMPLETED' && t.status !== 'CANCELLED'),
+    [filteredTasks]
+  );
+  const q1Tasks = useMemo(
+    () => activeEisenhowerTasks.filter((t) => (t.isUrgent && t.isImportant) || t.priority === 'URGENT'),
+    [activeEisenhowerTasks]
+  );
+  const q2Tasks = useMemo(
+    () => activeEisenhowerTasks.filter((t) => !t.isUrgent && (t.isImportant || t.priority === 'HIGH')),
+    [activeEisenhowerTasks]
+  );
+  const q3Tasks = useMemo(
+    () => activeEisenhowerTasks.filter((t) => t.isUrgent && !t.isImportant && t.priority !== 'URGENT'),
+    [activeEisenhowerTasks]
+  );
+  const q4Tasks = useMemo(
+    () => activeEisenhowerTasks.filter((t) => !t.isUrgent && !t.isImportant && t.priority !== 'HIGH' && t.priority !== 'URGENT'),
+    [activeEisenhowerTasks]
+  );
+  const completedEisenhowerTasks = useMemo(
+    () => filteredTasks.filter((t) => t.status === 'COMPLETED'),
+    [filteredTasks]
+  );
+
   return (
     <div className="space-y-6">
       {/* Header & Create Buttons */}
@@ -987,7 +1220,7 @@ export default function TaskManagementClient({
         </div>
 
         {/* Filter Controls */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5">
           {/* Search */}
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1031,6 +1264,21 @@ export default function TaskManagementClient({
             </select>
           </div>
 
+          {/* Eisenhower Matrix Tag Filter */}
+          <div>
+            <select
+              value={eisenhowerFilter}
+              onChange={(e) => setEisenhowerFilter(e.target.value as any)}
+              className="w-full glass-input px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
+            >
+              <option value="ALL">All Matrix Priority Tags</option>
+              <option value="DO_FIRST">🔥 Q1: Do First (Urgent &amp; Important)</option>
+              <option value="SCHEDULE">⭐ Q2: Schedule (Important, Not Urgent)</option>
+              <option value="DELEGATE">⚡ Q3: Delegate (Urgent, Not Important)</option>
+              <option value="ELIMINATE">📦 Q4: Eliminate / Backlog (Not urgent, not important)</option>
+            </select>
+          </div>
+
           {/* Assignee Filter */}
           <div>
             <select
@@ -1070,20 +1318,20 @@ export default function TaskManagementClient({
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white uppercase">Q1</span>
                   <h3 className="text-sm font-bold text-rose-900 dark:text-rose-200 flex items-center gap-1.5">
                     <Flame className="w-4 h-4 text-rose-600" />
-                    Do First (Urgent & Important)
+                    Do First (Urgent &amp; Important)
                   </h3>
                 </div>
                 <span className="text-xs font-extrabold text-rose-700 dark:text-rose-400 bg-rose-100 dark:bg-rose-900/50 px-2.5 py-0.5 rounded-full">
-                  {filteredTasks.filter((t) => (t.isUrgent && t.isImportant) || t.priority === 'URGENT').length}
+                  {q1Tasks.length}
                 </span>
               </div>
               <p className="text-[11px] text-rose-700/80 dark:text-rose-400/80">Crises, urgent approvals, critical deadlines</p>
 
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
-                {filteredTasks.filter((t) => (t.isUrgent && t.isImportant) || t.priority === 'URGENT').length === 0 ? (
-                  <p className="text-xs text-slate-400 italic text-center py-8">No tasks in Q1 (Clear!)</p>
+                {q1Tasks.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">No active tasks in Q1 (Clear!)</p>
                 ) : (
-                  filteredTasks.filter((t) => (t.isUrgent && t.isImportant) || t.priority === 'URGENT').map((task) => (
+                  q1Tasks.map((task) => (
                     <div
                       key={task.id}
                       className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 shadow-sm space-y-2 hover:border-rose-400 transition-all"
@@ -1159,16 +1407,16 @@ export default function TaskManagementClient({
                   </h3>
                 </div>
                 <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/50 px-2.5 py-0.5 rounded-full">
-                  {filteredTasks.filter((t) => !t.isUrgent && (t.isImportant || t.priority === 'HIGH')).length}
+                  {q2Tasks.length}
                 </span>
               </div>
               <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80">Planning, relationship building, preparation</p>
 
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
-                {filteredTasks.filter((t) => !t.isUrgent && (t.isImportant || t.priority === 'HIGH')).length === 0 ? (
-                  <p className="text-xs text-slate-400 italic text-center py-8">No tasks in Q2</p>
+                {q2Tasks.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">No active tasks in Q2</p>
                 ) : (
-                  filteredTasks.filter((t) => !t.isUrgent && (t.isImportant || t.priority === 'HIGH')).map((task) => (
+                  q2Tasks.map((task) => (
                     <div
                       key={task.id}
                       className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 shadow-sm space-y-2 hover:border-emerald-400 transition-all"
@@ -1244,16 +1492,16 @@ export default function TaskManagementClient({
                   </h3>
                 </div>
                 <span className="text-xs font-extrabold text-sky-700 dark:text-sky-400 bg-sky-100 dark:bg-sky-900/50 px-2.5 py-0.5 rounded-full">
-                  {filteredTasks.filter((t) => t.isUrgent && !t.isImportant && t.priority !== 'URGENT').length}
+                  {q3Tasks.length}
                 </span>
               </div>
               <p className="text-[11px] text-sky-700/80 dark:text-sky-400/80">Routine follow-ups, minor interruptions, quick requests</p>
 
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
-                {filteredTasks.filter((t) => t.isUrgent && !t.isImportant && t.priority !== 'URGENT').length === 0 ? (
-                  <p className="text-xs text-slate-400 italic text-center py-8">No tasks in Q3</p>
+                {q3Tasks.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">No active tasks in Q3</p>
                 ) : (
-                  filteredTasks.filter((t) => t.isUrgent && !t.isImportant && t.priority !== 'URGENT').map((task) => (
+                  q3Tasks.map((task) => (
                     <div
                       key={task.id}
                       className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-sky-200 dark:border-sky-900/60 shadow-sm space-y-2 hover:border-sky-400 transition-all"
@@ -1329,16 +1577,16 @@ export default function TaskManagementClient({
                   </h3>
                 </div>
                 <span className="text-xs font-extrabold text-slate-600 dark:text-slate-400 bg-slate-200 dark:bg-slate-800 px-2.5 py-0.5 rounded-full">
-                  {filteredTasks.filter((t) => !t.isUrgent && !t.isImportant && t.priority !== 'HIGH' && t.priority !== 'URGENT').length}
+                  {q4Tasks.length}
                 </span>
               </div>
               <p className="text-[11px] text-slate-500">Low-priority backlog, optional research, non-pressing items</p>
 
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
-                {filteredTasks.filter((t) => !t.isUrgent && !t.isImportant && t.priority !== 'HIGH' && t.priority !== 'URGENT').length === 0 ? (
-                  <p className="text-xs text-slate-400 italic text-center py-8">No tasks in Q4</p>
+                {q4Tasks.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">No active tasks in Q4</p>
                 ) : (
-                  filteredTasks.filter((t) => !t.isUrgent && !t.isImportant && t.priority !== 'HIGH' && t.priority !== 'URGENT').map((task) => (
+                  q4Tasks.map((task) => (
                     <div
                       key={task.id}
                       className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2 hover:border-slate-400 transition-all"
@@ -1403,6 +1651,76 @@ export default function TaskManagementClient({
               </div>
             </div>
           </div>
+
+          {/* Dedicated Completed Tasks Section in Eisenhower View */}
+          <div className="glass-panel p-4 md:p-5 rounded-2xl border-2 border-emerald-300/80 dark:border-emerald-800/60 bg-emerald-50/20 dark:bg-emerald-950/10 space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-emerald-200 dark:border-emerald-900/40">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white uppercase">DONE</span>
+                <h3 className="text-sm font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  Completed Tasks
+                </h3>
+              </div>
+              <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/50 px-2.5 py-0.5 rounded-full">
+                {completedEisenhowerTasks.length} Completed
+              </span>
+            </div>
+            <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80">
+              Tasks marked as &quot;Completed&quot; are automatically moved here out of the 4 active quadrants.
+            </p>
+
+            {completedEisenhowerTasks.length === 0 ? (
+              <p className="text-xs text-slate-400 italic text-center py-6">
+                No completed tasks yet. Mark tasks as Completed in Q1-Q4 above to move them here.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1">
+                {completedEisenhowerTasks.map((task) => (
+                  <div
+                    key={task.id}
+                    className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 shadow-xs space-y-2 opacity-95 hover:opacity-100 transition-all hover:border-emerald-400"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <h4
+                        onClick={() => setSelectedTask(task)}
+                        className="text-xs font-bold text-slate-700 dark:text-slate-300 line-through decoration-emerald-500 hover:text-emerald-600 cursor-pointer line-clamp-2"
+                      >
+                        {task.title}
+                      </h4>
+                      <select
+                        value={task.status}
+                        onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 cursor-pointer"
+                      >
+                        <option value="COMPLETED">Completed</option>
+                        <option value="PENDING">Re-open (Pending)</option>
+                        <option value="IN_PROGRESS">In Progress</option>
+                        <option value="IN_REVIEW">Review</option>
+                        <option value="CANCELLED">Cancelled</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        {task.assignedTo?.name || 'Unassigned'}
+                      </span>
+                      <div className="flex items-center gap-1 font-mono text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Done</span>
+                      </div>
+                      {task.timeSpentMinutes ? (
+                        <div className="flex items-center gap-1 font-mono text-indigo-500">
+                          <Timer className="w-3 h-3 text-indigo-500" />
+                          <span>{task.timeSpentMinutes}m</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         /* List View */
@@ -1447,6 +1765,21 @@ export default function TaskManagementClient({
                           <PriorityIcon className="w-2.5 h-2.5" />
                           {priorityInfo.label}
                         </span>
+
+                        {/* Eisenhower Matrix Tag Badge */}
+                        {(() => {
+                          const quad = getEisenhowerQuadrant(task.isUrgent, task.isImportant);
+                          const Icon = quad.icon;
+                          return (
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${quad.color.chipBg}`}
+                              title={`Eisenhower Classification: ${quad.fullTitle}`}
+                            >
+                              <Icon className="w-2.5 h-2.5" />
+                              <span>{quad.qNumber}: {quad.fullTitle}</span>
+                            </span>
+                          );
+                        })()}
 
                         {/* Self Task Badge */}
                         {task.isSelfTask && (
@@ -1740,35 +2073,14 @@ export default function TaskManagementClient({
                 </div>
 
                 {/* Eisenhower Matrix tags */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
-                      <Zap className="w-4 h-4 text-amber-500" />
-                      Priority Tags (Eisenhower Classification)
-                    </span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400">
-                      {selfIsImportant ? '⭐ High Business Impact' : 'Standard Focus'}
-                    </span>
-                  </div>
-
-                  <div className="pt-1">
-                    <label
-                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        selfIsImportant
-                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selfIsImportant}
-                        onChange={(e) => setSelfIsImportant(e.target.checked)}
-                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
-                      />
-                      <span>Mark as High Importance (Key Personal Milestone)</span>
-                    </label>
-                  </div>
-                </div>
+                <EisenhowerSelector
+                  isUrgent={selfIsUrgent}
+                  isImportant={selfIsImportant}
+                  onChange={(urgent, important) => {
+                    setSelfIsUrgent(urgent);
+                    setSelfIsImportant(important);
+                  }}
+                />
               </div>
 
               {/* Fixed Footer */}
@@ -1961,35 +2273,15 @@ export default function TaskManagementClient({
                 </div>
 
                 {/* Eisenhower Matrix tags */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
-                      <Zap className="w-4 h-4 text-amber-500" />
-                      Priority Tags (Eisenhower Classification)
-                    </span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400">
-                      {newIsImportant ? '⭐ High Business Impact' : 'Standard Focus'}
-                    </span>
-                  </div>
-
-                  <div className="pt-1">
-                    <label
-                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        newIsImportant
-                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={newIsImportant}
-                        onChange={(e) => setNewIsImportant(e.target.checked)}
-                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
-                      />
-                      <span>Mark as High Importance (Key Business Milestone)</span>
-                    </label>
-                  </div>
-                </div>
+                <EisenhowerSelector
+                  isUrgent={newIsUrgent}
+                  isImportant={newIsImportant}
+                  onChange={(urgent, important) => {
+                    setNewIsUrgent(urgent);
+                    setNewIsImportant(important);
+                  }}
+                  onPriorityChange={(p) => setNewPriority(p)}
+                />
               </div>
 
               {/* Fixed Footer */}
@@ -2038,6 +2330,19 @@ export default function TaskManagementClient({
                   >
                     {statusConfig[selectedTask.status]?.label}
                   </span>
+                  {/* Eisenhower Classification Badge */}
+                  {(() => {
+                    const quad = getEisenhowerQuadrant(selectedTask.isUrgent, selectedTask.isImportant);
+                    const Icon = quad.icon;
+                    return (
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${quad.color.chipBg}`}
+                      >
+                        <Icon className="w-2.5 h-2.5" />
+                        <span>{quad.qNumber}: {quad.fullTitle}</span>
+                      </span>
+                    );
+                  })()}
                 </div>
                 <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
                   {selectedTask.title}
@@ -2132,6 +2437,24 @@ export default function TaskManagementClient({
                   {selectedTask.createdBy?.name || 'Admin'}
                 </div>
                 <div className="text-[10px] text-slate-400">{selectedTask.createdBy?.role || ''}</div>
+              </div>
+
+              {/* Eisenhower Matrix Classification Banner */}
+              <div className="col-span-2 sm:col-span-5 p-2.5 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 font-semibold">
+                  <Zap className="w-4 h-4 text-amber-500" />
+                  <span>Eisenhower Time Management Matrix:</span>
+                </div>
+                {(() => {
+                  const quad = getEisenhowerQuadrant(selectedTask.isUrgent, selectedTask.isImportant);
+                  const Icon = quad.icon;
+                  return (
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border shadow-xs ${quad.color.chipBg}`}>
+                      <Icon className="w-3.5 h-3.5" />
+                      <span>{quad.qNumber}: {quad.fullTitle}</span>
+                    </span>
+                  );
+                })()}
               </div>
 
               {selectedTask.status === 'COMPLETED' && (
@@ -2690,35 +3013,15 @@ export default function TaskManagementClient({
                 </div>
 
                 {/* Eisenhower Matrix tags */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
-                      <Zap className="w-4 h-4 text-amber-500" />
-                      Priority Tags (Eisenhower Classification)
-                    </span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400">
-                      {editIsImportant ? '⭐ High Business Impact' : 'Standard Focus'}
-                    </span>
-                  </div>
-
-                  <div className="pt-1">
-                    <label
-                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                        editIsImportant
-                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/20'
-                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={editIsImportant}
-                        onChange={(e) => setEditIsImportant(e.target.checked)}
-                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
-                      />
-                      <span>Mark as High Importance (Key Business Milestone)</span>
-                    </label>
-                  </div>
-                </div>
+                <EisenhowerSelector
+                  isUrgent={editIsUrgent}
+                  isImportant={editIsImportant}
+                  onChange={(urgent, important) => {
+                    setEditIsUrgent(urgent);
+                    setEditIsImportant(important);
+                  }}
+                  onPriorityChange={(p) => setEditPriority(p)}
+                />
               </div>
 
               {/* Fixed Footer */}

@@ -40,14 +40,22 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
     redirect('/cases');
   }
 
-  const banks = await prisma.bankConfig.findMany({ orderBy: { bankName: 'asc' } });
-  const states = await prisma.stateConfig.findMany({
-    include: { cities: { orderBy: { name: 'asc' } } },
-    orderBy: { name: 'asc' },
-  });
-  const caseStatuses = await prisma.caseStatusMaster.findMany({
-    orderBy: { displayOrder: 'asc' },
-  });
+  const [banks, states, caseStatuses, creator] = await Promise.all([
+    prisma.bankConfig.findMany({ orderBy: { bankName: 'asc' } }),
+    prisma.stateConfig.findMany({
+      include: { cities: { orderBy: { name: 'asc' } } },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.caseStatusMaster.findMany({
+      orderBy: { displayOrder: 'asc' },
+    }),
+    caseData.createdById
+      ? prisma.user.findUnique({
+          where: { id: caseData.createdById },
+          select: { name: true, role: true },
+        })
+      : null,
+  ]);
 
   let parsedCoApplicants: any[] = [];
   try {
@@ -112,6 +120,9 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
     stage: caseData.stage || 1,
     status: caseData.status || '',
     assignedTeamName: caseData.assignedTeam?.name,
+    createdById: caseData.createdById || '',
+    createdByName: creator?.name || 'Staff',
+    createdByRole: creator?.role || '',
     createdAt: toIsoDateTimeStr(caseData.createdAt),
     updatedAt: toIsoDateTimeStr(caseData.updatedAt),
     incomeTypes: caseData.incomeTypes

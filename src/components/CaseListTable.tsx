@@ -66,6 +66,9 @@ export interface CaseItem {
   salesUserId?: string | null;
   operationUserId?: string | null;
   assignedTeamId?: string | null;
+  createdById?: string | null;
+  createdByName?: string | null;
+  createdByRole?: string | null;
   createdAt: string;
   updatedAt?: string;
   checklistCount: number;
@@ -543,6 +546,18 @@ export default function CaseListTable({
                               })}
                             </span>
                           </div>
+
+                          {/* Created By Staff & Role */}
+                          {c.createdByName && (
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[140px]" title={`Created by: ${c.createdByName} (${c.createdByRole || 'Staff'})`}>
+                              By: <strong className="text-slate-700 dark:text-slate-200">{c.createdByName}</strong>
+                              {c.createdByRole && (
+                                <span className="text-[9px] text-indigo-600 dark:text-indigo-400 font-semibold ml-0.5">
+                                  ({c.createdByRole.replace('_', ' ')})
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {/* Dynamic Age Badge */}
                           <div className="flex items-center">

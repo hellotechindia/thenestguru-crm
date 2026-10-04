@@ -88,6 +88,9 @@ interface CaseDetailProps {
     stage: number;
     status: string;
     assignedTeamName?: string;
+    createdById?: string;
+    createdByName?: string;
+    createdByRole?: string;
     createdAt?: string;
     updatedAt?: string;
     incomeTypes?: string[];
@@ -518,7 +521,7 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
 
             {/* Timeline & Case Age Info */}
             {caseData.createdAt && (
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
                 <span className="flex items-center gap-1 font-medium">
                   <Calendar className="w-3.5 h-3.5 text-sky-500" />
                   Intake Date: <strong className="text-slate-700 dark:text-slate-200 font-semibold">{new Date(caseData.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</strong>
@@ -534,9 +537,20 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                   );
                 })()}
                 {caseData.updatedAt && (
-                  <span className="flex items-center gap-1 text-[11px] text-slate-400 ml-2">
+                  <span className="flex items-center gap-1 text-[11px] text-slate-400">
                     <Clock className="w-3 h-3 text-slate-400" />
                     Last Updated: {new Date(caseData.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}, {new Date(caseData.updatedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+                {caseData.createdByName && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                    <User className="w-3 h-3 text-indigo-500" />
+                    Intake By: <strong className="text-slate-900 dark:text-white font-bold">{caseData.createdByName}</strong>
+                    {caseData.createdByRole && (
+                      <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-extrabold uppercase">
+                        ({caseData.createdByRole.replace('_', ' ')})
+                      </span>
+                    )}
                   </span>
                 )}
               </div>

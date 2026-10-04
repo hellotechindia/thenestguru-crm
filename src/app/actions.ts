@@ -5328,6 +5328,9 @@ export async function calculateAndCreateSalaryAction(data: {
   lwpDays: number;
   allowances: number;
   deductions: number;
+  incentiveEarned?: number;
+  linkedCaseId?: string | null;
+  linkedCaseName?: string | null;
   paymentStatus: string;
   remarks?: string;
 }) {
@@ -5342,45 +5345,34 @@ export async function calculateAndCreateSalaryAction(data: {
 
   const effectivePaidDays = Math.max(0, data.workingDays - (data.lwpDays || 0));
   const proratedBasic = Math.round((data.monthlySalary / data.workingDays) * effectivePaidDays);
+  const allowances = Number(data.allowances) || 0;
+  const deductions = Number(data.deductions) || 0;
+  const incentive = Number(data.incentiveEarned) || 0;
 
-  // Fetch automatic stage-linked incentives earned by this user in this month
-  const assignedCases = await prisma.case.findMany({
-    where: {
-      OR: [{ salesUserId: data.userId }, { operationUserId: data.userId }, { createdById: data.userId }],
-    },
-    select: { stage: true },
-  });
+  const netPayable = Math.max(0, proratedBasic + allowances + incentive - deductions);
 
-  // Sum up incentives based on workflow stages configured
-  const stages = await prisma.workflowStageMaster.findMany({
-    where: { isActive: true },
-  });
-
-  let autoIncentives = 0;
-  for (const c of assignedCases) {
-    const matchedStage = stages.find(s => s.stageNumber === c.stage);
-    if (matchedStage && matchedStage.incentiveAmount > 0) {
-      autoIncentives += matchedStage.incentiveAmount;
-    }
+  // Build notes including linked case if provided
+  let finalRemarks = data.remarks?.trim() || '';
+  if (data.linkedCaseName) {
+    const caseTag = `Linked Case: ${data.linkedCaseName}`;
+    finalRemarks = finalRemarks ? `${finalRemarks} | ${caseTag}` : caseTag;
   }
-
-  const netPayable = Math.max(0, proratedBasic + (data.allowances || 0) + autoIncentives - (data.deductions || 0));
 
   const record = await prisma.salaryRecord.create({
     data: {
       userId: data.userId,
       month: data.month,
       basicSalary: proratedBasic,
-      allowances: data.allowances || 0,
-      deductions: data.deductions || 0,
+      allowances,
+      deductions,
       workingDays: data.workingDays,
       paidDays: effectivePaidDays,
       lwpDays: data.lwpDays || 0,
-      incentiveEarned: autoIncentives,
+      incentiveEarned: incentive,
       netPayable,
       paymentStatus: data.paymentStatus || 'UNPAID',
       paidDate: data.paymentStatus === 'PAID' ? new Date() : null,
-      remarks: data.remarks?.trim() || (autoIncentives > 0 ? `Includes ₹${autoIncentives} stage-linked incentive` : null),
+      remarks: finalRemarks || null,
     },
   });
 

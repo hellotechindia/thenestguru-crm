@@ -385,10 +385,8 @@ export default function ChecklistTemplateEditor({
 }: ChecklistTemplateEditorProps) {
   const router = useRouter();
 
-  // Category creation (multi-select for Product and Profile, default unselected)
+  // Category creation (universal for all products and profiles by default)
   const [newCatName, setNewCatName] = useState('');
-  const [newCatProducts, setNewCatProducts] = useState<string[]>([]);
-  const [newCatCustomerTypes, setNewCatCustomerTypes] = useState<string[]>([]);
 
   // Category editing modal
   const [editingCategory, setEditingCategory] = useState<{
@@ -433,34 +431,20 @@ export default function ChecklistTemplateEditor({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // 1. Create Category (Batch across selected Products and Profiles)
+  // 1. Create Category (Universal by default for all products & customer profiles)
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName.trim()) {
       setErrorMsg('Category Name is required.');
       return;
     }
-    if (newCatProducts.length === 0) {
-      setErrorMsg('Please select at least one Product (or click "Select All").');
-      return;
-    }
-    if (newCatCustomerTypes.length === 0) {
-      setErrorMsg('Please select at least one Profile (or click "Select All").');
-      return;
-    }
 
     setLoading(true);
     setErrorMsg('');
-    const res = await createTemplateCategoriesBatchAction({
-      name: newCatName,
-      products: newCatProducts,
-      customerTypes: newCatCustomerTypes,
-    });
+    const res = await createTemplateCategoryAction(newCatName.trim(), 'ALL', 'ALL');
     setLoading(false);
     if (res.success) {
       setNewCatName('');
-      setNewCatProducts([]);
-      setNewCatCustomerTypes([]);
       router.refresh();
     } else {
       setErrorMsg(res.error || 'Failed to create category');
@@ -623,103 +607,18 @@ export default function ChecklistTemplateEditor({
                   onChange={(e) => setNewCatName(e.target.value)}
                   className="w-full glass-input px-3 py-2 rounded-xl text-xs"
                 />
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <MultiSelectDropdown
-                    label="Product"
-                    icon={Package}
-                    options={products.map((p) => ({ label: p.name, value: p.name }))}
-                    selected={newCatProducts}
-                    onChange={setNewCatProducts}
-                    color="sky"
-                    mode="explicit"
-                    placeholder="Select Products..."
-                    headerRight={
-                      <div className="flex items-center gap-1.5 text-[10px] shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setNewCatProducts(products.map((p) => p.name))}
-                          className="text-sky-600 hover:text-sky-700 dark:text-sky-400 font-semibold hover:underline"
-                        >
-                          Select All
-                        </button>
-                        <span className="text-slate-300 dark:text-slate-700">•</span>
-                        <button
-                          type="button"
-                          onClick={() => setNewCatProducts([])}
-                          className="text-slate-500 hover:text-slate-700 dark:text-slate-400 font-semibold hover:underline"
-                        >
-                          Deselect All
-                        </button>
-                        <span className="text-slate-300 dark:text-slate-700">•</span>
-                        <Link
-                          href="/admin/products"
-                          className="text-sky-600 hover:text-sky-500 font-semibold"
-                          title="Manage Loan Products"
-                        >
-                          + Manage
-                        </Link>
-                      </div>
-                    }
-                  />
-                </div>
-
-                <div>
-                  <MultiSelectDropdown
-                    label="Profile"
-                    icon={Briefcase}
-                    options={profiles.map((p) => ({ label: p.name, value: p.name }))}
-                    selected={newCatCustomerTypes}
-                    onChange={setNewCatCustomerTypes}
-                    color="purple"
-                    mode="explicit"
-                    placeholder="Select Profiles..."
-                    headerRight={
-                      <div className="flex items-center gap-1.5 text-[10px] shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setNewCatCustomerTypes(profiles.map((p) => p.name))}
-                          className="text-purple-600 hover:text-purple-700 dark:text-purple-400 font-semibold hover:underline"
-                        >
-                          Select All
-                        </button>
-                        <span className="text-slate-300 dark:text-slate-700">•</span>
-                        <button
-                          type="button"
-                          onClick={() => setNewCatCustomerTypes([])}
-                          className="text-slate-500 hover:text-slate-700 dark:text-slate-400 font-semibold hover:underline"
-                        >
-                          Deselect All
-                        </button>
-                        <span className="text-slate-300 dark:text-slate-700">•</span>
-                        <Link
-                          href="/admin/profiles"
-                          className="text-purple-600 hover:text-purple-500 font-semibold"
-                          title="Manage Customer Profiles"
-                        >
-                          + Manage
-                        </Link>
-                      </div>
-                    }
-                  />
-                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  By default, this category applies to all loan products &amp; customer profiles.
+                </p>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 py-2.5 px-4 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                className="w-full mt-2 py-2.5 px-4 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                {loading
-                  ? 'Adding Categories...'
-                  : newCatProducts.length > 0 && newCatCustomerTypes.length > 0
-                  ? `+ Add Category (${newCatProducts.length * newCatCustomerTypes.length} combination${
-                      newCatProducts.length * newCatCustomerTypes.length > 1 ? 's' : ''
-                    })`
-                  : '+ Add Category'}
+                {loading ? 'Adding Category...' : '+ Add Category'}
               </button>
             </form>
           </div>
@@ -744,7 +643,7 @@ export default function ChecklistTemplateEditor({
                 >
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name} ({c.product} - {c.customerType})
+                      {c.name} {c.product === 'ALL' && c.customerType === 'ALL' ? '(Universal / All Cases)' : `(${c.product} - ${c.customerType})`}
                     </option>
                   ))}
                 </select>
@@ -1013,10 +912,16 @@ export default function ChecklistTemplateEditor({
                       {cat.name}
                     </h3>
                   </div>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                    Product: <strong className="text-sky-600 dark:text-sky-400">{cat.product}</strong> • Profile:{' '}
-                    <strong className="text-purple-600 dark:text-purple-400">{cat.customerType}</strong>
-                  </span>
+                  {cat.product === 'ALL' && cat.customerType === 'ALL' ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 text-[10px] font-semibold">
+                      Universal (Applies to all loan cases)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                      Product: <strong className="text-sky-600 dark:text-sky-400">{cat.product}</strong> • Profile:{' '}
+                      <strong className="text-purple-600 dark:text-purple-400">{cat.customerType}</strong>
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -1229,62 +1134,8 @@ export default function ChecklistTemplateEditor({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Product
-                  </label>
-                  {products.length > 0 ? (
-                    <select
-                      value={editingCategory.product}
-                      onChange={(e) => setEditingCategory({ ...editingCategory, product: e.target.value })}
-                      className="w-full glass-input px-2 py-2 rounded-xl text-xs font-semibold text-sky-600 dark:text-sky-400 bg-white dark:bg-slate-900"
-                    >
-                      {products.map((p) => (
-                        <option key={p.id} value={p.name}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={editingCategory.product}
-                      onChange={(e) => setEditingCategory({ ...editingCategory, product: e.target.value })}
-                      className="w-full glass-input px-2.5 py-2 rounded-xl text-xs font-semibold text-sky-600 dark:text-sky-400"
-                    />
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Profile
-                  </label>
-                  {profiles.length > 0 ? (
-                    <select
-                      value={editingCategory.customerType}
-                      onChange={(e) =>
-                        setEditingCategory({ ...editingCategory, customerType: e.target.value })
-                      }
-                      className="w-full glass-input px-2 py-2 rounded-xl text-xs font-semibold text-indigo-600 dark:text-indigo-400 bg-white dark:bg-slate-900"
-                    >
-                      {profiles.map((p) => (
-                        <option key={p.id} value={p.name}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={editingCategory.customerType}
-                      onChange={(e) =>
-                        setEditingCategory({ ...editingCategory, customerType: e.target.value })
-                      }
-                      className="w-full glass-input px-2.5 py-2 rounded-xl text-xs font-semibold text-indigo-600 dark:text-indigo-400"
-                    />
-                  )}
-                </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400">
+                Categories are universal and apply across all loan products and borrower profiles automatically.
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2">
@@ -1338,7 +1189,7 @@ export default function ChecklistTemplateEditor({
                 >
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name} ({c.product} - {c.customerType})
+                      {c.name} {c.product === 'ALL' && c.customerType === 'ALL' ? '(Universal / All Cases)' : `(${c.product} - ${c.customerType})`}
                     </option>
                   ))}
                 </select>

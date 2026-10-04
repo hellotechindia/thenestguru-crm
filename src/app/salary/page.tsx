@@ -53,10 +53,15 @@ export default async function SalaryRegisterPage() {
     crmLogoUrl: crmSetting?.crmLogoUrl || 'https://thenestguru.com/thenestgurulogo.png',
   };
 
+  let activeCases: any[] = [];
+
   if (isSuperAdmin) {
-    [users, salaryRecords] = await Promise.all([
+    [users, salaryRecords, activeCases] = await Promise.all([
       prisma.user.findMany({
-        where: { role: { not: 'SUPER_ADMIN' } },
+        where: {
+          role: { notIn: ['SUPER_ADMIN', 'CHANNEL'] },
+          parentChannelId: null,
+        },
         select: userSelect,
         orderBy: { name: 'asc' },
       }),
@@ -65,6 +70,19 @@ export default async function SalaryRegisterPage() {
           user: { select: userSelect },
         },
         orderBy: { createdAt: 'desc' },
+      }),
+      prisma.case.findMany({
+        select: {
+          id: true,
+          clientName: true,
+          product: true,
+          stage: true,
+          salesUserId: true,
+          operationUserId: true,
+          createdById: true,
+        },
+        orderBy: { clientName: 'asc' },
+        take: 100,
       }),
     ]);
   } else {
@@ -99,6 +117,7 @@ export default async function SalaryRegisterPage() {
         staffUsers={users}
         initialRecords={salaryRecords}
         crmBranding={branding}
+        activeCases={activeCases}
       />
     </div>
   );

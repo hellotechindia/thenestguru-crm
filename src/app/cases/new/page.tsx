@@ -70,6 +70,10 @@ export default async function NewCasePage() {
         propertyScopes={propertyScopesRes}
         targetCategories={targetCategoriesRes}
         isSuperAdmin={isSuperAdmin}
+        currentUser={{
+          name: session.user.name || 'Staff User',
+          role: (session.user as any)?.role || 'TEAM_MEMBER',
+        }}
       />
     </div>
   );

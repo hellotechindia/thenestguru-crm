@@ -42,7 +42,12 @@ export default async function AdminUsersPage() {
         </p>
       </div>
 
-      <UserManagementClient users={users} teams={teams} currentUserId={currentUserId} />
+      <UserManagementClient
+        users={users}
+        teams={teams}
+        currentUserId={currentUserId}
+        currentUserRole={(session.user as any)?.role || 'SUPER_ADMIN'}
+      />
     </div>
   );
 }

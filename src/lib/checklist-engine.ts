@@ -43,10 +43,14 @@ export async function generateChecklistForCase(
     }
   }
 
-  // Fetch categories matching product or customerType or generic
+  // Fetch categories matching product or customerType or generic/universal (ALL)
   let categories = await prisma.checklistCategory.findMany({
     where: {
       OR: [
+        { product: 'ALL' },
+        { product: 'All Products' },
+        { customerType: 'ALL' },
+        { customerType: 'All Profiles' },
         { product, customerType },
         { product },
         { customerType },

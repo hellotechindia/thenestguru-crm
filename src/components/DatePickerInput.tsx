@@ -71,7 +71,7 @@ export default function DatePickerInput({
   disabled = false,
   required = false,
   minYear = 1940,
-  maxYear = 2035,
+  maxYear = 2050,
   minDate,
   maxDate,
   id,
@@ -306,7 +306,7 @@ export default function DatePickerInput({
 
       {/* Calendar Popover */}
       {isOpen && !disabled && (
-        <div className="absolute left-0 top-full mt-1.5 z-50 w-72 p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute left-0 top-full mt-1.5 z-[100] w-72 p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
           {/* Header Controls: Month & Year dropdowns + Previous/Next */}
           <div className="flex items-center justify-between gap-1 pb-2.5 border-b border-slate-100 dark:border-slate-800">
             <button

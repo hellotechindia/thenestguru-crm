@@ -113,6 +113,13 @@ interface Props {
   isSuperAdmin: boolean;
   isTeamLeader?: boolean;
   builders?: BuilderItem[];
+  channelPartners?: Array<{
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    address?: string | null;
+  }>;
 }
 
 export function formatIndianCurrency(amount: number | null | undefined): string {
@@ -203,6 +210,17 @@ export function getFollowUpTimerInfo(visit: VisitItem): {
   };
 }
 
+interface VisitObjective {
+  id: string;
+  name: string;
+}
+
+const DEFAULT_OBJECTIVES: VisitObjective[] = [
+  { id: 'PROPERTY_VERIFICATION', name: 'Property Verification' },
+  { id: 'CLIENT_MEETING', name: 'Client Meeting' },
+  { id: 'DOCUMENT_COLLECTION', name: 'Document Collection' },
+];
+
 export default function VisitTrackerClient({
   initialVisits = [],
   staffUsers,
@@ -211,10 +229,65 @@ export default function VisitTrackerClient({
   isSuperAdmin,
   isTeamLeader = false,
   builders = [],
+  channelPartners = [],
 }: Props) {
   const router = useRouter();
   const [visits, setVisits] = useState<VisitItem[]>(initialVisits);
   const [buildersList, setBuildersList] = useState<BuilderItem[]>(builders);
+
+  // Dynamic Visit Objectives State
+  const [objectives, setObjectives] = useState<VisitObjective[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('nestguru_visit_objectives');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch {}
+      }
+    }
+    return DEFAULT_OBJECTIVES;
+  });
+  const [isObjectiveModalOpen, setIsObjectiveModalOpen] = useState(false);
+  const [newObjectiveName, setNewObjectiveName] = useState('');
+  const [editingObjective, setEditingObjective] = useState<VisitObjective | null>(null);
+
+  const handleAddObjective = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newObjectiveName.trim()) return;
+    const id = newObjectiveName.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    const updated = [...objectives, { id, name: newObjectiveName.trim() }];
+    setObjectives(updated);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nestguru_visit_objectives', JSON.stringify(updated));
+    }
+    setNewObjectiveName('');
+  };
+
+  const handleUpdateObjective = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingObjective || !editingObjective.name.trim()) return;
+    const updated = objectives.map((o) =>
+      o.id === editingObjective.id ? { ...o, name: editingObjective.name.trim() } : o
+    );
+    setObjectives(updated);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nestguru_visit_objectives', JSON.stringify(updated));
+    }
+    setEditingObjective(null);
+  };
+
+  const handleDeleteObjective = (id: string) => {
+    if (objectives.length <= 1) {
+      alert('At least one visit objective is required.');
+      return;
+    }
+    const updated = objectives.filter((o) => o.id !== id);
+    setObjectives(updated);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nestguru_visit_objectives', JSON.stringify(updated));
+    }
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [leadTypeFilter, setLeadTypeFilter] = useState('ALL');
@@ -252,7 +325,7 @@ export default function VisitTrackerClient({
 
   // Schedule Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalTab, setModalTab] = useState<'CORE' | 'BUILDER' | 'PERSON' | 'CP' | 'STRATEGY'>('CORE');
+  const [modalTab, setModalTab] = useState<'CORE' | 'BUILDER' | 'PERSON' | 'STRATEGY'>('CORE');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -293,7 +366,7 @@ export default function VisitTrackerClient({
 
   // Edit Modal State
   const [editingVisit, setEditingVisit] = useState<VisitItem | null>(null);
-  const [editModalTab, setEditModalTab] = useState<'CORE' | 'BUILDER' | 'PERSON' | 'CP' | 'STRATEGY'>('CORE');
+  const [editModalTab, setEditModalTab] = useState<'CORE' | 'BUILDER' | 'PERSON' | 'STRATEGY'>('CORE');
   const [editForm, setEditForm] = useState({
     id: '',
     caseId: '',
@@ -1459,6 +1532,27 @@ export default function VisitTrackerClient({
                             </div>
                           )}
 
+                          {/* Source Indicator */}
+                          <div className="pt-0.5">
+                            {v.builderName ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                Source: 🏢 Builder ({v.builderName})
+                              </span>
+                            ) : v.cpName ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                                Source: 🤝 CP ({v.cpName})
+                              </span>
+                            ) : v.case ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                                Source: 📁 Case ({v.case.clientName})
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                                Source: Direct Client
+                              </span>
+                            )}
+                          </div>
+
                           {/* Price Range */}
                           {(v.priceRange || v.projectPrice) && (
                             <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 font-mono font-bold text-[10px] border border-emerald-200 dark:border-emerald-800">
@@ -1953,16 +2047,29 @@ export default function VisitTrackerClient({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
           <div className="w-full max-w-2xl p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400">
-                  <Building className="w-5 h-5" />
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400">
+                  <MapPin className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    {viewSpecsVisit.clientName} - Full Visit & Project Specs
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                      {viewSpecsVisit.clientName}
+                    </h3>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide border ${
+                        viewSpecsVisit.status === 'COMPLETED'
+                          ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                          : viewSpecsVisit.status === 'CANCELLED'
+                          ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                          : 'bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30'
+                      }`}
+                    >
+                      {viewSpecsVisit.status}
+                    </span>
+                  </div>
                   <p className="text-xs text-slate-500">
-                    {viewSpecsVisit.projectName || 'Standalone Property Visit'} • {viewSpecsVisit.projectType || 'Residential'}
+                    Visit Record #{viewSpecsVisit.id.slice(-8).toUpperCase()} • Objective: <strong className="text-slate-700 dark:text-slate-300">{viewSpecsVisit.visitType}</strong>
                   </p>
                 </div>
               </div>
@@ -1975,15 +2082,72 @@ export default function VisitTrackerClient({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              {/* Card 1: Project & Builder Specs */}
+              {/* Card 1: Core Visit & Client Details (Step 1 Info) */}
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
                 <div className="font-bold text-indigo-600 dark:text-indigo-400 uppercase text-[10px] tracking-wider flex items-center gap-1.5">
-                  <Building className="w-3.5 h-3.5" /> Builder & Project Specifications
+                  <Calendar className="w-3.5 h-3.5" /> 1. Core Visit & Client Information
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2.5">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">Builder Name</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{viewSpecsVisit.builderName || '--'}</span>
+                    <span className="text-[10px] text-slate-400 block">Client Name</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{viewSpecsVisit.clientName}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Client Contact</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
+                      {viewSpecsVisit.clientPhone || '--'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Visit Date & Time</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {new Date(viewSpecsVisit.visitDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} at {viewSpecsVisit.visitTime || '11:00 AM'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Assigned Executive</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {viewSpecsVisit.staff?.name || 'Staff'} {viewSpecsVisit.staff?.role ? `(${viewSpecsVisit.staff.role})` : ''}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Visit Objective</span>
+                    <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                      {viewSpecsVisit.visitType}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Linked Loan Case</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {viewSpecsVisit.case ? `${viewSpecsVisit.case.clientName} (${viewSpecsVisit.case.product})` : 'Standalone / Direct'}
+                    </span>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-[10px] text-slate-400 block">Property Address / Visit Location</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300">
+                    {viewSpecsVisit.propertyAddress || '--'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 2: Builder / CP & Project Specifications (Step 2 Info) */}
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                <div className="font-bold text-sky-600 dark:text-sky-400 uppercase text-[10px] tracking-wider flex items-center gap-1.5">
+                  <Building className="w-3.5 h-3.5" /> 2. Builder / CP & Project Specifications
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Builder Name / CP</span>
+                    <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
+                      {viewSpecsVisit.builderName ? (
+                        <>🏢 {viewSpecsVisit.builderName}</>
+                      ) : viewSpecsVisit.cpName ? (
+                        <>🤝 {viewSpecsVisit.cpName} (CP)</>
+                      ) : (
+                        '--'
+                      )}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 block">Project Name</span>
@@ -1991,7 +2155,7 @@ export default function VisitTrackerClient({
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 block">Project Type</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{viewSpecsVisit.projectType || '--'}</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{viewSpecsVisit.projectType || 'Residential'}</span>
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 block">Launch Date</span>
@@ -2007,7 +2171,9 @@ export default function VisitTrackerClient({
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 block">Price Range</span>
-                    <span className="font-semibold text-emerald-600 font-mono">{viewSpecsVisit.priceRange || (viewSpecsVisit.projectPrice ? formatIndianCurrency(viewSpecsVisit.projectPrice) : '--')}</span>
+                    <span className="font-semibold text-emerald-600 font-mono">
+                      {viewSpecsVisit.priceRange || (viewSpecsVisit.projectPrice ? formatIndianCurrency(viewSpecsVisit.projectPrice) : '--')}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 block">Units (Total / Sold)</span>
@@ -2015,68 +2181,66 @@ export default function VisitTrackerClient({
                   </div>
                 </div>
                 {viewSpecsVisit.paymentPlan && (
-                  <div className="pt-1 border-t border-slate-200 dark:border-slate-700">
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
                     <span className="text-[10px] text-slate-400 block">Payment Plan</span>
                     <span className="font-semibold text-slate-800 dark:text-slate-200">{viewSpecsVisit.paymentPlan}</span>
                   </div>
                 )}
               </div>
 
-              {/* Card 2: Concerned Authority Details */}
+              {/* Card 3: Concerned Authority / Office Details (Step 3 Info) */}
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
-                <div className="font-bold text-sky-600 dark:text-sky-400 uppercase text-[10px] tracking-wider flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5" /> Concerned Authority & Office
+                <div className="font-bold text-teal-600 dark:text-teal-400 uppercase text-[10px] tracking-wider flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5" /> 3. Concerned Person & Office Details
                 </div>
                 <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">Concerned Person Name</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                        {viewSpecsVisit.concernedPersonName || (viewSpecsVisit.cpName ? viewSpecsVisit.cpName : '--')}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">Designation</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                        {viewSpecsVisit.concernedPersonDesignation || (viewSpecsVisit.cpName ? 'Channel Partner' : '--')}
+                      </span>
+                    </div>
+                  </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 block">Concerned Person</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">
-                      {viewSpecsVisit.concernedPersonName || '--'}
-                      {viewSpecsVisit.concernedPersonDesignation && ` (${viewSpecsVisit.concernedPersonDesignation})`}
+                    <span className="text-[10px] text-slate-400 block">Contact Details (Mobile / Email)</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">
+                      {viewSpecsVisit.concernedPersonContact || viewSpecsVisit.cpContact || '--'}
                     </span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 block">Contact Details</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{viewSpecsVisit.concernedPersonContact || '--'}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">Office Address</span>
-                    <span className="font-medium text-slate-700 dark:text-slate-300">{viewSpecsVisit.officeAddress || '--'}</span>
+                    <span className="text-[10px] text-slate-400 block">Office / Business Address</span>
+                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                      {viewSpecsVisit.officeAddress || viewSpecsVisit.cpAddress || '--'}
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* Card 3: CP Details */}
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
-                <div className="font-bold text-teal-600 dark:text-teal-400 uppercase text-[10px] tracking-wider flex items-center gap-1.5">
-                  <UserCheck className="w-3.5 h-3.5" /> Channel Partner (CP) Details
-                </div>
-                <div className="space-y-2">
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">CP Name</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{viewSpecsVisit.cpName || '--'}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">CP Contact</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{viewSpecsVisit.cpContact || '--'}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">CP Address</span>
-                    <span className="font-medium text-slate-700 dark:text-slate-300">{viewSpecsVisit.cpAddress || '--'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Card 4: Follow-up & Strategy */}
+              {/* Card 4: Strategy & Follow-up (Step 4 Info) */}
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
                 <div className="font-bold text-amber-600 dark:text-amber-400 uppercase text-[10px] tracking-wider flex items-center gap-1.5">
-                  <Timer className="w-3.5 h-3.5" /> Visit Strategy & Timeline
+                  <Timer className="w-3.5 h-3.5" /> 4. Strategy, Timeline & Next Follow-Up
                 </div>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <span className="text-[10px] text-slate-400 block">Lead Type</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{viewSpecsVisit.leadType || 'Warm'}</span>
+                      <span className="text-[10px] text-slate-400 block">Lead Classification</span>
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        viewSpecsVisit.leadType === 'Hot'
+                          ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400'
+                          : viewSpecsVisit.leadType === 'Cold'
+                          ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                          : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400'
+                      }`}>
+                        {viewSpecsVisit.leadType || 'Warm'}
+                      </span>
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-400 block">Frequency of Visit</span>
@@ -2105,14 +2269,14 @@ export default function VisitTrackerClient({
                   setViewSpecsVisit(null);
                   handleOpenEdit(target);
                 }}
-                className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1"
+                className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-sm cursor-pointer"
               >
-                <Edit3 className="w-3.5 h-3.5" /> Edit Specifications
+                <Edit3 className="w-3.5 h-3.5" /> Edit Visit Details
               </button>
               <button
                 type="button"
                 onClick={() => setViewSpecsVisit(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
               >
                 Close
               </button>
@@ -2175,17 +2339,6 @@ export default function VisitTrackerClient({
               </button>
               <button
                 type="button"
-                onClick={() => setModalTab('CP')}
-                className={`px-3 py-1.5 rounded-lg font-bold transition whitespace-nowrap ${
-                  modalTab === 'CP'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                }`}
-              >
-                4. Channel Partner (CP)
-              </button>
-              <button
-                type="button"
                 onClick={() => setModalTab('STRATEGY')}
                 className={`px-3 py-1.5 rounded-lg font-bold transition whitespace-nowrap ${
                   modalTab === 'STRATEGY'
@@ -2193,7 +2346,7 @@ export default function VisitTrackerClient({
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
-                5. Strategy & Next FU
+                4. Strategy & Next FU
               </button>
             </div>
 
@@ -2265,8 +2418,8 @@ export default function VisitTrackerClient({
                         value={form.visitDate}
                         onChange={(val) => setForm({ ...form, visitDate: val })}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                        minYear={2020}
-                        maxYear={2030}
+                        minYear={1990}
+                        maxYear={2050}
                       />
                     </div>
 
@@ -2303,17 +2456,29 @@ export default function VisitTrackerClient({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                        Visit Objective / Type
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          Visit Objective / Type
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setIsObjectiveModalOpen(true)}
+                          className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          + Manage Objectives
+                        </button>
+                      </div>
                       <select
                         value={form.visitType}
                         onChange={(e) => setForm({ ...form, visitType: e.target.value })}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                        className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
                       >
-                        <option value="PROPERTY_VERIFICATION">Property Verification</option>
-                        <option value="CLIENT_MEETING">Client Meeting</option>
-                        <option value="DOCUMENT_COLLECTION">Document Collection</option>
+                        {objectives.map((obj) => (
+                          <option key={obj.id} value={obj.id}>
+                            {obj.name}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -2344,7 +2509,7 @@ export default function VisitTrackerClient({
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                          Builder Name (Directory) *
+                          Builder Name / CP *
                         </label>
                         {canManageBuilders && (
                           <button
@@ -2358,17 +2523,58 @@ export default function VisitTrackerClient({
                         )}
                       </div>
                       <select
-                        value={form.builderName}
-                        onChange={(e) => handleSelectBuilder(e.target.value, false)}
+                        value={form.builderName ? `BUILDER:${form.builderName}` : (form.cpName ? `CP:${form.cpName}` : '')}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) {
+                            setForm({ ...form, builderName: '', cpName: '', cpContact: '', cpAddress: '' });
+                          } else if (val.startsWith('BUILDER:')) {
+                            const bName = val.replace('BUILDER:', '');
+                            handleSelectBuilder(bName, false);
+                            setForm((prev) => ({ ...prev, cpName: '', cpContact: '', cpAddress: '' }));
+                          } else if (val.startsWith('CP:')) {
+                            const cpVal = val.replace('CP:', '');
+                            const cp = channelPartners.find((c) => (c.name || c.id) === cpVal || c.id === cpVal || c.name === cpVal);
+                            setForm((prev) => ({
+                              ...prev,
+                              builderName: '',
+                              cpName: cp?.name || cpVal,
+                              cpContact: cp?.phone || '',
+                              cpAddress: cp?.address || '',
+                              concernedPersonName: prev.concernedPersonName || cp?.name || '',
+                              concernedPersonContact: prev.concernedPersonContact || cp?.phone || '',
+                              officeAddress: prev.officeAddress || cp?.address || '',
+                            }));
+                          }
+                        }}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
                       >
-                        <option value="">-- Select Builder from Database --</option>
-                        {buildersList.map((b) => (
-                          <option key={b.id} value={b.name}>
-                            {b.name} {b.reraNumber ? `(RERA: ${b.reraNumber})` : ''}
-                          </option>
-                        ))}
+                        <option value="">-- Select Builder or Channel Partner --</option>
+                        <optgroup label="🏢 Builders">
+                          {buildersList.map((b) => (
+                            <option key={b.id} value={`BUILDER:${b.name}`}>
+                              🏢 {b.name} {b.reraNumber ? `(RERA: ${b.reraNumber})` : ''}
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="🤝 Channel Partners (CP)">
+                          {channelPartners.map((cp) => (
+                            <option key={cp.id} value={`CP:${cp.name || cp.id}`}>
+                              🤝 {cp.name || 'Unnamed CP'} {cp.phone ? `(${cp.phone})` : ''}
+                            </option>
+                          ))}
+                        </optgroup>
                       </select>
+                      {form.builderName && (
+                        <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-sky-600 dark:text-sky-400">
+                          <span>🏢 Selected Builder: <strong>{form.builderName}</strong></span>
+                        </div>
+                      )}
+                      {form.cpName && (
+                        <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-teal-600 dark:text-teal-400">
+                          <span>🤝 Selected Channel Partner: <strong>{form.cpName}</strong></span>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -2562,57 +2768,7 @@ export default function VisitTrackerClient({
                 </div>
               )}
 
-              {/* TAB 4: CHANNEL PARTNER (CP) */}
-              {modalTab === 'CP' && (
-                <div className="space-y-3 animate-in fade-in">
-                  <div className="p-3 bg-teal-50/50 dark:bg-teal-950/30 rounded-xl text-xs text-teal-700 dark:text-teal-300">
-                    <strong>Channel Partner (CP) Details:</strong> Name, phone, email, and office address of referring partner.
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                        CP Name
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Realty Apex Associates"
-                        value={form.cpName}
-                        onChange={(e) => setForm({ ...form, cpName: e.target.value })}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                        CP Contact Details (Mobile / Email)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 9988776655 / info@realtyapex.in"
-                        value={form.cpContact}
-                        onChange={(e) => setForm({ ...form, cpContact: e.target.value })}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      CP Address
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder="e.g. Office 104, Commercial Hub, Sector 18, Noida"
-                      value={form.cpAddress}
-                      onChange={(e) => setForm({ ...form, cpAddress: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 5: STRATEGY & NEXT FU */}
+              {/* TAB 4: STRATEGY & NEXT FU */}
               {modalTab === 'STRATEGY' && (
                 <div className="space-y-3 animate-in fade-in">
                   <div className="p-3 bg-amber-50/50 dark:bg-amber-950/30 rounded-xl text-xs text-amber-700 dark:text-amber-300">
@@ -2656,8 +2812,8 @@ export default function VisitTrackerClient({
                         value={form.nextFollowUpDate}
                         onChange={(val) => setForm({ ...form, nextFollowUpDate: val })}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                        minYear={2024}
-                        maxYear={2030}
+                        minYear={1990}
+                        maxYear={2050}
                       />
                     </div>
                   </div>
@@ -2684,8 +2840,7 @@ export default function VisitTrackerClient({
                     <button
                       type="button"
                       onClick={() => {
-                        if (modalTab === 'STRATEGY') setModalTab('CP');
-                        else if (modalTab === 'CP') setModalTab('PERSON');
+                        if (modalTab === 'STRATEGY') setModalTab('PERSON');
                         else if (modalTab === 'PERSON') setModalTab('BUILDER');
                         else if (modalTab === 'BUILDER') setModalTab('CORE');
                       }}
@@ -2700,8 +2855,7 @@ export default function VisitTrackerClient({
                       onClick={() => {
                         if (modalTab === 'CORE') setModalTab('BUILDER');
                         else if (modalTab === 'BUILDER') setModalTab('PERSON');
-                        else if (modalTab === 'PERSON') setModalTab('CP');
-                        else if (modalTab === 'CP') setModalTab('STRATEGY');
+                        else if (modalTab === 'PERSON') setModalTab('STRATEGY');
                       }}
                       className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200"
                     >
@@ -2786,17 +2940,6 @@ export default function VisitTrackerClient({
               </button>
               <button
                 type="button"
-                onClick={() => setEditModalTab('CP')}
-                className={`px-3 py-1.5 rounded-lg font-bold transition whitespace-nowrap ${
-                  editModalTab === 'CP'
-                    ? 'bg-sky-600 text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                }`}
-              >
-                4. Channel Partner (CP)
-              </button>
-              <button
-                type="button"
                 onClick={() => setEditModalTab('STRATEGY')}
                 className={`px-3 py-1.5 rounded-lg font-bold transition whitespace-nowrap ${
                   editModalTab === 'STRATEGY'
@@ -2804,7 +2947,7 @@ export default function VisitTrackerClient({
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
-                5. Strategy & Next FU
+                4. Strategy & Next FU
               </button>
             </div>
 
@@ -2876,8 +3019,8 @@ export default function VisitTrackerClient({
                         value={editForm.visitDate}
                         onChange={(val) => setEditForm({ ...editForm, visitDate: val })}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                        minYear={2020}
-                        maxYear={2030}
+                        minYear={1990}
+                        maxYear={2050}
                       />
                     </div>
 
@@ -2929,17 +3072,29 @@ export default function VisitTrackerClient({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                        Visit Objective / Type
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          Visit Objective / Type
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setIsObjectiveModalOpen(true)}
+                          className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          + Manage
+                        </button>
+                      </div>
                       <select
                         value={editForm.visitType}
                         onChange={(e) => setEditForm({ ...editForm, visitType: e.target.value })}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900"
+                        className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
                       >
-                        <option value="PROPERTY_VERIFICATION">Property Verification</option>
-                        <option value="CLIENT_MEETING">Client Meeting</option>
-                        <option value="DOCUMENT_COLLECTION">Document Collection</option>
+                        {objectives.map((obj) => (
+                          <option key={obj.id} value={obj.id}>
+                            {obj.name}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -2966,7 +3121,7 @@ export default function VisitTrackerClient({
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                          Builder Name (Directory)
+                          Builder Name / CP
                         </label>
                         {canManageBuilders && (
                           <button
@@ -2980,17 +3135,60 @@ export default function VisitTrackerClient({
                         )}
                       </div>
                       <select
-                        value={editForm.builderName}
-                        onChange={(e) => handleSelectBuilder(e.target.value, true)}
+                        value={editForm.builderName ? `BUILDER:${editForm.builderName}` : editForm.cpName ? `CP:${editForm.cpName}` : ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) {
+                            setEditForm({ ...editForm, builderName: '', cpName: '', cpContact: '', cpAddress: '' });
+                            return;
+                          }
+                          if (val.startsWith('BUILDER:')) {
+                            const bName = val.replace('BUILDER:', '');
+                            handleSelectBuilder(bName, true);
+                            setEditForm((prev) => ({ ...prev, cpName: '', cpContact: '', cpAddress: '' }));
+                          } else if (val.startsWith('CP:')) {
+                            const cpVal = val.replace('CP:', '');
+                            const cp = channelPartners.find((c) => (c.name || c.id) === cpVal || c.id === cpVal || c.name === cpVal);
+                            setEditForm((prev) => ({
+                              ...prev,
+                              builderName: '',
+                              cpName: cp?.name || cpVal,
+                              cpContact: cp?.phone || '',
+                              cpAddress: cp?.address || '',
+                              concernedPersonName: prev.concernedPersonName || cp?.name || '',
+                              concernedPersonContact: prev.concernedPersonContact || cp?.phone || '',
+                              officeAddress: prev.officeAddress || cp?.address || '',
+                            }));
+                          }
+                        }}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
                       >
-                        <option value="">-- Select Builder from Database --</option>
-                        {buildersList.map((b) => (
-                          <option key={b.id} value={b.name}>
-                            {b.name} {b.reraNumber ? `(RERA: ${b.reraNumber})` : ''}
-                          </option>
-                        ))}
+                        <option value="">-- Select Builder or Channel Partner --</option>
+                        <optgroup label="🏢 Builders">
+                          {buildersList.map((b) => (
+                            <option key={b.id} value={`BUILDER:${b.name}`}>
+                              🏢 {b.name} {b.reraNumber ? `(RERA: ${b.reraNumber})` : ''}
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="🤝 Channel Partners (CP)">
+                          {channelPartners.map((cp) => (
+                            <option key={cp.id} value={`CP:${cp.name || cp.id}`}>
+                              🤝 {cp.name || 'Unnamed CP'} {cp.phone ? `(${cp.phone})` : ''}
+                            </option>
+                          ))}
+                        </optgroup>
                       </select>
+                      {editForm.builderName && (
+                        <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-sky-600 dark:text-sky-400">
+                          <span>🏢 Selected Builder: <strong>{editForm.builderName}</strong></span>
+                        </div>
+                      )}
+                      {editForm.cpName && (
+                        <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-teal-600 dark:text-teal-400">
+                          <span>🤝 Selected Channel Partner: <strong>{editForm.cpName}</strong></span>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -3180,53 +3378,7 @@ export default function VisitTrackerClient({
                 </div>
               )}
 
-              {/* TAB 4: CHANNEL PARTNER */}
-              {editModalTab === 'CP' && (
-                <div className="space-y-3 animate-in fade-in">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                        CP Name
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Realty Apex Associates"
-                        value={editForm.cpName}
-                        onChange={(e) => setEditForm({ ...editForm, cpName: e.target.value })}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                        CP Contact Details (Mobile / Email)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 9988776655 / info@realtyapex.in"
-                        value={editForm.cpContact}
-                        onChange={(e) => setEditForm({ ...editForm, cpContact: e.target.value })}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      CP Address
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder="e.g. Office 104, Commercial Hub, Sector 18, Noida"
-                      value={editForm.cpAddress}
-                      onChange={(e) => setEditForm({ ...editForm, cpAddress: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 5: STRATEGY & NEXT FU */}
+              {/* TAB 4: STRATEGY & NEXT FU */}
               {editModalTab === 'STRATEGY' && (
                 <div className="space-y-3 animate-in fade-in">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -3266,8 +3418,8 @@ export default function VisitTrackerClient({
                         value={editForm.nextFollowUpDate}
                         onChange={(val) => setEditForm({ ...editForm, nextFollowUpDate: val })}
                         className="w-full glass-input px-3 py-2 rounded-xl text-xs"
-                        minYear={2024}
-                        maxYear={2030}
+                        minYear={1990}
+                        maxYear={2050}
                       />
                     </div>
                   </div>
@@ -3294,8 +3446,7 @@ export default function VisitTrackerClient({
                     <button
                       type="button"
                       onClick={() => {
-                        if (editModalTab === 'STRATEGY') setEditModalTab('CP');
-                        else if (editModalTab === 'CP') setEditModalTab('PERSON');
+                        if (editModalTab === 'STRATEGY') setEditModalTab('PERSON');
                         else if (editModalTab === 'PERSON') setEditModalTab('BUILDER');
                         else if (editModalTab === 'BUILDER') setEditModalTab('CORE');
                       }}
@@ -3310,8 +3461,7 @@ export default function VisitTrackerClient({
                       onClick={() => {
                         if (editModalTab === 'CORE') setEditModalTab('BUILDER');
                         else if (editModalTab === 'BUILDER') setEditModalTab('PERSON');
-                        else if (editModalTab === 'PERSON') setEditModalTab('CP');
-                        else if (editModalTab === 'CP') setEditModalTab('STRATEGY');
+                        else if (editModalTab === 'PERSON') setEditModalTab('STRATEGY');
                       }}
                       className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200"
                     >
@@ -3824,6 +3974,119 @@ export default function VisitTrackerClient({
                 className="px-4 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shadow-sm"
               >
                 Close Directory
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Visit Objectives Master Modal */}
+      {isObjectiveModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Manage Visit Objectives
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Add, edit, or remove custom visit purposes
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsObjectiveModalOpen(false);
+                  setEditingObjective(null);
+                  setNewObjectiveName('');
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Form to add or edit */}
+              <form onSubmit={editingObjective ? handleUpdateObjective : handleAddObjective} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder={editingObjective ? "Edit objective name..." : "e.g. Agreement Signing / Token"}
+                  value={editingObjective ? editingObjective.name : newObjectiveName}
+                  onChange={(e) => {
+                    if (editingObjective) {
+                      setEditingObjective({ ...editingObjective, name: e.target.value });
+                    } else {
+                      setNewObjectiveName(e.target.value);
+                    }
+                  }}
+                  className="flex-1 glass-input px-3 py-2 rounded-xl text-xs"
+                />
+                <button
+                  type="submit"
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition shrink-0"
+                >
+                  {editingObjective ? 'Save' : '+ Add'}
+                </button>
+                {editingObjective && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingObjective(null)}
+                    className="px-2.5 py-2 rounded-xl text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 transition"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </form>
+
+              {/* List of Objectives */}
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {objectives.map((obj) => (
+                  <div
+                    key={obj.id}
+                    className="flex items-center justify-between p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 text-xs"
+                  >
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {obj.name}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingObjective(obj)}
+                        title="Edit name"
+                        className="p-1 rounded-lg text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteObjective(obj.id)}
+                        title="Delete objective"
+                        className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950 transition"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 flex justify-end bg-slate-50 dark:bg-slate-800/40">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsObjectiveModalOpen(false);
+                  setEditingObjective(null);
+                  setNewObjectiveName('');
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+              >
+                Done
               </button>
             </div>
           </div>
