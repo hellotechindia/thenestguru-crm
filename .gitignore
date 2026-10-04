@@ -3,3 +3,7 @@ node_modules/
 .env
 .env.local
 tsconfig.tsbuildinfo
+
+public/uploads/
+public/avatars/
+diff*.sql
