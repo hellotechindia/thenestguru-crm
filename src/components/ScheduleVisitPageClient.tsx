@@ -299,7 +299,7 @@ export default function ScheduleVisitPageClient({
       {/* Main Single-Page Unified Form */}
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* SECTION 1: CORE SELECTION - 3 DYNAMIC DIRECTORY OPTIONS */}
-        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-25">
+        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-[35]">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-2">
               <span className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
@@ -324,7 +324,7 @@ export default function ScheduleVisitPageClient({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-            <div className="md:col-span-2 relative z-25">
+            <div className="md:col-span-2 relative z-[35]">
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                 Builder / Channel Partner / Client Directory *
               </label>
@@ -438,7 +438,7 @@ export default function ScheduleVisitPageClient({
         </div>
 
         {/* SECTION 2: SCHEDULE & CORE VISIT SPECS */}
-        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-20">
+        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-[25]">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
             <span className="p-2 rounded-xl bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400">
               <Calendar className="w-4 h-4" />
@@ -533,7 +533,7 @@ export default function ScheduleVisitPageClient({
         </div>
 
         {/* SECTION 3: PROJECT SPECIFICATIONS & COMMERCIALS */}
-        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-15">
+        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-[15]">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
             <span className="p-2 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
               <Layers className="w-4 h-4" />
@@ -662,7 +662,7 @@ export default function ScheduleVisitPageClient({
         </div>
 
         {/* SECTION 4: CONCERNED PERSON & OFFICE */}
-        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-10">
+        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-[10]">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
             <span className="p-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400">
               <Briefcase className="w-4 h-4" />
@@ -735,7 +735,7 @@ export default function ScheduleVisitPageClient({
         </div>
 
         {/* SECTION 5: STRATEGY, FOLLOW-UP & REMARKS */}
-        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-5">
+        <div className="glass-panel p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm relative z-[5]">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
             <span className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400">
               <Flame className="w-4 h-4" />
