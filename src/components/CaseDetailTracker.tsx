@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   updateChecklistItemAction,
@@ -8,6 +8,7 @@ import {
   updateCasePersonalInfoAction,
   updateCaseStatusAction,
   deleteChecklistItemAction,
+  resyncCaseChecklistAction,
 } from '@/app/actions';
 import {
   ExternalLink,
@@ -34,6 +35,7 @@ import {
   BadgeCheck,
   History,
   X,
+  RefreshCw,
 } from 'lucide-react';
 import { exportToCSV } from '@/lib/excel-export';
 import { isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
@@ -109,6 +111,38 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
   const [savingCategory, setSavingCategory] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [resyncing, setResyncing] = useState(false);
+
+  // Sync state when caseData prop updates
+  useEffect(() => {
+    setItems(caseData.checklistItems);
+  }, [caseData.checklistItems]);
+
+  const handleResyncChecklist = async () => {
+    if (
+      !confirm(
+        'Re-sync checklist items with the latest template conditions?\n\n• Unmatched fields (e.g. MSME/business documents for salaried applicants) will be safely removed.\n• All previously uploaded documents, remarks, and completed items will be strictly PRESERVED.'
+      )
+    ) {
+      return;
+    }
+    setResyncing(true);
+    setErrorMessage('');
+    setSuccessMessage('');
+    try {
+      const res = await resyncCaseChecklistAction(caseData.id);
+      if (res.success) {
+        setSuccessMessage('Checklist re-synced successfully with current template conditions.');
+        router.refresh();
+      } else {
+        setErrorMessage(res.error || 'Failed to re-sync checklist');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Error occurred while re-syncing checklist');
+    } finally {
+      setResyncing(false);
+    }
+  };
 
   // Applicant Filter state: "ALL" | "Applicant" | "Co-Applicant 1" | "Co-Applicant 2" ...
   const [applicantFilter, setApplicantFilter] = useState<string>('ALL');
@@ -559,6 +593,19 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-3 no-print shrink-0">
+            {userRole !== 'CHANNEL' && (
+              <button
+                type="button"
+                onClick={handleResyncChecklist}
+                disabled={resyncing}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30 text-xs font-semibold transition-all shadow-sm disabled:opacity-50"
+                title="Re-evaluate and refresh checklist fields according to template rules"
+              >
+                <RefreshCw className={`w-4 h-4 ${resyncing ? 'animate-spin' : ''}`} />
+                <span>{resyncing ? 'Re-syncing...' : 'Re-sync Checklist'}</span>
+              </button>
+            )}
+
             <button
               onClick={handleExportPendingDocs}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-all shadow-sm"
@@ -714,6 +761,19 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
               </button>
             );
           })}
+
+          {userRole !== 'CHANNEL' && (
+            <button
+              type="button"
+              onClick={handleResyncChecklist}
+              disabled={resyncing}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 text-xs font-bold hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all shrink-0 shadow-xs disabled:opacity-50"
+              title="Refresh / Re-sync checklist items with template rules"
+            >
+              <RefreshCw className={`w-3 h-3 ${resyncing ? 'animate-spin' : ''}`} />
+              <span>{resyncing ? 'Re-syncing...' : 'Re-sync Checklist'}</span>
+            </button>
+          )}
         </div>
       </div>
 

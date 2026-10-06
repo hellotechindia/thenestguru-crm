@@ -56,7 +56,8 @@ export default async function CasesPage() {
     prisma.caseStatusMaster.findMany({ orderBy: { displayOrder: 'asc' } }),
     prisma.workflowStageMaster.findMany({ orderBy: { stageNumber: 'asc' } }),
     prisma.propertyScopeMaster.findMany({ orderBy: { name: 'asc' } }),
-    prisma.targetCategoryMaster.findMany({ orderBy: { name: 'asc' } }),
+    // Same source of truth as the checklist template editor (/admin/customer-types)
+    prisma.customerTypeMaster.findMany({ orderBy: { name: 'asc' } }),
     prisma.subProductMaster.findMany({ orderBy: { name: 'asc' } }),
   ]);
 

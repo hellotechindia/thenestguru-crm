@@ -274,7 +274,7 @@ export default function DatePickerInput({
   }, [minYear, maxYear]);
 
   return (
-    <div ref={containerRef} className="relative w-full">
+    <div ref={containerRef} className={`relative w-full ${isOpen ? 'z-[100]' : 'z-10'}`}>
       <div className="relative flex items-center">
         <input
           type="text"

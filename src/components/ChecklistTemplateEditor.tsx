@@ -124,7 +124,6 @@ function MultiSelectDropdown({
     const aNorm = a.trim().toLowerCase();
     const bNorm = b.trim().toLowerCase();
     if (aNorm === bNorm) return true;
-    if (aNorm.endsWith(' - ' + bNorm) || bNorm.endsWith(' - ' + aNorm)) return true;
     if (aNorm.replace(/_/g, ' ') === bNorm.replace(/_/g, ' ')) return true;
     return false;
   };

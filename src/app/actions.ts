@@ -127,6 +127,8 @@ export async function createCaseAction(formData: {
       subProduct: formData.subProduct,
       clientName: formData.clientName,
       incomeTypes: formData.incomeTypes,
+      propertyState: formData.propertyState,
+      clientState: formData.clientState,
     }
   );
 
@@ -243,66 +245,49 @@ export async function updateCaseIntakeDetailsAction(
   // Handle co-applicant checklist items sync
   if (data.coApplicantCount !== undefined && data.coApplicantCount < existingCase.coApplicantCount) {
     // If reduced, delete extra co-applicant checklist items
-    const appsToRemove: string[] = [];
     for (let i = data.coApplicantCount + 1; i <= existingCase.coApplicantCount; i++) {
-      appsToRemove.push(`Co-Applicant ${i}`);
-    }
-    if (appsToRemove.length > 0) {
       await prisma.caseChecklistItem.deleteMany({
         where: {
           caseId,
-          appliesTo: { in: appsToRemove },
+          appliesTo: { contains: `Co-Applicant ${i}` },
         },
       });
     }
   } else if (data.coApplicantCount !== undefined && data.coApplicantCount > existingCase.coApplicantCount) {
-    // If increased, generate checklist items for newly added co-applicants
-    const categories = await prisma.checklistCategory.findMany({
-      where: { product: newProduct, customerType: newCustomerType },
-      include: { items: true },
+    // If increased, generate checklist items for newly added co-applicants using the robust condition engine
+    const rawExistingItems = await prisma.caseChecklistItem.findMany({
+      where: { caseId },
+      select: { label: true, appliesTo: true },
     });
-    const categoriesToUse = categories.length > 0 ? categories : await prisma.checklistCategory.findMany({ include: { items: true } });
 
-    let normalizedPropScope: string | null = null;
-    if (newPropertyType.toLowerCase().includes('resale')) normalizedPropScope = 'RESALE';
-    else if (newPropertyType.toLowerCase().includes('takeover') || newPropertyType.toLowerCase().includes('seller bt')) normalizedPropScope = 'TAKEOVER_SELLER_BT';
-    else if (newPropertyType.toLowerCase().includes('direct allotment') || newPropertyType.toLowerCase().includes('under construction')) normalizedPropScope = 'DIRECT_ALLOTMENT';
-
-    const newItemsToCreate: any[] = [];
-    for (let i = existingCase.coApplicantCount + 1; i <= data.coApplicantCount; i++) {
-      const coAppData = data.coApplicantsData && data.coApplicantsData[i - 1];
-      const isHousewife = (coAppData?.incomeTypes && Array.isArray(coAppData.incomeTypes) && coAppData.incomeTypes.some((t: string) => t.toLowerCase().includes('housewife'))) || (coAppData?.customerType && coAppData.customerType.toLowerCase().includes('housewife'));
-      const incomeRequired = isHousewife ? false : (coAppData ? coAppData.incomeRequired === true : false);
-      const coAppName = coAppData?.name?.trim() || `Co-Applicant ${i}`;
-      const appliesToLabel = `${coAppName} (Co-Applicant ${i})`;
-
-      for (const cat of categoriesToUse) {
-        const isIncomeCat = cat.name.toLowerCase().includes('income');
-        if (isIncomeCat && !incomeRequired) continue;
-
-        for (const item of cat.items) {
-          if (item.propertyTypeScope && item.propertyTypeScope !== normalizedPropScope) continue;
-          if (item.coApplicantRequirement !== 'NA') {
-            newItemsToCreate.push({
-              caseId,
-              category: cat.name,
-              label: item.label,
-              appliesTo: appliesToLabel,
-              personName: coAppName,
-              status: 'Pending',
-              stage: item.stage,
-              updatedById: user.id,
-              requireOnedrive: item.requireOnedrive !== false,
-              requireRemark: item.requireRemark === true,
-              remarkPlaceholder: item.remarkPlaceholder || null,
-            });
-          }
-        }
+    let activeIncomeTypes: string[] = [];
+    if (data.incomeTypes) {
+      activeIncomeTypes = Array.isArray(data.incomeTypes) ? data.incomeTypes : [data.incomeTypes];
+    } else if (existingCase.incomeTypes) {
+      try {
+        activeIncomeTypes = JSON.parse(existingCase.incomeTypes);
+      } catch {
+        activeIncomeTypes = [newCustomerType];
       }
     }
-    if (newItemsToCreate.length > 0) {
-      await prisma.caseChecklistItem.createMany({ data: newItemsToCreate });
-    }
+
+    await generateChecklistForCase(
+      caseId,
+      newProduct,
+      newCustomerType,
+      newPropertyType,
+      data.coApplicantCount,
+      data.coApplicantsData,
+      user.id,
+      {
+        subProduct: data.subProduct !== undefined ? data.subProduct : existingCase.subProduct,
+        clientName: data.clientName || existingCase.clientName,
+        incomeTypes: activeIncomeTypes,
+        propertyState: data.propertyState || existingCase.propertyState,
+        clientState: data.clientState || existingCase.clientState,
+        existingItems: rawExistingItems,
+      }
+    );
   }
 
   await prisma.case.update({
@@ -5717,8 +5702,33 @@ export async function verifyAndChangePasswordAction(existingPassword: string, ne
 }
 
 // ==========================================
-// 28. DEDUPLICATED CLIENTS & CO-APPLICANTS DIRECTORY
+// 28. DEDUPLICATED CLIENTS DIRECTORY
 // ==========================================
+export interface ClientCoApplicant {
+  name: string;
+  mobile?: string | null;
+  email?: string | null;
+  dob?: Date | string | null;
+  gender?: string | null;
+  incomeRequired?: boolean;
+  customerType?: string | null;
+  caseId?: string;
+  caseProduct?: string;
+}
+
+export interface LinkedCaseInfo {
+  id: string;
+  clientRole: 'PRIMARY_APPLICANT' | 'CO_APPLICANT';
+  product: string;
+  subProduct?: string | null;
+  stage: number;
+  status: string;
+  createdAt: Date | string;
+  coApplicants?: string[];
+  coApplicantsDetails?: ClientCoApplicant[];
+  primaryClientName?: string;
+}
+
 export interface UniqueClientItem {
   id: string;
   name: string;
@@ -5732,17 +5742,8 @@ export interface UniqueClientItem {
   roles: ('PRIMARY_APPLICANT' | 'CO_APPLICANT')[];
   primaryApplicantFor: string[];
   coApplicantFor: string[];
-  linkedCases: Array<{
-    id: string;
-    clientRole: 'PRIMARY_APPLICANT' | 'CO_APPLICANT';
-    product: string;
-    subProduct?: string | null;
-    stage: number;
-    status: string;
-    createdAt: Date | string;
-    coApplicants?: string[];
-    primaryClientName?: string;
-  }>;
+  allCoApplicants: ClientCoApplicant[];
+  linkedCases: LinkedCaseInfo[];
   latestActivityDate: Date | string;
 }
 
@@ -5778,29 +5779,45 @@ export async function getClientsDirectoryAction() {
   const clientMap = new Map<string, UniqueClientItem>();
 
   for (const c of cases) {
-    // 1. Process Main Client
+    // 1. Process Main Client (Primary Applicant only for top-level directory entries)
     const normPhone = c.mobile ? c.mobile.replace(/\D/g, '').slice(-10) : '';
     const key = normPhone ? `phone_${normPhone}` : (c.email ? `email_${c.email.trim().toLowerCase()}` : `name_${c.clientName.trim().toLowerCase()}`);
 
-    let coAppNames: string[] = [];
+    const caseCoApps: ClientCoApplicant[] = [];
     if (c.coApplicantsData) {
       try {
         const parsed = JSON.parse(c.coApplicantsData);
         if (Array.isArray(parsed)) {
-          coAppNames = parsed.map((ca: any) => ca.name).filter(Boolean);
+          for (const ca of parsed) {
+            if (!ca || !ca.name) continue;
+            caseCoApps.push({
+              name: ca.name.trim(),
+              mobile: ca.mobile ? String(ca.mobile).trim() : null,
+              email: ca.email ? String(ca.email).trim() : null,
+              dob: ca.dob || null,
+              gender: ca.gender || null,
+              incomeRequired: ca.incomeRequired !== false,
+              customerType: ca.customerType || (Array.isArray(ca.customerTypes) ? ca.customerTypes.join(', ') : null),
+              caseId: c.id,
+              caseProduct: c.product,
+            });
+          }
         }
       } catch (e) {}
     }
 
-    const linkedCaseInfo = {
+    const coAppNames = caseCoApps.map((ca) => ca.name);
+
+    const linkedCaseInfo: LinkedCaseInfo = {
       id: c.id,
-      clientRole: 'PRIMARY_APPLICANT' as const,
+      clientRole: 'PRIMARY_APPLICANT',
       product: c.product,
       subProduct: c.subProduct,
       stage: c.stage,
       status: c.status,
       createdAt: c.createdAt,
       coApplicants: coAppNames,
+      coApplicantsDetails: caseCoApps,
     };
 
     if (clientMap.has(key)) {
@@ -5813,6 +5830,19 @@ export async function getClientsDirectoryAction() {
         existing.primaryApplicantFor.push(c.product);
       }
       existing.linkedCases.push(linkedCaseInfo);
+
+      // Merge co-applicants into allCoApplicants (deduplicate by phone/name)
+      for (const ca of caseCoApps) {
+        const caNormPhone = ca.mobile ? ca.mobile.replace(/\D/g, '').slice(-10) : '';
+        const alreadyExists = existing.allCoApplicants.some((x) => {
+          const xPhone = x.mobile ? x.mobile.replace(/\D/g, '').slice(-10) : '';
+          return (caNormPhone && xPhone && caNormPhone === xPhone) || x.name.toLowerCase() === ca.name.toLowerCase();
+        });
+        if (!alreadyExists) {
+          existing.allCoApplicants.push(ca);
+        }
+      }
+
       if (!existing.email && c.email) existing.email = c.email;
       if (!existing.dob && c.clientDob) existing.dob = c.clientDob;
       if (!existing.city && c.clientCity) existing.city = c.clientCity;
@@ -5822,7 +5852,7 @@ export async function getClientsDirectoryAction() {
       clientMap.set(key, {
         id: `client_${key}`,
         name: c.clientName,
-        phone: normPhone || c.mobile,
+        phone: normPhone || c.mobile || 'N/A',
         email: c.email || null,
         dob: c.clientDob || null,
         gender: c.gender || null,
@@ -5832,72 +5862,50 @@ export async function getClientsDirectoryAction() {
         roles: ['PRIMARY_APPLICANT'],
         primaryApplicantFor: [c.product],
         coApplicantFor: [],
+        allCoApplicants: [...caseCoApps],
         linkedCases: [linkedCaseInfo],
         latestActivityDate: c.createdAt,
       });
     }
+  }
 
-    // 2. Process Co-Applicants from this case
-    if (c.coApplicantsData) {
-      try {
-        const coApps = JSON.parse(c.coApplicantsData);
-        if (Array.isArray(coApps)) {
-          for (const coApp of coApps) {
-            if (!coApp || !coApp.name) continue;
-            const coPhone = coApp.mobile ? String(coApp.mobile).replace(/\D/g, '').slice(-10) : '';
-            const coKey = coPhone ? `phone_${coPhone}` : (coApp.email ? `email_${coApp.email.trim().toLowerCase()}` : `name_${coApp.name.trim().toLowerCase()}`);
+  // 2. Link cases where a primary client was ALSO a co-applicant on someone else's case
+  for (const c of cases) {
+    if (!c.coApplicantsData) continue;
+    try {
+      const coApps = JSON.parse(c.coApplicantsData);
+      if (Array.isArray(coApps)) {
+        for (const coApp of coApps) {
+          if (!coApp || !coApp.name) continue;
+          const coPhone = coApp.mobile ? String(coApp.mobile).replace(/\D/g, '').slice(-10) : '';
+          const coKey = coPhone ? `phone_${coPhone}` : (coApp.email ? `email_${coApp.email.trim().toLowerCase()}` : `name_${coApp.name.trim().toLowerCase()}`);
 
-            const coLinkedCase = {
-              id: c.id,
-              clientRole: 'CO_APPLICANT' as const,
-              product: c.product,
-              subProduct: c.subProduct,
-              stage: c.stage,
-              status: c.status,
-              createdAt: c.createdAt,
-              primaryClientName: c.clientName,
-            };
-
-            if (clientMap.has(coKey)) {
-              const existing = clientMap.get(coKey)!;
-              const alreadyLinked = existing.linkedCases.some((lc) => lc.id === c.id);
-              if (!alreadyLinked) {
-                existing.caseCount += 1;
-                existing.linkedCases.push(coLinkedCase);
-              }
-              if (!existing.roles.includes('CO_APPLICANT')) {
-                existing.roles.push('CO_APPLICANT');
-              }
-              if (!existing.coApplicantFor.includes(c.clientName)) {
-                existing.coApplicantFor.push(c.clientName);
-              }
-              if (!existing.email && coApp.email) existing.email = coApp.email;
-              if (!existing.dob && coApp.dob) existing.dob = coApp.dob;
-              if (!existing.city && coApp.city) existing.city = coApp.city;
-              if (!existing.state && coApp.state) existing.state = coApp.state;
-              if (!existing.gender && coApp.gender) existing.gender = coApp.gender;
-            } else {
-              clientMap.set(coKey, {
-                id: `coapp_${coKey}`,
-                name: coApp.name,
-                phone: coPhone || coApp.mobile || 'N/A',
-                email: coApp.email || null,
-                dob: coApp.dob || null,
-                gender: coApp.gender || null,
-                city: coApp.city || null,
-                state: coApp.state || null,
-                caseCount: 1,
-                roles: ['CO_APPLICANT'],
-                primaryApplicantFor: [],
-                coApplicantFor: [c.clientName],
-                linkedCases: [coLinkedCase],
-                latestActivityDate: c.createdAt,
+          // Only tag existing primary clients who also happen to be co-applicant elsewhere
+          if (clientMap.has(coKey)) {
+            const existing = clientMap.get(coKey)!;
+            if (!existing.roles.includes('CO_APPLICANT')) {
+              existing.roles.push('CO_APPLICANT');
+            }
+            if (!existing.coApplicantFor.includes(c.clientName)) {
+              existing.coApplicantFor.push(c.clientName);
+            }
+            const alreadyLinked = existing.linkedCases.some((lc) => lc.id === c.id);
+            if (!alreadyLinked) {
+              existing.linkedCases.push({
+                id: c.id,
+                clientRole: 'CO_APPLICANT',
+                product: c.product,
+                subProduct: c.subProduct,
+                stage: c.stage,
+                status: c.status,
+                createdAt: c.createdAt,
+                primaryClientName: c.clientName,
               });
             }
           }
         }
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
   }
 
   const clients = Array.from(clientMap.values()).sort(
@@ -5936,36 +5944,6 @@ export async function getNotificationsAction() {
     orderBy: { createdAt: 'desc' },
     take: 50,
   });
-
-  // If no notifications exist in DB at all, auto-seed a welcoming/live notification from recent cases
-  if (notifications.length === 0 && isSuperAdmin) {
-    const recentCase = await prisma.case.findFirst({
-      orderBy: { updatedAt: 'desc' },
-      select: { id: true, clientName: true, product: true, stage: true },
-    });
-
-    if (recentCase) {
-      await prisma.notification.create({
-        data: {
-          title: 'System Active: Real-Time Alerts On',
-          message: `Case pipeline connected. Recent case: ${recentCase.clientName} (${recentCase.product}) is at stage "${recentCase.stage}".`,
-          type: 'INFO',
-          link: `/cases/${recentCase.id}`,
-        },
-      });
-
-      const seeded = await prisma.notification.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      });
-
-      return {
-        success: true,
-        notifications: seeded,
-        unreadCount: seeded.filter((n) => !n.isRead).length,
-      };
-    }
-  }
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
   return { success: true, notifications, unreadCount };
@@ -6119,9 +6097,8 @@ export async function createBuilderAction(data: {
   const user = await getAuthUser();
   if (!user) return { success: false, error: 'Unauthorized' };
 
-  const canManage = await checkIsTeamLeaderOrSuperAdmin(user);
-  if (!canManage) {
-    return { success: false, error: 'Only Super Admin and Team Leaders can add builders.' };
+  if (user.role === 'CHANNEL') {
+    return { success: false, error: 'Channel partners cannot add builders.' };
   }
 
   const cleanName = data.name.trim();
@@ -6222,4 +6199,82 @@ export async function deleteBuilderAction(id: string) {
   revalidatePath('/visits');
 
   return { success: true };
+}
+
+// 76. Re-sync Case Checklist Action with Template Rules
+export async function resyncCaseChecklistAction(caseId: string) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL') {
+    return { success: false, error: 'Unauthorized to resync checklist' };
+  }
+
+  const existingCase = await prisma.case.findUnique({
+    where: { id: caseId },
+    include: {
+      checklistItems: true,
+    },
+  });
+
+  if (!existingCase) {
+    return { success: false, error: 'Case not found' };
+  }
+
+  let parsedCoApplicants: any[] = [];
+  try {
+    if (existingCase.coApplicantsData) {
+      parsedCoApplicants = JSON.parse(existingCase.coApplicantsData);
+    }
+  } catch {
+    parsedCoApplicants = [];
+  }
+
+  let parsedIncomeTypes: string[] = [];
+  try {
+    if (existingCase.incomeTypes) {
+      parsedIncomeTypes = JSON.parse(existingCase.incomeTypes);
+    }
+  } catch {
+    parsedIncomeTypes = existingCase.customerType ? existingCase.customerType.split(',').map((s: string) => s.trim()) : [];
+  }
+
+  // Preserved items: items where staff has already done work (uploaded doc, remark, or marked Received/NA)
+  const preservedItems = existingCase.checklistItems.filter(
+    (i) => i.status === 'Received' || i.status === 'Not Applicable' || (i.documentUrl && i.documentUrl.trim()) || (i.remark && i.remark.trim())
+  );
+
+  // Delete pending, empty items so they can be re-evaluated cleanly
+  const itemsToDelete = existingCase.checklistItems.filter(
+    (i) => !preservedItems.some((p) => p.id === i.id)
+  );
+
+  if (itemsToDelete.length > 0) {
+    await prisma.caseChecklistItem.deleteMany({
+      where: {
+        id: { in: itemsToDelete.map((i) => i.id) },
+      },
+    });
+  }
+
+  // Re-generate using strict condition engine
+  const count = await generateChecklistForCase(
+    existingCase.id,
+    existingCase.product,
+    existingCase.customerType,
+    existingCase.propertyType,
+    existingCase.coApplicantCount,
+    parsedCoApplicants,
+    user.id,
+    {
+      subProduct: existingCase.subProduct,
+      clientName: existingCase.clientName,
+      incomeTypes: parsedIncomeTypes,
+      propertyState: existingCase.propertyState,
+      clientState: existingCase.clientState,
+      existingItems: preservedItems.map((p) => ({ label: p.label, appliesTo: p.appliesTo })),
+    }
+  );
+
+  revalidatePath(`/cases/${caseId}`);
+  revalidatePath('/cases');
+  return { success: true, count };
 }

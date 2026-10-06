@@ -227,7 +227,7 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
     if (pathname.startsWith('/cases/') && pathname !== '/cases') return 'Case Details & Checklist Engine';
     if (pathname === '/cases') return 'Cases Directory';
     if (pathname === '/sub-accounts') return 'Child IDs & Sub-Accounts Directory';
-    if (pathname === '/clients') return 'Client & Co-Applicant Directory';
+    if (pathname === '/clients') return 'Client Directory';
     if (pathname === '/tasks') return 'Task Management Hub';
     if (pathname === '/hrms') return 'HRMS Employee Desk';
     if (pathname === '/birthdays') return 'Celebrations & Birthdays Directory';
@@ -827,7 +827,7 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
       </aside>
 
       {/* MOBILE TOP BAR (Visible on screens < md) */}
-      <header className="md:hidden fixed top-0 inset-x-0 h-16 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4">
+      <header className="md:hidden fixed top-0 inset-x-0 h-16 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -868,7 +868,7 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
 
       {/* MOBILE DRAWER OVERLAY */}
       {isMobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-50 flex">
+        <div className="md:hidden fixed inset-0 z-[60] flex">
           {/* Backdrop */}
           <div
             onClick={() => setIsMobileMenuOpen(false)}
@@ -885,7 +885,7 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
       {/* MAIN CONTENT WRAPPER - Reduced sidebar padding */}
       <div className="md:pl-56 xl:pl-60 flex-1 flex flex-col min-w-0 transition-all duration-300">
         {/* DESKTOP TOP HEADER (Breadcrumbs & Quick System Bar) */}
-        <header className="hidden md:flex h-16 sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 px-6 items-center justify-between gap-4">
+        <header className="hidden md:flex h-16 sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 px-6 items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
               <span>{crmBranding.crmName}</span>

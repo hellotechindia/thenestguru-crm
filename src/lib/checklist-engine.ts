@@ -1,5 +1,22 @@
 import { prisma } from './prisma';
+import {
+  evaluateTemplateItem,
+  hasIncomeRestriction,
+  productTokens,
+  ruleKey,
+  toList,
+  canonical,
+  RulePersonContext,
+} from './checklist-rules';
 
+/**
+ * Generates CaseChecklistItem rows for a case from the checklist templates.
+ *
+ * Every template field is evaluated per person (applicant and each co-applicant) using the
+ * single universal rule in `checklist-rules.ts`:
+ *   empty dropdown = applies to everyone, otherwise the person's selection must exactly match
+ *   at least one selected option, and ALL dropdowns must pass (AND).
+ */
 export async function generateChecklistForCase(
   caseId: string,
   product: string,
@@ -12,58 +29,29 @@ export async function generateChecklistForCase(
     subProduct?: string | null;
     clientName?: string;
     incomeTypes?: string[] | null;
+    propertyState?: string | null;
+    clientState?: string | null;
+    existingItems?: Array<{ label: string; appliesTo: string }>;
   }
 ) {
   const clientName = options?.clientName || 'Applicant';
-  const subProduct = options?.subProduct || null;
-  const incomeTypes = options?.incomeTypes && options.incomeTypes.length > 0
-    ? options.incomeTypes
-    : [customerType]; // Fallback to customerType or profile
+  const tokens = productTokens(product, options?.subProduct || null);
 
-  // Dynamic matching for property scope
-  const propertyScopes = await prisma.propertyScopeMaster.findMany();
-  let matchedPropScope: string | null = null;
-  for (const s of propertyScopes) {
-    if (propertyType.toLowerCase().includes(s.name.toLowerCase())) {
-      matchedPropScope = s.name;
-      break;
-    }
-  }
+  // Applicant context: exactly what was selected on the intake form
+  const applicantCtx: RulePersonContext = {
+    productTokens: tokens,
+    propertyScope: propertyType,
+    customerTypes: toList(customerType),
+    incomeTypes: toList(options?.incomeTypes),
+  };
 
-  // Fallback heuristic for legacy scopes
-  if (!matchedPropScope) {
-    if (propertyType.toLowerCase().includes('resale')) {
-      matchedPropScope = 'Resale';
-    } else if (propertyType.toLowerCase().includes('takeover') || propertyType.toLowerCase().includes('seller bt')) {
-      matchedPropScope = 'Takeover / Seller BT';
-    } else if (propertyType.toLowerCase().includes('plot')) {
-      matchedPropScope = 'Direct Allotment - Plot';
-    } else if (propertyType.toLowerCase().includes('direct allotment') || propertyType.toLowerCase().includes('flat') || propertyType.toLowerCase().includes('under construction')) {
-      matchedPropScope = 'Direct Allotment - Flat';
-    }
-  }
+  const isIndividual = applicantCtx.customerTypes.some((ct) => ruleKey('customerType', ct) === canonical('Individual'));
 
-  // Fetch categories matching product or customerType or generic/universal (ALL)
-  let categories = await prisma.checklistCategory.findMany({
-    where: {
-      OR: [
-        { product: 'ALL' },
-        { product: 'All Products' },
-        { customerType: 'ALL' },
-        { customerType: 'All Profiles' },
-        { product, customerType },
-        { product },
-        { customerType },
-      ],
-    },
-    include: { items: true },
+  // Categories are universal (the editor creates them as ALL); every item carries its own conditions.
+  const categories = await prisma.checklistCategory.findMany({
+    include: { items: { orderBy: { stage: 'asc' } } },
+    orderBy: { name: 'asc' },
   });
-
-  if (categories.length === 0) {
-    categories = await prisma.checklistCategory.findMany({
-      include: { items: true },
-    });
-  }
 
   const itemsToCreate: {
     caseId: string;
@@ -81,154 +69,111 @@ export async function generateChecklistForCase(
     remarkPlaceholder?: string | null;
   }[] = [];
 
-  const isIndividual = customerType.toLowerCase().includes('individual') || customerType.toLowerCase().includes('salaried');
+  const dedupeKey = (label: string, appliesTo: string) => `${canonical(label)}:::${canonical(appliesTo)}`;
+  const existingSet = new Set((options?.existingItems || []).map((i) => dedupeKey(i.label, i.appliesTo)));
+
+  const isSellerBT = /seller bt|takeover/i.test(propertyType || '');
+  const isMaharashtra = /maharashtra/i.test(`${options?.clientState || ''} ${options?.propertyState || ''}`);
+
+  // Pre-build co-applicant contexts
+  const coApps = Array.from({ length: Math.max(0, coApplicantCount || 0) }, (_, idx) => {
+    const data = (coApplicantsData && coApplicantsData[idx]) || null;
+    const name = data?.name?.trim() || `Co-Applicant ${idx + 1}`;
+    const ownCustTypes = toList(data?.customerTypes).length > 0 ? toList(data?.customerTypes) : toList(data?.customerType);
+    const ownIncome = toList(data?.incomeTypes);
+    const isHousewife =
+      ownIncome.some((t) => ruleKey('incomeProfile', t) === canonical('Housewife')) ||
+      ownCustTypes.some((t) => ruleKey('customerType', t) === canonical('Housewife'));
+    const incomeRequired = isHousewife ? false : data?.incomeRequired === true;
+    const ctx: RulePersonContext = {
+      productTokens: tokens,
+      propertyScope: propertyType,
+      // Fall back to the applicant's selection only when the co-applicant has none of their own
+      customerTypes: ownCustTypes.length > 0 ? ownCustTypes : applicantCtx.customerTypes,
+      incomeTypes: ownIncome.length > 0 ? ownIncome : applicantCtx.incomeTypes,
+    };
+    return { index: idx + 1, name, incomeRequired, ctx };
+  });
+
+  const pushItem = (
+    cat: { name: string },
+    categoryPart: string,
+    templateItem: any,
+    stage: number,
+    appliesTo: string,
+    personName: string
+  ) => {
+    const key = dedupeKey(templateItem.label, appliesTo);
+    if (existingSet.has(key)) return;
+    existingSet.add(key);
+    itemsToCreate.push({
+      caseId,
+      category: cat.name,
+      categoryPart,
+      label: templateItem.label,
+      appliesTo,
+      personName,
+      status: 'Pending',
+      isMandatory: templateItem.isMandatory !== false,
+      stage,
+      updatedById: userId,
+      requireOnedrive: templateItem.requireOnedrive !== false,
+      requireRemark: templateItem.requireRemark === true,
+      remarkPlaceholder: templateItem.remarkPlaceholder || null,
+    });
+  };
 
   for (const cat of categories) {
     const catNameLower = cat.name.toLowerCase();
-    
-    // Classify category part
     let categoryPart = 'OTHER';
-    if (catNameLower.includes('kyc')) {
-      categoryPart = 'KYC';
-    } else if (catNameLower.includes('income')) {
-      categoryPart = 'INCOME';
-    } else if (catNameLower.includes('personal')) {
-      categoryPart = 'PERSONAL';
-    } else if (catNameLower.includes('property')) {
-      categoryPart = 'PROPERTY';
-    }
+    if (catNameLower.includes('kyc')) categoryPart = 'KYC';
+    else if (catNameLower.includes('income')) categoryPart = 'INCOME';
+    else if (catNameLower.includes('personal')) categoryPart = 'PERSONAL';
+    else if (catNameLower.includes('property')) categoryPart = 'PROPERTY';
 
-    // Pointer 5: "Personal Information must be for only individuals"
-    if (categoryPart === 'PERSONAL' && !isIndividual) {
-      continue;
-    }
+    // Personal Information applies to individual applicants only
+    if (categoryPart === 'PERSONAL' && !isIndividual) continue;
 
     for (const templateItem of cat.items) {
-      // Sub-Product Filter if defined on template
-      if (templateItem.subProduct && templateItem.subProduct !== 'ALL' && subProduct) {
-        const allowedSubs = templateItem.subProduct.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
-        if (allowedSubs.length > 0) {
-          const sLower = subProduct.toLowerCase();
-          const matches = allowedSubs.some((sp: string) => sp === sLower || sLower.includes(sp) || sp.includes(sLower));
-          if (!matches) continue;
-        }
-      }
+      // Special requirement flags
+      if (templateItem.applicantRequirement === 'ONLY_IF_SELLER_BT' && !isSellerBT) continue;
+      if (templateItem.applicantRequirement === 'ONLY_MAHARASHTRA' && !isMaharashtra) continue;
 
-      // Customer Type Filter if defined on template
-      if (templateItem.customerType && templateItem.customerType !== 'ALL') {
-        const allowedCustomerTypes = templateItem.customerType.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
-        if (allowedCustomerTypes.length > 0) {
-          const cTypeLower = customerType.toLowerCase();
-          const matchesCustType = allowedCustomerTypes.some((ct: string) => cTypeLower.includes(ct) || ct.includes(cTypeLower));
-          if (!matchesCustType) continue;
-        }
-      }
+      const stagesFromList = (templateItem.stages || '')
+        .split(',')
+        .map((s: string) => parseInt(s.trim(), 10))
+        .filter((n: number) => !isNaN(n) && n > 0);
+      const finalStages: number[] = stagesFromList.length > 0 ? stagesFromList : [templateItem.stage || 1];
 
-      // Property Type Scope Filter
-      if (templateItem.propertyTypeScope && templateItem.propertyTypeScope !== 'ALL') {
-        const allowedScopes = templateItem.propertyTypeScope.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
-        if (allowedScopes.length > 0) {
-          const caseScope = (matchedPropScope || propertyType).toLowerCase();
-          const matches = allowedScopes.some((as: string) => caseScope.includes(as) || as.includes(caseScope));
-          if (!matches) continue;
-        }
-      }
+      const applicantOk = templateItem.applicantRequirement !== 'NA' && evaluateTemplateItem(templateItem, applicantCtx).ok;
 
-      // Income type check if template item is specific to an income type
-      if (categoryPart === 'INCOME' && templateItem.incomeType && templateItem.incomeType !== 'ALL') {
-        const allowedIncomes = templateItem.incomeType.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
-        if (allowedIncomes.length > 0) {
-          const matchesAnyIncome = incomeTypes.some((it: string) => 
-            allowedIncomes.some((ai: string) => it.toLowerCase().includes(ai) || ai.includes(it.toLowerCase()))
-          );
-          if (!matchesAnyIncome) {
-            continue;
-          }
-        }
-      }
-
-      // Target Workflow Stages (Support multiple stages if configured)
-      const targetStages: number[] = templateItem.stages
-        ? templateItem.stages.split(',').map((s: string) => parseInt(s.trim())).filter((n: number) => !isNaN(n) && n > 0)
-        : [templateItem.stage || 1];
-      const finalStages = targetStages.length > 0 ? targetStages : [templateItem.stage || 1];
-
-      for (const currentStage of finalStages) {
-        // Add for Applicant
-        if (templateItem.applicantRequirement !== 'NA') {
-          const appliesToLabel = `${clientName} (Applicant)`;
-          itemsToCreate.push({
-            caseId,
-            category: cat.name,
-            categoryPart,
-            label: templateItem.label,
-            appliesTo: appliesToLabel,
-            personName: clientName,
-            status: 'Pending',
-            isMandatory: templateItem.isMandatory !== false,
-            stage: currentStage,
-            updatedById: userId,
-            requireOnedrive: templateItem.requireOnedrive !== false,
-            requireRemark: templateItem.requireRemark === true,
-            remarkPlaceholder: templateItem.remarkPlaceholder || null,
-          });
-        }
-
-        // Add for Co-Applicants
-        if (templateItem.coApplicantRequirement !== 'NA' && coApplicantCount > 0) {
-          for (let i = 1; i <= coApplicantCount; i++) {
-            const coAppData = coApplicantsData && coApplicantsData[i - 1];
-            const coAppName = coAppData?.name?.trim() || `Co-Applicant ${i}`;
-            const isHousewife = (coAppData?.incomeTypes && Array.isArray(coAppData.incomeTypes) && coAppData.incomeTypes.some((t: string) => t.toLowerCase().includes('housewife'))) || (coAppData?.customerType && coAppData.customerType.toLowerCase().includes('housewife'));
-            const incomeRequired = isHousewife ? false : (coAppData ? coAppData.incomeRequired === true : false);
-
-            // If this is income category and co-applicant does NOT require income, skip
-            if (categoryPart === 'INCOME' && !incomeRequired) {
-              continue;
-            }
-
-            // If template item is specific to an income type, verify against co-applicant's income types
-            if (categoryPart === 'INCOME' && templateItem.incomeType && templateItem.incomeType !== 'ALL') {
-              const coIncomeTypes: string[] = (coAppData?.incomeTypes && Array.isArray(coAppData.incomeTypes) && coAppData.incomeTypes.length > 0)
-                ? coAppData.incomeTypes
-                : incomeTypes;
-              const allowedIncomes = templateItem.incomeType.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
-              if (allowedIncomes.length > 0) {
-                const matchesAnyIncome = coIncomeTypes.some((it: string) =>
-                  allowedIncomes.some((ai: string) => it.toLowerCase().includes(ai) || ai.includes(it.toLowerCase()))
-                );
-                if (!matchesAnyIncome) {
-                  continue;
-                }
+      const incomeRestricted = hasIncomeRestriction(templateItem);
+      const eligibleCoApps =
+        templateItem.coApplicantRequirement === 'NA'
+          ? []
+          : coApps.filter((co) => {
+              // Non-financial co-applicants never get income documents
+              if (!co.incomeRequired && (incomeRestricted || categoryPart === 'INCOME')) return false;
+              if (!co.incomeRequired) {
+                // Evaluate everything except income profile for KYC-only co-applicants
+                return evaluateTemplateItem({ ...templateItem, incomeType: null }, co.ctx).ok;
               }
-            }
-
-            const appliesToLabel = `${coAppName} (Co-Applicant ${i})`;
-            itemsToCreate.push({
-              caseId,
-              category: cat.name,
-              categoryPart,
-              label: templateItem.label,
-              appliesTo: appliesToLabel,
-              personName: coAppName,
-              status: 'Pending',
-              isMandatory: templateItem.isMandatory !== false,
-              stage: currentStage,
-              updatedById: userId,
-              requireOnedrive: templateItem.requireOnedrive !== false,
-              requireRemark: templateItem.requireRemark === true,
-              remarkPlaceholder: templateItem.remarkPlaceholder || null,
+              return evaluateTemplateItem(templateItem, co.ctx).ok;
             });
-          }
+
+      for (const stage of finalStages) {
+        if (applicantOk) {
+          pushItem(cat, categoryPart, templateItem, stage, `${clientName} (Applicant)`, clientName);
+        }
+        for (const co of eligibleCoApps) {
+          pushItem(cat, categoryPart, templateItem, stage, `${co.name} (Co-Applicant ${co.index})`, co.name);
         }
       }
     }
   }
 
   if (itemsToCreate.length > 0) {
-    await prisma.caseChecklistItem.createMany({
-      data: itemsToCreate,
-    });
+    await prisma.caseChecklistItem.createMany({ data: itemsToCreate });
   }
 
   return itemsToCreate.length;

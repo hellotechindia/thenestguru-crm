@@ -48,7 +48,8 @@ export default async function NewCasePage() {
     getProfilesAction().then((res) => res.profiles || []),
     prisma.subProductMaster.findMany({ orderBy: { name: 'asc' } }),
     prisma.propertyScopeMaster.findMany({ orderBy: { name: 'asc' } }),
-    prisma.targetCategoryMaster.findMany({ orderBy: { name: 'asc' } }),
+    // Same source of truth as the checklist template editor (/admin/customer-types)
+    prisma.customerTypeMaster.findMany({ orderBy: { name: 'asc' } }),
   ]);
 
   const isSuperAdmin = (session.user as any)?.role === 'SUPER_ADMIN';

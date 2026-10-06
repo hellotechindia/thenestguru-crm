@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { sanitizeTo10Digits, sanitizeToAlphabetsOnly } from '@/lib/validations';
 import DatePickerInput from './DatePickerInput';
+import SearchableBuilderCpSelect from './SearchableBuilderCpSelect';
 import { exportToCSV } from '@/lib/excel-export';
 
 interface StaffUser {
@@ -119,6 +120,14 @@ interface Props {
     phone?: string | null;
     email?: string | null;
     address?: string | null;
+  }>;
+  clients?: Array<{
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    city?: string | null;
+    state?: string | null;
   }>;
 }
 
@@ -221,262 +230,7 @@ const DEFAULT_OBJECTIVES: VisitObjective[] = [
   { id: 'DOCUMENT_COLLECTION', name: 'Document Collection' },
 ];
 
-// Searchable Combobox for Builder and Channel Partner selection (instant search over 150+ items)
-interface SearchableBuilderCpSelectProps {
-  selectedType: 'BUILDER' | 'CP' | '';
-  selectedName: string;
-  builders: BuilderItem[];
-  channelPartners: Array<{
-    id: string;
-    name: string;
-    phone?: string | null;
-    email?: string | null;
-    address?: string | null;
-  }>;
-  onSelectBuilder: (builderName: string) => void;
-  onSelectCP: (cp: { id: string; name: string; phone?: string | null; address?: string | null }) => void;
-  onClear: () => void;
-}
-
-function SearchableBuilderCpSelect({
-  selectedType,
-  selectedName,
-  builders,
-  channelPartners,
-  onSelectBuilder,
-  onSelectCP,
-  onClear,
-}: SearchableBuilderCpSelectProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen]);
-
-  const cleanQuery = query.trim().toLowerCase();
-
-  const filteredBuilders = useMemo(() => {
-    if (!cleanQuery) return builders;
-    return builders.filter((b) => {
-      return (
-        b.name.toLowerCase().includes(cleanQuery) ||
-        (b.reraNumber && b.reraNumber.toLowerCase().includes(cleanQuery)) ||
-        (b.contactPerson && b.contactPerson.toLowerCase().includes(cleanQuery)) ||
-        (b.phone && b.phone.includes(cleanQuery))
-      );
-    });
-  }, [builders, cleanQuery]);
-
-  const filteredCPs = useMemo(() => {
-    if (!cleanQuery) return channelPartners;
-    return channelPartners.filter((cp) => {
-      return (
-        (cp.name && cp.name.toLowerCase().includes(cleanQuery)) ||
-        (cp.phone && cp.phone.includes(cleanQuery)) ||
-        (cp.address && cp.address.toLowerCase().includes(cleanQuery))
-      );
-    });
-  }, [channelPartners, cleanQuery]);
-
-  const totalResults = filteredBuilders.length + filteredCPs.length;
-
-  return (
-    <div ref={dropdownRef} className="relative w-full">
-      {/* Trigger Button */}
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full glass-input px-3 py-2 rounded-xl text-xs flex items-center justify-between cursor-pointer border transition-all ${
-          isOpen
-            ? 'ring-2 ring-sky-500 border-sky-500 bg-white dark:bg-slate-900'
-            : 'bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700'
-        }`}
-      >
-        <div className="flex items-center gap-2 truncate">
-          {selectedType === 'BUILDER' && selectedName ? (
-            <span className="flex items-center gap-1.5 font-bold text-sky-600 dark:text-sky-400 truncate">
-              <span>🏢</span>
-              <span className="truncate">{selectedName}</span>
-              <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shrink-0">
-                Builder
-              </span>
-            </span>
-          ) : selectedType === 'CP' && selectedName ? (
-            <span className="flex items-center gap-1.5 font-bold text-teal-600 dark:text-teal-400 truncate">
-              <span>🤝</span>
-              <span className="truncate">{selectedName}</span>
-              <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 shrink-0">
-                Channel Partner
-              </span>
-            </span>
-          ) : (
-            <span className="text-slate-400 flex items-center gap-1.5 truncate">
-              <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span className="truncate">-- Search & Select Builder / CP ({builders.length + channelPartners.length} options) --</span>
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1 shrink-0 ml-2">
-          {selectedName && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onClear();
-              }}
-              className="p-1 text-slate-400 hover:text-rose-500 rounded-lg transition"
-              title="Clear selection"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-          <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-        </div>
-      </div>
-
-      {/* Dropdown Popover */}
-      {isOpen && (
-        <div className="absolute left-0 top-full mt-1.5 z-50 w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-          {/* Instant Search Bar */}
-          <div className="p-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                ref={inputRef}
-                type="text"
-                placeholder={`Search ${builders.length + channelPartners.length} Builders & CPs by name, RERA, phone...`}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="w-full pl-8 pr-7 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500"
-              />
-              {query && (
-                <button
-                  type="button"
-                  onClick={() => setQuery('')}
-                  className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1 px-1">
-              <span>{totalResults} matches found</span>
-              <span>🏢 {filteredBuilders.length} Builders &bull; 🤝 {filteredCPs.length} CPs</span>
-            </div>
-          </div>
-
-          {/* Options List */}
-          <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60 p-1">
-            {totalResults === 0 ? (
-              <div className="py-6 text-center text-xs text-slate-400">
-                No Builder or Channel Partner matching "{query}"
-              </div>
-            ) : (
-              <>
-                {/* Builders Group */}
-                {filteredBuilders.length > 0 && (
-                  <div>
-                    <div className="px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-sky-700 dark:text-sky-300 bg-sky-50/70 dark:bg-sky-950/40 rounded-lg flex items-center justify-between my-1">
-                      <span>🏢 Builders ({filteredBuilders.length})</span>
-                    </div>
-                    {filteredBuilders.map((b) => (
-                      <div
-                        key={b.id}
-                        onClick={() => {
-                          onSelectBuilder(b.name);
-                          setIsOpen(false);
-                          setQuery('');
-                        }}
-                        className={`px-3 py-2 rounded-xl text-xs cursor-pointer transition flex items-center justify-between hover:bg-sky-50 dark:hover:bg-sky-950/40 ${
-                          selectedType === 'BUILDER' && selectedName === b.name
-                            ? 'bg-sky-500/10 font-bold text-sky-600 dark:text-sky-400'
-                            : 'text-slate-700 dark:text-slate-200'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-bold flex items-center gap-1.5 truncate">
-                            <span>🏢 {b.name}</span>
-                            {b.reraNumber && (
-                              <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 shrink-0">
-                                RERA: {b.reraNumber}
-                              </span>
-                            )}
-                          </div>
-                          {(b.contactPerson || b.phone) && (
-                            <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {b.contactPerson ? `${b.contactPerson} ` : ''}
-                              {b.phone ? `• 📞 ${b.phone}` : ''}
-                            </div>
-                          )}
-                        </div>
-                        {selectedType === 'BUILDER' && selectedName === b.name && (
-                          <CheckCircle2 className="w-4 h-4 text-sky-600 shrink-0" />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Channel Partners Group */}
-                {filteredCPs.length > 0 && (
-                  <div className="pt-1">
-                    <div className="px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-teal-700 dark:text-teal-300 bg-teal-50/70 dark:bg-teal-950/40 rounded-lg flex items-center justify-between my-1">
-                      <span>🤝 Channel Partners ({filteredCPs.length})</span>
-                    </div>
-                    {filteredCPs.map((cp) => (
-                      <div
-                        key={cp.id}
-                        onClick={() => {
-                          onSelectCP(cp);
-                          setIsOpen(false);
-                          setQuery('');
-                        }}
-                        className={`px-3 py-2 rounded-xl text-xs cursor-pointer transition flex items-center justify-between hover:bg-teal-50 dark:hover:bg-teal-950/40 ${
-                          selectedType === 'CP' && (selectedName === cp.name || selectedName === cp.id)
-                            ? 'bg-teal-500/10 font-bold text-teal-600 dark:text-teal-400'
-                            : 'text-slate-700 dark:text-slate-200'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-bold flex items-center gap-1.5 truncate">
-                            <span>🤝 {cp.name || 'Unnamed CP'}</span>
-                          </div>
-                          {(cp.phone || cp.address) && (
-                            <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {cp.phone ? `📞 ${cp.phone} ` : ''}
-                              {cp.address ? `• 📍 ${cp.address}` : ''}
-                            </div>
-                          )}
-                        </div>
-                        {selectedType === 'CP' && (selectedName === cp.name || selectedName === cp.id) && (
-                          <CheckCircle2 className="w-4 h-4 text-teal-600 shrink-0" />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+// SearchableBuilderCpSelect is imported from ./SearchableBuilderCpSelect
 
 export default function VisitTrackerClient({
   initialVisits = [],
@@ -487,6 +241,7 @@ export default function VisitTrackerClient({
   isTeamLeader = false,
   builders = [],
   channelPartners = [],
+  clients = [],
 }: Props) {
   const router = useRouter();
   const [visits, setVisits] = useState<VisitItem[]>(initialVisits);
@@ -552,10 +307,13 @@ export default function VisitTrackerClient({
   const [projectFilter, setProjectFilter] = useState('ALL');
   const [priceRangeFilter, setPriceRangeFilter] = useState('ALL');
   const [builderFilter, setBuilderFilter] = useState('ALL');
+  const [dateFilter, setDateFilter] = useState('');
+  const [staffFilter, setStaffFilter] = useState('ALL');
 
-  // View Mode: 'LIST' | 'BUILDER_GROUPED'
-  const [viewMode, setViewMode] = useState<'LIST' | 'BUILDER_GROUPED'>('LIST');
+  // View Mode: 'LIST' | 'BUILDER_GROUPED' | 'STAFF_DATE_GROUPED'
+  const [viewMode, setViewMode] = useState<'LIST' | 'BUILDER_GROUPED' | 'STAFF_DATE_GROUPED'>('LIST');
   const [expandedBuilders, setExpandedBuilders] = useState<Record<string, boolean>>({});
+  const [expandedStaff, setExpandedStaff] = useState<Record<string, boolean>>({});
 
   // Builder Management Modal (Super Admin & Team Leader)
   const canManageBuilders = isSuperAdmin || isTeamLeader;
@@ -684,13 +442,15 @@ export default function VisitTrackerClient({
   // Handle Selecting a Builder from Directory Dropdown
   const handleSelectBuilder = (builderName: string, isEdit: boolean = false) => {
     const matched = buildersList.find((b) => b.name === builderName);
+    const builderContact = [matched?.phone, matched?.email].filter(Boolean).join(' / ');
     if (isEdit) {
       setEditForm((prev) => ({
         ...prev,
         builderName,
+        clientPhone: prev.clientPhone || matched?.phone || '',
         concernedPersonName: prev.concernedPersonName || matched?.contactPerson || '',
         concernedPersonDesignation: prev.concernedPersonDesignation || matched?.designation || '',
-        concernedPersonContact: prev.concernedPersonContact || matched?.phone || '',
+        concernedPersonContact: prev.concernedPersonContact || builderContact || '',
         officeAddress: prev.officeAddress || matched?.officeAddress || '',
         approvedBanks: prev.approvedBanks || matched?.approvedBanks || '',
         reraStatus: prev.reraStatus || (matched?.reraNumber ? `RERA: ${matched.reraNumber}` : ''),
@@ -699,9 +459,10 @@ export default function VisitTrackerClient({
       setForm((prev) => ({
         ...prev,
         builderName,
+        clientPhone: prev.clientPhone || matched?.phone || '',
         concernedPersonName: prev.concernedPersonName || matched?.contactPerson || '',
         concernedPersonDesignation: prev.concernedPersonDesignation || matched?.designation || '',
-        concernedPersonContact: prev.concernedPersonContact || matched?.phone || '',
+        concernedPersonContact: prev.concernedPersonContact || builderContact || '',
         officeAddress: prev.officeAddress || matched?.officeAddress || '',
         approvedBanks: prev.approvedBanks || matched?.approvedBanks || '',
         reraStatus: prev.reraStatus || (matched?.reraNumber ? `RERA: ${matched.reraNumber}` : ''),
@@ -1030,9 +791,98 @@ export default function VisitTrackerClient({
         }
       }
 
+      // Date Picker Filter (DD/MM/YYYY)
+      if (dateFilter.trim()) {
+        try {
+          const vDate = new Date(v.visitDate);
+          const dd = String(vDate.getDate()).padStart(2, '0');
+          const mm = String(vDate.getMonth() + 1).padStart(2, '0');
+          const yyyy = vDate.getFullYear();
+          const vDateStr = `${dd}/${mm}/${yyyy}`;
+          if (vDateStr !== dateFilter.trim()) {
+            return false;
+          }
+        } catch {
+          return false;
+        }
+      }
+
+      // Staff Executive Filter
+      if (staffFilter !== 'ALL') {
+        if (v.staffUserId !== staffFilter) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [visits, statusFilter, leadTypeFilter, projectTypeFilter, projectFilter, priceRangeFilter, builderFilter, searchTerm]);
+  }, [visits, statusFilter, leadTypeFilter, projectTypeFilter, projectFilter, priceRangeFilter, builderFilter, searchTerm, dateFilter, staffFilter]);
+
+  // Group visits by Staff -> Date for Staff Date-wise View
+  const groupedVisitsByStaffDate = useMemo(() => {
+    const staffMap = new Map<string, {
+      staffId: string;
+      staffName: string;
+      staffRole: string;
+      totalVisits: number;
+      dateGroups: Array<{
+        dateStr: string;
+        visits: VisitItem[];
+      }>;
+    }>();
+
+    const tempDateMap = new Map<string, Map<string, VisitItem[]>>();
+
+    for (const v of filteredVisits) {
+      const sId = v.staffUserId || 'unassigned';
+      const sName = v.staff?.name || 'Unassigned Staff';
+      const sRole = v.staff?.role || 'Staff';
+
+      if (!staffMap.has(sId)) {
+        staffMap.set(sId, {
+          staffId: sId,
+          staffName: sName,
+          staffRole: sRole,
+          totalVisits: 0,
+          dateGroups: [],
+        });
+        tempDateMap.set(sId, new Map());
+      }
+
+      const sEntry = staffMap.get(sId)!;
+      sEntry.totalVisits++;
+
+      let dateKey = 'Undated';
+      try {
+        const d = new Date(v.visitDate);
+        if (!isNaN(d.getTime())) {
+          const dd = String(d.getDate()).padStart(2, '0');
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const yyyy = d.getFullYear();
+          dateKey = `${dd}/${mm}/${yyyy}`;
+        }
+      } catch {}
+
+      const dMap = tempDateMap.get(sId)!;
+      if (!dMap.has(dateKey)) {
+        dMap.set(dateKey, []);
+      }
+      dMap.get(dateKey)!.push(v);
+    }
+
+    // Convert dates map to array
+    staffMap.forEach((entry, sId) => {
+      const dMap = tempDateMap.get(sId);
+      if (dMap) {
+        entry.dateGroups = Array.from(dMap.entries()).map(([dateStr, vList]) => ({
+          dateStr,
+          visits: vList,
+        }));
+      }
+    });
+
+    return Array.from(staffMap.values()).sort((a, b) => b.totalVisits - a.totalVisits);
+  }, [filteredVisits]);
 
   // Group visits by Builder Name for Multi-Sales Combine View
   const groupedVisitsByBuilder = useMemo(() => {
@@ -1107,11 +957,16 @@ export default function VisitTrackerClient({
       result = result.filter((item) => item.builderName.toLowerCase() === builderFilter.toLowerCase());
     }
 
+    // When staff is filtered, show only builders that have visits by that staff
+    if (staffFilter !== 'ALL') {
+      result = result.filter((item) => item.totalVisits > 0);
+    }
+
     return result.sort((a, b) => {
       if (b.totalVisits !== a.totalVisits) return b.totalVisits - a.totalVisits;
       return a.builderName.localeCompare(b.builderName);
     });
-  }, [filteredVisits, buildersList, builderFilter]);
+  }, [filteredVisits, buildersList, builderFilter, staffFilter]);
 
   const stats = useMemo(() => {
     let scheduled = 0;
@@ -1125,7 +980,12 @@ export default function VisitTrackerClient({
     let warmLeads = 0;
     let coldLeads = 0;
 
-    visits.forEach((v) => {
+    // Calculate tiles dynamically for selected staff (or all staff if ALL is selected)
+    const targetVisits = staffFilter !== 'ALL'
+      ? visits.filter((v) => v.staffUserId === staffFilter)
+      : visits;
+
+    targetVisits.forEach((v) => {
       if (v.status === 'SCHEDULED') {
         scheduled++;
         const timer = getFollowUpTimerInfo(v);
@@ -1153,12 +1013,12 @@ export default function VisitTrackerClient({
       cancelled,
       todayVisits,
       overdueFollowUps,
-      total: visits.length,
+      total: targetVisits.length,
       hotLeads,
       warmLeads,
       coldLeads,
     };
-  }, [visits]);
+  }, [visits, staffFilter]);
 
   const handleScheduleVisit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1364,8 +1224,32 @@ export default function VisitTrackerClient({
     exportToCSV(`visits_report_${new Date().toISOString().slice(0, 10)}`, rows);
   };
 
+  const selectedStaffUser = staffUsers.find((u) => u.id === staffFilter);
+
   return (
     <div className="space-y-6">
+      {/* Active Staff Filter Banner */}
+      {selectedStaffUser && (
+        <div className="flex items-center justify-between p-3 px-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-700 dark:text-indigo-300 animate-in fade-in">
+          <span className="font-semibold flex items-center gap-1.5 flex-wrap">
+            <span className="p-1 rounded-lg bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-400">👤</span>
+            <span>Filtering by Staff:</span>
+            <strong className="underline underline-offset-2">{selectedStaffUser.name} ({selectedStaffUser.role})</strong>
+            <span className="text-[11px] font-normal text-indigo-600/80 dark:text-indigo-400/80 ml-1">
+              • Metrics tiles &amp; all 3 tabs are showing only this staff member&apos;s data
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setStaffFilter('ALL')}
+            className="text-indigo-600 dark:text-indigo-400 hover:text-rose-600 font-bold flex items-center gap-1 transition cursor-pointer shrink-0 ml-2"
+            title="Reset staff filter to show all staff"
+          >
+            <X className="w-3.5 h-3.5" /> Show All Staff
+          </button>
+        </div>
+      )}
+
       {/* Top Metrics Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div className="glass-panel p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
@@ -1373,7 +1257,9 @@ export default function VisitTrackerClient({
             Total Visits
           </span>
           <div className="text-2xl font-extrabold text-slate-900 dark:text-white">{stats.total}</div>
-          <span className="text-[10px] text-slate-400">All recorded visits</span>
+          <span className="text-[10px] text-slate-400 truncate block">
+            {selectedStaffUser ? `Visits by ${selectedStaffUser.name}` : 'All recorded visits'}
+          </span>
         </div>
 
         <div className="glass-panel p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
@@ -1436,7 +1322,7 @@ export default function VisitTrackerClient({
       </div>
 
       {/* Filter & Action Bar */}
-      <div className="p-4 glass-panel rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+      <div className="p-4 glass-panel rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3 relative z-30">
         {/* View Mode Switcher & Directory Controls */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
@@ -1468,6 +1354,22 @@ export default function VisitTrackerClient({
               <span>Combined by Builder</span>
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 font-extrabold">
                 {groupedVisitsByBuilder.length} Builders
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setViewMode('STAFF_DATE_GROUPED')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                viewMode === 'STAFF_DATE_GROUPED'
+                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <User className="w-3.5 h-3.5 text-sky-500" />
+              <span>Staff Date-wise Visits</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-sky-100 dark:bg-sky-900/50 text-sky-600 dark:text-sky-300 font-extrabold">
+                {groupedVisitsByStaffDate.length} Staff
               </span>
             </button>
           </div>
@@ -1503,6 +1405,46 @@ export default function VisitTrackerClient({
                 className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
               />
             </div>
+
+            {/* Date Picker Filter */}
+            <div className="flex items-center gap-1 relative z-40">
+              <DatePickerInput
+                placeholder="Visit Date (DD/MM/YYYY)"
+                value={dateFilter}
+                onChange={(val) => setDateFilter(val)}
+                className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 w-[170px]"
+                minYear={1990}
+                maxYear={2050}
+              />
+              {dateFilter && (
+                <button
+                  type="button"
+                  onClick={() => setDateFilter('')}
+                  className="p-1 rounded-lg text-slate-400 hover:text-rose-500 transition cursor-pointer"
+                  title="Clear Date Filter"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Staff Filter Dropdown */}
+            <select
+              value={staffFilter}
+              onChange={(e) => setStaffFilter(e.target.value)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition max-w-[190px] ${
+                staffFilter !== 'ALL'
+                  ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700 font-bold ring-2 ring-indigo-500/20'
+                  : 'bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              <option value="ALL">👤 All Staff ({staffUsers.length})</option>
+              {staffUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} ({u.role})
+                </option>
+              ))}
+            </select>
 
             {/* Builder Filter Dropdown */}
             <select
@@ -1585,7 +1527,7 @@ export default function VisitTrackerClient({
               <option value="PRICE_NOT_SPECIFIED">Price Not Specified</option>
             </select>
 
-            {(statusFilter !== 'ALL' || leadTypeFilter !== 'ALL' || projectTypeFilter !== 'ALL' || projectFilter !== 'ALL' || priceRangeFilter !== 'ALL' || builderFilter !== 'ALL' || searchTerm) && (
+            {(statusFilter !== 'ALL' || leadTypeFilter !== 'ALL' || projectTypeFilter !== 'ALL' || projectFilter !== 'ALL' || priceRangeFilter !== 'ALL' || builderFilter !== 'ALL' || searchTerm || dateFilter || staffFilter !== 'ALL') && (
               <button
                 onClick={() => {
                   setStatusFilter('ALL');
@@ -1595,6 +1537,8 @@ export default function VisitTrackerClient({
                   setPriceRangeFilter('ALL');
                   setBuilderFilter('ALL');
                   setSearchTerm('');
+                  setDateFilter('');
+                  setStaffFilter('ALL');
                 }}
                 className="text-[11px] text-rose-600 hover:underline px-2 py-1 font-semibold flex items-center gap-1 cursor-pointer"
               >
@@ -1616,15 +1560,12 @@ export default function VisitTrackerClient({
               </button>
             )}
 
-            <button
-              onClick={() => {
-                setModalTab('CORE');
-                setIsModalOpen(true);
-              }}
+            <Link
+              href="/visits/new"
               className="flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition shrink-0"
             >
               <Plus className="w-4 h-4" /> Schedule Visit
-            </button>
+            </Link>
           </div>
         </div>
 
@@ -1646,12 +1587,28 @@ export default function VisitTrackerClient({
               Project: {projectFilter}
             </span>
           )}
+          {dateFilter && (
+            <span className="px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 font-semibold flex items-center gap-1">
+              <span>Date: {dateFilter}</span>
+              <button type="button" onClick={() => setDateFilter('')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+          {staffFilter !== 'ALL' && (
+            <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-semibold flex items-center gap-1">
+              <span>Staff: {selectedStaffUser?.name || 'Selected Staff'}</span>
+              <button type="button" onClick={() => setStaffFilter('ALL')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
         </div>
       </div>
 
       {/* VIEW MODE 1: INDIVIDUAL VISITS TABLE */}
       {viewMode === 'LIST' && (
-        <div className="glass-panel rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+        <div className="glass-panel rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm relative z-10">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1240px] text-left text-xs border-collapse">
             <colgroup>
@@ -1998,7 +1955,7 @@ export default function VisitTrackerClient({
 
       {/* VIEW MODE 2: COMBINED MULTI-SALES GROUPED BY BUILDER */}
       {viewMode === 'BUILDER_GROUPED' && (
-        <div className="space-y-4">
+        <div className="space-y-4 relative z-10">
           {groupedVisitsByBuilder.length === 0 ? (
             <div className="p-12 text-center text-slate-400 glass-panel rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
               <Building2 className="w-10 h-10 mx-auto mb-2 text-slate-300 dark:text-slate-600" />
@@ -2292,6 +2249,200 @@ export default function VisitTrackerClient({
                           </table>
                         </div>
                       )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* VIEW MODE 3: STAFF DATE-WISE VISITS BREAKDOWN */}
+      {viewMode === 'STAFF_DATE_GROUPED' && (
+        <div className="space-y-4 relative z-10">
+          {groupedVisitsByStaffDate.length === 0 ? (
+            <div className="p-12 text-center glass-panel rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-500">
+              No visits found matching your filters.
+            </div>
+          ) : (
+            groupedVisitsByStaffDate.map((staffGroup) => {
+              const isStaffExpanded = expandedStaff[staffGroup.staffId] !== false; // default open
+              return (
+                <div
+                  key={staffGroup.staffId}
+                  className="glass-panel rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm transition-all"
+                >
+                  {/* Staff Header Card */}
+                  <div className="p-4 bg-gradient-to-r from-slate-50 via-sky-50/30 to-indigo-50/20 dark:from-slate-800/80 dark:to-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white font-black flex items-center justify-center text-sm shadow-sm">
+                        {staffGroup.staffName.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                            {staffGroup.staffName}
+                          </h3>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300">
+                            {staffGroup.staffRole}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Total Visits: <strong className="text-slate-800 dark:text-slate-200">{staffGroup.totalVisits}</strong> across {staffGroup.dateGroups.length} distinct date(s)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedStaff((prev) => ({
+                            ...prev,
+                            [staffGroup.staffId]: !isStaffExpanded,
+                          }))
+                        }
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center gap-1 cursor-pointer"
+                      >
+                        {isStaffExpanded ? (
+                          <>
+                            <ChevronUp className="w-3.5 h-3.5" /> Collapse
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="w-3.5 h-3.5" /> View {staffGroup.dateGroups.length} Dates
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Date Groups for this Staff Member */}
+                  {isStaffExpanded && (
+                    <div className="p-4 space-y-4 bg-slate-50/50 dark:bg-slate-900/50">
+                      {staffGroup.dateGroups.map((dGroup) => (
+                        <div
+                          key={dGroup.dateStr}
+                          className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs"
+                        >
+                          <div className="px-3.5 py-2 bg-slate-100/70 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                            <div className="flex items-center gap-2 font-bold text-xs text-slate-800 dark:text-slate-200">
+                              <Calendar className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                              <span>Visit Date: <strong className="text-indigo-600 dark:text-indigo-400">{dGroup.dateStr}</strong></span>
+                            </div>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                              {dGroup.visits.length} Visit{dGroup.visits.length > 1 ? 's' : ''}
+                            </span>
+                          </div>
+
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs text-left">
+                              <thead className="bg-slate-50 dark:bg-slate-800/40 text-[10px] text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-100 dark:border-slate-800">
+                                <tr>
+                                  <th className="py-2 px-3">Time</th>
+                                  <th className="py-2 px-3">Client / Builder / CP</th>
+                                  <th className="py-2 px-3">Project / Property</th>
+                                  <th className="py-2 px-3">Objective</th>
+                                  <th className="py-2 px-3 text-center">Status</th>
+                                  <th className="py-2 px-3 text-center">Follow-Up</th>
+                                  <th className="py-2 px-3 text-right">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                                {dGroup.visits.map((v) => {
+                                  const timerInfo = getFollowUpTimerInfo(v);
+                                  const fuCount = v.followUps ? v.followUps.length : 0;
+                                  return (
+                                    <tr key={v.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition">
+                                      <td className="py-2.5 px-3 font-mono text-slate-600 dark:text-slate-300 font-semibold">
+                                        {v.visitTime || '11:00 AM'}
+                                      </td>
+                                      <td className="py-2.5 px-3">
+                                        <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                                          {v.builderName ? (
+                                            <span className="text-sky-600 dark:text-sky-400">🏢 {v.builderName}</span>
+                                          ) : v.cpName ? (
+                                            <span className="text-teal-600 dark:text-teal-400">🤝 {v.cpName}</span>
+                                          ) : (
+                                            <span>👤 {v.clientName}</span>
+                                          )}
+                                        </div>
+                                        {v.clientPhone && (
+                                          <div className="text-[10px] text-slate-400 font-mono">
+                                            📞 {v.clientPhone}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-2.5 px-3">
+                                        <div className="font-semibold text-slate-800 dark:text-slate-200">
+                                          {v.projectName || v.propertyAddress || '--'}
+                                        </div>
+                                        {v.priceRange && (
+                                          <div className="text-[10px] text-emerald-600 font-mono">
+                                            {v.priceRange}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-2.5 px-3">
+                                        <span className="px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
+                                          {v.visitType}
+                                        </span>
+                                      </td>
+                                      <td className="py-2.5 px-3 text-center">
+                                        <span
+                                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                            v.status === 'COMPLETED'
+                                              ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                                              : v.status === 'CANCELLED'
+                                              ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                                              : 'bg-sky-50 text-sky-600 border border-sky-200'
+                                          }`}
+                                        >
+                                          {v.status}
+                                        </span>
+                                      </td>
+                                      <td className="py-2.5 px-3 text-center">
+                                        <span className={`px-2 py-0.5 rounded-full text-[10px] ${timerInfo.badgeClass}`}>
+                                          {timerInfo.badgeText}
+                                        </span>
+                                      </td>
+                                      <td className="py-2.5 px-3 text-right">
+                                        <div className="flex items-center justify-end gap-1.5">
+                                          <button
+                                            onClick={() => setViewSpecsVisit(v)}
+                                            title="View Specs"
+                                            className="p-1 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                                          >
+                                            <Eye className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              setActiveFollowUpVisit(v);
+                                              setFollowUpRemark('');
+                                            }}
+                                            title="Follow-ups"
+                                            className="p-1 rounded text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950 font-bold text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                          >
+                                            <MessageSquare className="w-3.5 h-3.5" /> ({fuCount})
+                                          </button>
+                                          <button
+                                            onClick={() => handleOpenEdit(v)}
+                                            title="Edit Visit"
+                                            className="p-1 rounded text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950 cursor-pointer"
+                                          >
+                                            <Edit3 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -2786,20 +2937,32 @@ export default function VisitTrackerClient({
                         selectedName={form.builderName || form.cpName || ''}
                         builders={buildersList}
                         channelPartners={channelPartners}
+                        clients={clients}
                         onSelectBuilder={(bName) => {
                           handleSelectBuilder(bName, false);
                           setForm((prev) => ({ ...prev, cpName: '', cpContact: '', cpAddress: '' }));
                         }}
                         onSelectCP={(cp) => {
+                          const cpContactVal = [cp.phone, cp.email].filter(Boolean).join(' / ');
                           setForm((prev) => ({
                             ...prev,
                             builderName: '',
+                            clientName: prev.clientName || cp.name,
+                            clientPhone: prev.clientPhone || cp.phone || '',
                             cpName: cp.name,
                             cpContact: cp.phone || '',
                             cpAddress: cp.address || '',
                             concernedPersonName: prev.concernedPersonName || cp.name,
-                            concernedPersonContact: prev.concernedPersonContact || cp.phone || '',
+                            concernedPersonContact: prev.concernedPersonContact || cpContactVal || '',
                             officeAddress: prev.officeAddress || cp.address || '',
+                          }));
+                        }}
+                        onSelectClient={(c) => {
+                          setForm((prev) => ({
+                            ...prev,
+                            clientName: c.name,
+                            clientPhone: c.phone || prev.clientPhone,
+                            propertyAddress: [c.city, c.state].filter(Boolean).join(', ') || prev.propertyAddress,
                           }));
                         }}
                         onClear={() => {
@@ -3386,20 +3549,32 @@ export default function VisitTrackerClient({
                         selectedName={editForm.builderName || editForm.cpName || ''}
                         builders={buildersList}
                         channelPartners={channelPartners}
+                        clients={clients}
                         onSelectBuilder={(bName) => {
                           handleSelectBuilder(bName, true);
                           setEditForm((prev) => ({ ...prev, cpName: '', cpContact: '', cpAddress: '' }));
                         }}
                         onSelectCP={(cp) => {
+                          const cpContactVal = [cp.phone, cp.email].filter(Boolean).join(' / ');
                           setEditForm((prev) => ({
                             ...prev,
                             builderName: '',
+                            clientName: prev.clientName || cp.name,
+                            clientPhone: prev.clientPhone || cp.phone || '',
                             cpName: cp.name,
                             cpContact: cp.phone || '',
                             cpAddress: cp.address || '',
                             concernedPersonName: prev.concernedPersonName || cp.name,
-                            concernedPersonContact: prev.concernedPersonContact || cp.phone || '',
+                            concernedPersonContact: prev.concernedPersonContact || cpContactVal || '',
                             officeAddress: prev.officeAddress || cp.address || '',
+                          }));
+                        }}
+                        onSelectClient={(c) => {
+                          setEditForm((prev) => ({
+                            ...prev,
+                            clientName: c.name,
+                            clientPhone: c.phone || prev.clientPhone,
+                            propertyAddress: [c.city, c.state].filter(Boolean).join(', ') || prev.propertyAddress,
                           }));
                         }}
                         onClear={() => {

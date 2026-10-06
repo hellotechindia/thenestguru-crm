@@ -45,6 +45,8 @@ import {
   StickyNote,
   Tag,
   ShieldAlert,
+  XCircle,
+  GripVertical,
 } from 'lucide-react';
 import DatePickerInput from './DatePickerInput';
 
@@ -413,6 +415,10 @@ export default function TaskManagementClient({
   const [eisenhowerFilter, setEisenhowerFilter] = useState<'ALL' | EisenhowerQuadrantKey>('ALL');
   const [assigneeFilter, setAssigneeFilter] = useState('ALL');
   const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
+
+  // Eisenhower Matrix Drag & Drop state
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [dragOverQuad, setDragOverQuad] = useState<'DO_FIRST' | 'SCHEDULE' | 'DELEGATE' | 'ELIMINATE' | null>(null);
 
   // Modals & Drawers
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -931,21 +937,21 @@ export default function TaskManagementClient({
     }
   };
 
-  // Eisenhower Matrix grouping (Active tasks in Q1-Q4, completed tasks in Completed section)
+  // Eisenhower Matrix grouping (Active tasks in Q1-Q4, completed tasks in Completed section, cancelled tasks in Cancelled section)
   const activeEisenhowerTasks = useMemo(
     () => filteredTasks.filter((t) => t.status !== 'COMPLETED' && t.status !== 'CANCELLED'),
     [filteredTasks]
   );
   const q1Tasks = useMemo(
-    () => activeEisenhowerTasks.filter((t) => (t.isUrgent && t.isImportant) || t.priority === 'URGENT'),
+    () => activeEisenhowerTasks.filter((t) => (t.isUrgent && t.isImportant) || (t.isUrgent === undefined && t.priority === 'URGENT')),
     [activeEisenhowerTasks]
   );
   const q2Tasks = useMemo(
-    () => activeEisenhowerTasks.filter((t) => !t.isUrgent && (t.isImportant || t.priority === 'HIGH')),
+    () => activeEisenhowerTasks.filter((t) => (!t.isUrgent && t.isImportant) || (!t.isUrgent && !t.isImportant && t.priority === 'HIGH')),
     [activeEisenhowerTasks]
   );
   const q3Tasks = useMemo(
-    () => activeEisenhowerTasks.filter((t) => t.isUrgent && !t.isImportant && t.priority !== 'URGENT'),
+    () => activeEisenhowerTasks.filter((t) => t.isUrgent && !t.isImportant),
     [activeEisenhowerTasks]
   );
   const q4Tasks = useMemo(
@@ -955,6 +961,90 @@ export default function TaskManagementClient({
   const completedEisenhowerTasks = useMemo(
     () => filteredTasks.filter((t) => t.status === 'COMPLETED'),
     [filteredTasks]
+  );
+  const cancelledEisenhowerTasks = useMemo(
+    () => filteredTasks.filter((t) => t.status === 'CANCELLED'),
+    [filteredTasks]
+  );
+
+  // Helper to extract latest task remark (from comments or description)
+  const getTaskRemark = (task: TaskItem): string => {
+    if (task.comments && task.comments.length > 0) {
+      const latestComment = task.comments[task.comments.length - 1]?.content?.trim();
+      if (latestComment) return latestComment;
+    }
+    if (task.description && task.description.trim()) {
+      return task.description.trim();
+    }
+    return '';
+  };
+
+  // Drag and Drop handler to update task quadrant
+  const handleDropOnQuadrant = async (
+    taskId: string,
+    targetQuad: 'DO_FIRST' | 'SCHEDULE' | 'DELEGATE' | 'ELIMINATE'
+  ) => {
+    let targetUrgent = false;
+    let targetImportant = false;
+
+    if (targetQuad === 'DO_FIRST') {
+      targetUrgent = true;
+      targetImportant = true;
+    } else if (targetQuad === 'SCHEDULE') {
+      targetUrgent = false;
+      targetImportant = true;
+    } else if (targetQuad === 'DELEGATE') {
+      targetUrgent = true;
+      targetImportant = false;
+    } else {
+      // ELIMINATE / Backlog
+      targetUrgent = false;
+      targetImportant = false;
+    }
+
+    const res = await updateTaskEisenhowerAction(taskId, {
+      isUrgent: targetUrgent,
+      isImportant: targetImportant,
+    });
+
+    if (res.success) {
+      if (selectedTask && selectedTask.id === taskId) {
+        setSelectedTask((prev) =>
+          prev ? { ...prev, isUrgent: targetUrgent, isImportant: targetImportant } : null
+        );
+      }
+      router.refresh();
+    } else {
+      alert(res.error || 'Failed to update Eisenhower flags');
+    }
+  };
+
+  const renderEisenhowerTaskActions = (task: TaskItem) => (
+    <div className="flex items-center gap-1 shrink-0">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setSelectedTask(task);
+        }}
+        className="p-1 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-slate-800 transition cursor-pointer"
+        title="View Task Details & Comments"
+      >
+        <Eye className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setSelectedTask(task);
+          handleOpenEdit(task);
+        }}
+        className="p-1 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 transition cursor-pointer"
+        title="Edit Task"
+      >
+        <Edit3 className="w-3.5 h-3.5" />
+      </button>
+    </div>
   );
 
   return (
@@ -1330,13 +1420,35 @@ export default function TaskManagementClient({
               <strong>Eisenhower Time Management Matrix</strong> — Categorizes tasks by Urgency and Importance
             </span>
             <span className="text-[11px] font-mono text-slate-500">
-              Click Urgent / Important chips to seamlessly shift tasks between quadrants
+              Drag &amp; drop task cards between quadrants or click Urgent / Important chips to instantly reclassify
             </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Quadrant 1: Urgent & Important (DO FIRST) */}
-            <div className="glass-panel p-4 rounded-2xl border-2 border-rose-300 dark:border-rose-900/60 bg-rose-50/20 dark:bg-rose-950/10 space-y-3">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (dragOverQuad !== 'DO_FIRST') setDragOverQuad('DO_FIRST');
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                setDragOverQuad(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverQuad(null);
+                setDraggingTaskId(null);
+                const taskId = e.dataTransfer.getData('text/plain');
+                if (taskId) handleDropOnQuadrant(taskId, 'DO_FIRST');
+              }}
+              className={`glass-panel p-4 rounded-2xl border-2 transition-all space-y-3 ${
+                dragOverQuad === 'DO_FIRST'
+                  ? 'border-rose-500 ring-4 ring-rose-400/30 bg-rose-100/50 dark:bg-rose-900/30 scale-[1.01]'
+                  : 'border-rose-300 dark:border-rose-900/60 bg-rose-50/20 dark:bg-rose-950/10'
+              }`}
+            >
               <div className="flex items-center justify-between pb-2 border-b border-rose-200 dark:border-rose-900/40">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white uppercase">Q1</span>
@@ -1349,79 +1461,138 @@ export default function TaskManagementClient({
                   {q1Tasks.length}
                 </span>
               </div>
-              <p className="text-[11px] text-rose-700/80 dark:text-rose-400/80">Crises, urgent approvals, critical deadlines</p>
+              <p className="text-[11px] text-rose-700/80 dark:text-rose-400/80">Crises, urgent approvals, critical deadlines (Drag tasks here)</p>
+
+              {dragOverQuad === 'DO_FIRST' && (
+                <div className="p-2 text-center text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-100/80 dark:bg-rose-900/40 rounded-xl border-2 border-dashed border-rose-400 animate-pulse">
+                  Drop here to make Urgent &amp; Important (Q1)
+                </div>
+              )}
 
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
                 {q1Tasks.length === 0 ? (
                   <p className="text-xs text-slate-400 italic text-center py-8">No active tasks in Q1 (Clear!)</p>
                 ) : (
-                  q1Tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 shadow-sm space-y-2 hover:border-rose-400 transition-all"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <h4
-                          onClick={() => setSelectedTask(task)}
-                          className="text-xs font-bold text-slate-900 dark:text-white hover:text-rose-600 cursor-pointer line-clamp-2"
-                        >
-                          {task.title}
-                        </h4>
-                        <select
-                          value={task.status}
-                          onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
-                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
-                        >
-                          <option value="PENDING">Pending</option>
-                          <option value="IN_PROGRESS">In Progress</option>
-                          <option value="IN_REVIEW">Review</option>
-                          <option value="COMPLETED">Completed</option>
-                          <option value="CANCELLED">Cancelled</option>
-                        </select>
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">
-                          {task.assignedTo?.name || 'Unassigned'}
-                        </span>
-                        <div className="flex items-center gap-1 font-mono">
-                          <Timer className="w-3 h-3 text-indigo-500" />
-                          <span>{task.timeSpentMinutes || 0}m</span>
-                        </div>
-                        {(task.dueDate || task.dueTime) && (
-                          <div className="flex items-center gap-1 font-mono text-[9px] text-amber-600 dark:text-amber-400">
-                            <Clock className="w-2.5 h-2.5" />
-                            <span>
-                              {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
-                              {task.dueTime ? ` ${task.dueTime}` : ''}
-                            </span>
+                  q1Tasks.map((task) => {
+                    const remark = getTaskRemark(task);
+                    return (
+                      <div
+                        key={task.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('text/plain', task.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          setDraggingTaskId(task.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingTaskId(null);
+                          setDragOverQuad(null);
+                        }}
+                        className={`p-3 rounded-xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 shadow-sm space-y-2 hover:border-rose-400 transition-all cursor-grab active:cursor-grabbing ${
+                          draggingTaskId === task.id ? 'opacity-40 scale-[0.98]' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-1 flex-1 min-w-0">
+                            <GripVertical className="w-3.5 h-3.5 text-slate-400 shrink-0 cursor-grab" />
+                            <h4
+                              onClick={() => setSelectedTask(task)}
+                              className="text-xs font-bold text-slate-900 dark:text-white hover:text-rose-600 cursor-pointer line-clamp-2 truncate"
+                            >
+                              {task.title}
+                            </h4>
                           </div>
-                        )}
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                          >
-                            Urgent
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                          >
-                            Important
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {renderEisenhowerTaskActions(task)}
+                            <select
+                              value={task.status}
+                              onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
+                            >
+                              <option value="PENDING">Pending</option>
+                              <option value="IN_PROGRESS">In Progress</option>
+                              <option value="IN_REVIEW">Review</option>
+                              <option value="COMPLETED">Completed</option>
+                              <option value="CANCELLED">Cancelled</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Remark display */}
+                        <div className="text-[11px] bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800/80 text-slate-600 dark:text-slate-300">
+                          <span className="font-bold text-slate-700 dark:text-slate-200">Remark: </span>
+                          {remark ? (
+                            <span>{remark}</span>
+                          ) : (
+                            <span className="italic text-slate-400 dark:text-slate-500">No Remark Available</span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">
+                            {task.assignedTo?.name || 'Unassigned'}
+                          </span>
+                          <div className="flex items-center gap-1 font-mono">
+                            <Timer className="w-3 h-3 text-indigo-500" />
+                            <span>{task.timeSpentMinutes || 0}m</span>
+                          </div>
+                          {(task.dueDate || task.dueTime) && (
+                            <div className="flex items-center gap-1 font-mono text-[9px] text-amber-600 dark:text-amber-400">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>
+                                {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
+                                {task.dueTime ? ` ${task.dueTime}` : ''}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1.5 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                            >
+                              Urgent
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                            >
+                              Important
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
 
             {/* Quadrant 2: Not Urgent & Important (SCHEDULE) */}
-            <div className="glass-panel p-4 rounded-2xl border-2 border-emerald-300 dark:border-emerald-900/60 bg-emerald-50/20 dark:bg-emerald-950/10 space-y-3">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (dragOverQuad !== 'SCHEDULE') setDragOverQuad('SCHEDULE');
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                setDragOverQuad(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverQuad(null);
+                setDraggingTaskId(null);
+                const taskId = e.dataTransfer.getData('text/plain');
+                if (taskId) handleDropOnQuadrant(taskId, 'SCHEDULE');
+              }}
+              className={`glass-panel p-4 rounded-2xl border-2 transition-all space-y-3 ${
+                dragOverQuad === 'SCHEDULE'
+                  ? 'border-emerald-500 ring-4 ring-emerald-400/30 bg-emerald-100/50 dark:bg-emerald-900/30 scale-[1.01]'
+                  : 'border-emerald-300 dark:border-emerald-900/60 bg-emerald-50/20 dark:bg-emerald-950/10'
+              }`}
+            >
               <div className="flex items-center justify-between pb-2 border-b border-emerald-200 dark:border-emerald-900/40">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white uppercase">Q2</span>
@@ -1434,79 +1605,138 @@ export default function TaskManagementClient({
                   {q2Tasks.length}
                 </span>
               </div>
-              <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80">Planning, relationship building, preparation</p>
+              <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80">Planning, relationship building, preparation (Drag tasks here)</p>
+
+              {dragOverQuad === 'SCHEDULE' && (
+                <div className="p-2 text-center text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100/80 dark:bg-emerald-900/40 rounded-xl border-2 border-dashed border-emerald-400 animate-pulse">
+                  Drop here to make Important, Not Urgent (Q2)
+                </div>
+              )}
 
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
                 {q2Tasks.length === 0 ? (
                   <p className="text-xs text-slate-400 italic text-center py-8">No active tasks in Q2</p>
                 ) : (
-                  q2Tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 shadow-sm space-y-2 hover:border-emerald-400 transition-all"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <h4
-                          onClick={() => setSelectedTask(task)}
-                          className="text-xs font-bold text-slate-900 dark:text-white hover:text-emerald-600 cursor-pointer line-clamp-2"
-                        >
-                          {task.title}
-                        </h4>
-                        <select
-                          value={task.status}
-                          onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
-                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
-                        >
-                          <option value="PENDING">Pending</option>
-                          <option value="IN_PROGRESS">In Progress</option>
-                          <option value="IN_REVIEW">Review</option>
-                          <option value="COMPLETED">Completed</option>
-                          <option value="CANCELLED">Cancelled</option>
-                        </select>
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">
-                          {task.assignedTo?.name || 'Unassigned'}
-                        </span>
-                        <div className="flex items-center gap-1 font-mono">
-                          <Timer className="w-3 h-3 text-indigo-500" />
-                          <span>{task.timeSpentMinutes || 0}m</span>
-                        </div>
-                        {(task.dueDate || task.dueTime) && (
-                          <div className="flex items-center gap-1 font-mono text-[9px] text-emerald-600 dark:text-emerald-400">
-                            <Clock className="w-2.5 h-2.5" />
-                            <span>
-                              {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
-                              {task.dueTime ? ` ${task.dueTime}` : ''}
-                            </span>
+                  q2Tasks.map((task) => {
+                    const remark = getTaskRemark(task);
+                    return (
+                      <div
+                        key={task.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('text/plain', task.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          setDraggingTaskId(task.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingTaskId(null);
+                          setDragOverQuad(null);
+                        }}
+                        className={`p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 shadow-sm space-y-2 hover:border-emerald-400 transition-all cursor-grab active:cursor-grabbing ${
+                          draggingTaskId === task.id ? 'opacity-40 scale-[0.98]' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-1 flex-1 min-w-0">
+                            <GripVertical className="w-3.5 h-3.5 text-slate-400 shrink-0 cursor-grab" />
+                            <h4
+                              onClick={() => setSelectedTask(task)}
+                              className="text-xs font-bold text-slate-900 dark:text-white hover:text-emerald-600 cursor-pointer line-clamp-2 truncate"
+                            >
+                              {task.title}
+                            </h4>
                           </div>
-                        )}
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                          >
-                            Urgent
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                          >
-                            Important
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {renderEisenhowerTaskActions(task)}
+                            <select
+                              value={task.status}
+                              onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
+                            >
+                              <option value="PENDING">Pending</option>
+                              <option value="IN_PROGRESS">In Progress</option>
+                              <option value="IN_REVIEW">Review</option>
+                              <option value="COMPLETED">Completed</option>
+                              <option value="CANCELLED">Cancelled</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Remark display */}
+                        <div className="text-[11px] bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800/80 text-slate-600 dark:text-slate-300">
+                          <span className="font-bold text-slate-700 dark:text-slate-200">Remark: </span>
+                          {remark ? (
+                            <span>{remark}</span>
+                          ) : (
+                            <span className="italic text-slate-400 dark:text-slate-500">No Remark Available</span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">
+                            {task.assignedTo?.name || 'Unassigned'}
+                          </span>
+                          <div className="flex items-center gap-1 font-mono">
+                            <Timer className="w-3 h-3 text-indigo-500" />
+                            <span>{task.timeSpentMinutes || 0}m</span>
+                          </div>
+                          {(task.dueDate || task.dueTime) && (
+                            <div className="flex items-center gap-1 font-mono text-[9px] text-emerald-600 dark:text-emerald-400">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>
+                                {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
+                                {task.dueTime ? ` ${task.dueTime}` : ''}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1.5 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                            >
+                              Urgent
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                            >
+                              Important
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
 
             {/* Quadrant 3: Urgent & Not Important (DELEGATE) */}
-            <div className="glass-panel p-4 rounded-2xl border-2 border-sky-300 dark:border-sky-900/60 bg-sky-50/20 dark:bg-sky-950/10 space-y-3">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (dragOverQuad !== 'DELEGATE') setDragOverQuad('DELEGATE');
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                setDragOverQuad(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverQuad(null);
+                setDraggingTaskId(null);
+                const taskId = e.dataTransfer.getData('text/plain');
+                if (taskId) handleDropOnQuadrant(taskId, 'DELEGATE');
+              }}
+              className={`glass-panel p-4 rounded-2xl border-2 transition-all space-y-3 ${
+                dragOverQuad === 'DELEGATE'
+                  ? 'border-sky-500 ring-4 ring-sky-400/30 bg-sky-100/50 dark:bg-sky-900/30 scale-[1.01]'
+                  : 'border-sky-300 dark:border-sky-900/60 bg-sky-50/20 dark:bg-sky-950/10'
+              }`}
+            >
               <div className="flex items-center justify-between pb-2 border-b border-sky-200 dark:border-sky-900/40">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-600 text-white uppercase">Q3</span>
@@ -1519,79 +1749,138 @@ export default function TaskManagementClient({
                   {q3Tasks.length}
                 </span>
               </div>
-              <p className="text-[11px] text-sky-700/80 dark:text-sky-400/80">Routine follow-ups, minor interruptions, quick requests</p>
+              <p className="text-[11px] text-sky-700/80 dark:text-sky-400/80">Routine follow-ups, minor interruptions, quick requests (Drag tasks here)</p>
+
+              {dragOverQuad === 'DELEGATE' && (
+                <div className="p-2 text-center text-xs font-bold text-sky-700 dark:text-sky-300 bg-sky-100/80 dark:bg-sky-900/40 rounded-xl border-2 border-dashed border-sky-400 animate-pulse">
+                  Drop here to make Urgent, Not Important (Q3)
+                </div>
+              )}
 
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
                 {q3Tasks.length === 0 ? (
                   <p className="text-xs text-slate-400 italic text-center py-8">No active tasks in Q3</p>
                 ) : (
-                  q3Tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-sky-200 dark:border-sky-900/60 shadow-sm space-y-2 hover:border-sky-400 transition-all"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <h4
-                          onClick={() => setSelectedTask(task)}
-                          className="text-xs font-bold text-slate-900 dark:text-white hover:text-sky-600 cursor-pointer line-clamp-2"
-                        >
-                          {task.title}
-                        </h4>
-                        <select
-                          value={task.status}
-                          onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
-                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
-                        >
-                          <option value="PENDING">Pending</option>
-                          <option value="IN_PROGRESS">In Progress</option>
-                          <option value="IN_REVIEW">Review</option>
-                          <option value="COMPLETED">Completed</option>
-                          <option value="CANCELLED">Cancelled</option>
-                        </select>
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">
-                          {task.assignedTo?.name || 'Unassigned'}
-                        </span>
-                        <div className="flex items-center gap-1 font-mono">
-                          <Timer className="w-3 h-3 text-indigo-500" />
-                          <span>{task.timeSpentMinutes || 0}m</span>
-                        </div>
-                        {(task.dueDate || task.dueTime) && (
-                          <div className="flex items-center gap-1 font-mono text-[9px] text-sky-600 dark:text-sky-400">
-                            <Clock className="w-2.5 h-2.5" />
-                            <span>
-                              {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
-                              {task.dueTime ? ` ${task.dueTime}` : ''}
-                            </span>
+                  q3Tasks.map((task) => {
+                    const remark = getTaskRemark(task);
+                    return (
+                      <div
+                        key={task.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('text/plain', task.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          setDraggingTaskId(task.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingTaskId(null);
+                          setDragOverQuad(null);
+                        }}
+                        className={`p-3 rounded-xl bg-white dark:bg-slate-900 border border-sky-200 dark:border-sky-900/60 shadow-sm space-y-2 hover:border-sky-400 transition-all cursor-grab active:cursor-grabbing ${
+                          draggingTaskId === task.id ? 'opacity-40 scale-[0.98]' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-1 flex-1 min-w-0">
+                            <GripVertical className="w-3.5 h-3.5 text-slate-400 shrink-0 cursor-grab" />
+                            <h4
+                              onClick={() => setSelectedTask(task)}
+                              className="text-xs font-bold text-slate-900 dark:text-white hover:text-sky-600 cursor-pointer line-clamp-2 truncate"
+                            >
+                              {task.title}
+                            </h4>
                           </div>
-                        )}
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                          >
-                            Urgent
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                          >
-                            Important
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {renderEisenhowerTaskActions(task)}
+                            <select
+                              value={task.status}
+                              onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
+                            >
+                              <option value="PENDING">Pending</option>
+                              <option value="IN_PROGRESS">In Progress</option>
+                              <option value="IN_REVIEW">Review</option>
+                              <option value="COMPLETED">Completed</option>
+                              <option value="CANCELLED">Cancelled</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Remark display */}
+                        <div className="text-[11px] bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800/80 text-slate-600 dark:text-slate-300">
+                          <span className="font-bold text-slate-700 dark:text-slate-200">Remark: </span>
+                          {remark ? (
+                            <span>{remark}</span>
+                          ) : (
+                            <span className="italic text-slate-400 dark:text-slate-500">No Remark Available</span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">
+                            {task.assignedTo?.name || 'Unassigned'}
+                          </span>
+                          <div className="flex items-center gap-1 font-mono">
+                            <Timer className="w-3 h-3 text-indigo-500" />
+                            <span>{task.timeSpentMinutes || 0}m</span>
+                          </div>
+                          {(task.dueDate || task.dueTime) && (
+                            <div className="flex items-center gap-1 font-mono text-[9px] text-sky-600 dark:text-sky-400">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>
+                                {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
+                                {task.dueTime ? ` ${task.dueTime}` : ''}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1.5 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                            >
+                              Urgent
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                            >
+                              Important
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
 
             {/* Quadrant 4: Not Urgent & Not Important (ELIMINATE) */}
-            <div className="glass-panel p-4 rounded-2xl border-2 border-slate-300 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30 space-y-3">
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (dragOverQuad !== 'ELIMINATE') setDragOverQuad('ELIMINATE');
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                setDragOverQuad(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverQuad(null);
+                setDraggingTaskId(null);
+                const taskId = e.dataTransfer.getData('text/plain');
+                if (taskId) handleDropOnQuadrant(taskId, 'ELIMINATE');
+              }}
+              className={`glass-panel p-4 rounded-2xl border-2 transition-all space-y-3 ${
+                dragOverQuad === 'ELIMINATE'
+                  ? 'border-slate-500 ring-4 ring-slate-400/30 bg-slate-200/50 dark:bg-slate-800/40 scale-[1.01]'
+                  : 'border-slate-300 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30'
+              }`}
+            >
               <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-500 text-white uppercase">Q4</span>
@@ -1604,73 +1893,110 @@ export default function TaskManagementClient({
                   {q4Tasks.length}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500">Low-priority backlog, optional research, non-pressing items</p>
+              <p className="text-[11px] text-slate-500">Low-priority backlog, optional research, non-pressing items (Drag tasks here)</p>
+
+              {dragOverQuad === 'ELIMINATE' && (
+                <div className="p-2 text-center text-xs font-bold text-slate-700 dark:text-slate-300 bg-slate-200/80 dark:bg-slate-800/60 rounded-xl border-2 border-dashed border-slate-400 animate-pulse">
+                  Drop here to make Neither Urgent nor Important (Q4)
+                </div>
+              )}
 
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
                 {q4Tasks.length === 0 ? (
                   <p className="text-xs text-slate-400 italic text-center py-8">No active tasks in Q4</p>
                 ) : (
-                  q4Tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2 hover:border-slate-400 transition-all"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <h4
-                          onClick={() => setSelectedTask(task)}
-                          className="text-xs font-bold text-slate-900 dark:text-white hover:text-slate-600 cursor-pointer line-clamp-2"
-                        >
-                          {task.title}
-                        </h4>
-                        <select
-                          value={task.status}
-                          onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
-                          className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
-                        >
-                          <option value="PENDING">Pending</option>
-                          <option value="IN_PROGRESS">In Progress</option>
-                          <option value="IN_REVIEW">Review</option>
-                          <option value="COMPLETED">Completed</option>
-                          <option value="CANCELLED">Cancelled</option>
-                        </select>
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">
-                          {task.assignedTo?.name || 'Unassigned'}
-                        </span>
-                        <div className="flex items-center gap-1 font-mono">
-                          <Timer className="w-3 h-3 text-indigo-500" />
-                          <span>{task.timeSpentMinutes || 0}m</span>
-                        </div>
-                        {(task.dueDate || task.dueTime) && (
-                          <div className="flex items-center gap-1 font-mono text-[9px] text-slate-500">
-                            <Clock className="w-2.5 h-2.5" />
-                            <span>
-                              {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
-                              {task.dueTime ? ` ${task.dueTime}` : ''}
-                            </span>
+                  q4Tasks.map((task) => {
+                    const remark = getTaskRemark(task);
+                    return (
+                      <div
+                        key={task.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('text/plain', task.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          setDraggingTaskId(task.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingTaskId(null);
+                          setDragOverQuad(null);
+                        }}
+                        className={`p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-2 hover:border-slate-400 transition-all cursor-grab active:cursor-grabbing ${
+                          draggingTaskId === task.id ? 'opacity-40 scale-[0.98]' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-1 flex-1 min-w-0">
+                            <GripVertical className="w-3.5 h-3.5 text-slate-400 shrink-0 cursor-grab" />
+                            <h4
+                              onClick={() => setSelectedTask(task)}
+                              className="text-xs font-bold text-slate-900 dark:text-white hover:text-slate-600 cursor-pointer line-clamp-2 truncate"
+                            >
+                              {task.title}
+                            </h4>
                           </div>
-                        )}
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                          >
-                            Urgent
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                          >
-                            Important
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {renderEisenhowerTaskActions(task)}
+                            <select
+                              value={task.status}
+                              onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800"
+                            >
+                              <option value="PENDING">Pending</option>
+                              <option value="IN_PROGRESS">In Progress</option>
+                              <option value="IN_REVIEW">Review</option>
+                              <option value="COMPLETED">Completed</option>
+                              <option value="CANCELLED">Cancelled</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Remark display */}
+                        <div className="text-[11px] bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800/80 text-slate-600 dark:text-slate-300">
+                          <span className="font-bold text-slate-700 dark:text-slate-200">Remark: </span>
+                          {remark ? (
+                            <span>{remark}</span>
+                          ) : (
+                            <span className="italic text-slate-400 dark:text-slate-500">No Remark Available</span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">
+                            {task.assignedTo?.name || 'Unassigned'}
+                          </span>
+                          <div className="flex items-center gap-1 font-mono">
+                            <Timer className="w-3 h-3 text-indigo-500" />
+                            <span>{task.timeSpentMinutes || 0}m</span>
+                          </div>
+                          {(task.dueDate || task.dueTime) && (
+                            <div className="flex items-center gap-1 font-mono text-[9px] text-slate-500">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>
+                                {task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-IN') : ''}
+                                {task.dueTime ? ` ${task.dueTime}` : ''}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1.5 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'urgent')}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isUrgent ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                            >
+                              Urgent
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEisenhower(task.id, !!task.isUrgent, !!task.isImportant, 'important')}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${task.isImportant ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                            >
+                              Important
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -1700,48 +2026,150 @@ export default function TaskManagementClient({
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1">
-                {completedEisenhowerTasks.map((task) => (
-                  <div
-                    key={task.id}
-                    className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 shadow-xs space-y-2 opacity-95 hover:opacity-100 transition-all hover:border-emerald-400"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <h4
-                        onClick={() => setSelectedTask(task)}
-                        className="text-xs font-bold text-slate-700 dark:text-slate-300 line-through decoration-emerald-500 hover:text-emerald-600 cursor-pointer line-clamp-2"
-                      >
-                        {task.title}
-                      </h4>
-                      <select
-                        value={task.status}
-                        onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
-                        className="text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 cursor-pointer"
-                      >
-                        <option value="COMPLETED">Completed</option>
-                        <option value="PENDING">Re-open (Pending)</option>
-                        <option value="IN_PROGRESS">In Progress</option>
-                        <option value="IN_REVIEW">Review</option>
-                        <option value="CANCELLED">Cancelled</option>
-                      </select>
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">
-                        {task.assignedTo?.name || 'Unassigned'}
-                      </span>
-                      <div className="flex items-center gap-1 font-mono text-emerald-600 dark:text-emerald-400">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>Done</span>
-                      </div>
-                      {task.timeSpentMinutes ? (
-                        <div className="flex items-center gap-1 font-mono text-indigo-500">
-                          <Timer className="w-3 h-3 text-indigo-500" />
-                          <span>{task.timeSpentMinutes}m</span>
+                {completedEisenhowerTasks.map((task) => {
+                  const remark = getTaskRemark(task);
+                  return (
+                    <div
+                      key={task.id}
+                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 shadow-xs space-y-2 opacity-95 hover:opacity-100 transition-all hover:border-emerald-400"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4
+                          onClick={() => setSelectedTask(task)}
+                          className="text-xs font-bold text-slate-700 dark:text-slate-300 line-through decoration-emerald-500 hover:text-emerald-600 cursor-pointer line-clamp-2 flex-1"
+                        >
+                          {task.title}
+                        </h4>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {renderEisenhowerTaskActions(task)}
+                          <select
+                            value={task.status}
+                            onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 cursor-pointer"
+                          >
+                            <option value="COMPLETED">Completed</option>
+                            <option value="PENDING">Re-open (Pending)</option>
+                            <option value="IN_PROGRESS">In Progress</option>
+                            <option value="IN_REVIEW">Review</option>
+                            <option value="CANCELLED">Cancelled</option>
+                          </select>
                         </div>
-                      ) : null}
+                      </div>
+
+                      {/* Remark display */}
+                      <div className="text-[11px] bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800/80 text-slate-600 dark:text-slate-300">
+                        <span className="font-bold text-slate-700 dark:text-slate-200">Remark: </span>
+                        {remark ? (
+                          <span>{remark}</span>
+                        ) : (
+                          <span className="italic text-slate-400 dark:text-slate-500">No Remark Available</span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {task.assignedTo?.name || 'Unassigned'}
+                        </span>
+                        <div className="flex items-center gap-1 font-mono text-emerald-600 dark:text-emerald-400">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Done</span>
+                        </div>
+                        {task.timeSpentMinutes ? (
+                          <div className="flex items-center gap-1 font-mono text-indigo-500">
+                            <Timer className="w-3 h-3 text-indigo-500" />
+                            <span>{task.timeSpentMinutes}m</span>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Dedicated Cancelled Tasks Section in Eisenhower View */}
+          <div className="glass-panel p-4 md:p-5 rounded-2xl border-2 border-slate-300/80 dark:border-slate-800/80 bg-slate-100/40 dark:bg-slate-900/40 space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-600 text-white uppercase">CANCELLED</span>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <XCircle className="w-4 h-4 text-rose-500" />
+                  Cancelled Tasks
+                </h3>
+              </div>
+              <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300 bg-slate-200 dark:bg-slate-800 px-2.5 py-0.5 rounded-full">
+                {cancelledEisenhowerTasks.length} Cancelled
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Tasks marked as &quot;Cancelled&quot; are displayed here for reference and audit history.
+            </p>
+
+            {cancelledEisenhowerTasks.length === 0 ? (
+              <p className="text-xs text-slate-400 italic text-center py-6">
+                No cancelled tasks. Tasks marked as Cancelled will appear here.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1">
+                {cancelledEisenhowerTasks.map((task) => {
+                  const remark = getTaskRemark(task);
+                  return (
+                    <div
+                      key={task.id}
+                      className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-2 opacity-90 hover:opacity-100 transition-all hover:border-slate-400"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4
+                          onClick={() => setSelectedTask(task)}
+                          className="text-xs font-bold text-slate-500 dark:text-slate-400 line-through decoration-slate-400 hover:text-slate-700 cursor-pointer line-clamp-2 flex-1"
+                        >
+                          {task.title}
+                        </h4>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {renderEisenhowerTaskActions(task)}
+                          <select
+                            value={task.status}
+                            onChange={(e) => handleQuickStatusChange(task.id, e.target.value as any)}
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 cursor-pointer"
+                          >
+                            <option value="CANCELLED">Cancelled</option>
+                            <option value="PENDING">Re-open (Pending)</option>
+                            <option value="IN_PROGRESS">In Progress</option>
+                            <option value="IN_REVIEW">Review</option>
+                            <option value="COMPLETED">Completed</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Remark display */}
+                      <div className="text-[11px] bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-100 dark:border-slate-800/80 text-slate-600 dark:text-slate-300">
+                        <span className="font-bold text-slate-700 dark:text-slate-200">Remark: </span>
+                        {remark ? (
+                          <span>{remark}</span>
+                        ) : (
+                          <span className="italic text-slate-400 dark:text-slate-500">No Remark Available</span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {task.assignedTo?.name || 'Unassigned'}
+                        </span>
+                        <div className="flex items-center gap-1 font-mono text-rose-500">
+                          <XCircle className="w-3 h-3" />
+                          <span>Cancelled</span>
+                        </div>
+                        {task.timeSpentMinutes ? (
+                          <div className="flex items-center gap-1 font-mono text-indigo-500">
+                            <Timer className="w-3 h-3 text-indigo-500" />
+                            <span>{task.timeSpentMinutes}m</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

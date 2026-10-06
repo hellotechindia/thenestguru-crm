@@ -3,12 +3,17 @@ import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getClientsDirectoryAction } from '@/app/actions';
-import VisitTrackerClient from '@/components/VisitTrackerClient';
+import ScheduleVisitPageClient from '@/components/ScheduleVisitPageClient';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export default async function VisitsPage() {
+export const metadata = {
+  title: 'Schedule New Visit | TheNestGuru CRM',
+  description: 'Schedule a property inspection, client document collection, or builder discussion.',
+};
+
+export default async function NewVisitPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     redirect('/login');
@@ -22,28 +27,7 @@ export default async function VisitsPage() {
     redirect('/dashboard');
   }
 
-  const isSuperAdmin = userRole === 'SUPER_ADMIN';
-
-  const userRecord = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { isTeamLeader: true, role: true },
-  });
-  const isTeamLeader = Boolean(userRecord?.isTeamLeader);
-
-  // Role-based visits query: Super Admin and Team Leader can see all sales visits to combine by builder
-  const whereCondition = (isSuperAdmin || isTeamLeader) ? {} : { staffUserId: userId };
-
-  let [visits, staffUsers, activeCases, builders, channelPartners, clientDirRes] = await Promise.all([
-    prisma.visitRecord.findMany({
-      where: whereCondition,
-      include: {
-        staff: { select: { id: true, name: true, role: true } },
-        case: { select: { id: true, clientName: true, product: true } },
-        followUps: { orderBy: { createdAt: 'desc' } },
-        builder: true,
-      },
-      orderBy: { visitDate: 'asc' },
-    }),
+  let [staffUsers, activeCases, builders, channelPartners, clientDirRes] = await Promise.all([
     prisma.user.findMany({
       where: { role: { not: 'CHANNEL' } },
       select: { id: true, name: true, role: true },
@@ -52,12 +36,20 @@ export default async function VisitsPage() {
     prisma.case.findMany({
       select: { id: true, clientName: true, mobile: true, product: true },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: 100,
     }),
     prisma.builder.findMany({
       orderBy: { name: 'asc' },
-      include: {
-        _count: { select: { visits: true } },
+      select: {
+        id: true,
+        name: true,
+        contactPerson: true,
+        phone: true,
+        email: true,
+        reraNumber: true,
+        approvedBanks: true,
+        officeAddress: true,
+        designation: true,
       },
     }),
     prisma.user.findMany({
@@ -68,7 +60,7 @@ export default async function VisitsPage() {
     getClientsDirectoryAction(),
   ]);
 
-  // Auto seed default reputed builders if table is empty
+  // Auto seed default builders if empty
   if (builders.length === 0) {
     const defaultBuilders = [
       { name: 'DLF Limited', contactPerson: 'Sales Desk', phone: '011-45678900', approvedBanks: 'SBI, HDFC, ICICI, Axis Bank' },
@@ -89,12 +81,21 @@ export default async function VisitsPage() {
     }
     builders = await prisma.builder.findMany({
       orderBy: { name: 'asc' },
-      include: {
-        _count: { select: { visits: true } },
+      select: {
+        id: true,
+        name: true,
+        contactPerson: true,
+        phone: true,
+        email: true,
+        reraNumber: true,
+        approvedBanks: true,
+        officeAddress: true,
+        designation: true,
       },
     });
   }
 
+  // Format Client Directory records for dropdown
   const clients = (clientDirRes.success && clientDirRes.clients ? clientDirRes.clients : []).map((c: any) => ({
     id: c.id,
     name: c.name,
@@ -105,26 +106,14 @@ export default async function VisitsPage() {
   }));
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      <div className="pb-4 border-b border-slate-200 dark:border-slate-800">
-        <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-          Client & Property Visit Tracker
-        </h1>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Track, schedule, and verify property inspections, client document collections, and in-person discussions
-        </p>
-      </div>
-
-      <VisitTrackerClient
-        initialVisits={visits as any}
+    <div className="py-2">
+      <ScheduleVisitPageClient
         staffUsers={staffUsers}
         activeCases={activeCases}
         builders={builders as any}
-        currentUserId={userId}
-        isSuperAdmin={isSuperAdmin}
-        isTeamLeader={isTeamLeader}
         channelPartners={channelPartners as any}
         clients={clients}
+        currentUserId={userId}
       />
     </div>
   );
