@@ -174,6 +174,8 @@ export default function SalaryRegisterClient({
     allowances: '0',
     deductions: '0',
     incentiveEarned: '0',
+    linkedCaseId: '',
+    linkedCaseName: '',
     paymentStatus: 'UNPAID',
     remarks: '',
   });
@@ -321,6 +323,21 @@ export default function SalaryRegisterClient({
   // Handle Open Edit Modal
   const handleOpenEdit = (rec: SalaryRecordItem) => {
     setEditingRecord(rec);
+    let linkedCaseId = '';
+    let linkedCaseName = '';
+    if (rec.remarks && rec.remarks.includes('Linked Case:')) {
+      const match = rec.remarks.match(/Linked Case:\s*([^;,\n]+)/);
+      if (match && match[1]) {
+        linkedCaseName = match[1].trim();
+        const found = activeCases.find((c) =>
+          linkedCaseName.toLowerCase().includes(c.clientName.toLowerCase()) ||
+          c.clientName.toLowerCase().includes(linkedCaseName.toLowerCase())
+        );
+        if (found) {
+          linkedCaseId = found.id;
+        }
+      }
+    }
     setEditForm({
       month: rec.month || 'September 2026',
       workingDays: String(rec.workingDays || 26),
@@ -329,6 +346,8 @@ export default function SalaryRegisterClient({
       allowances: String(rec.allowances || 0),
       deductions: String(rec.deductions || 0),
       incentiveEarned: String(rec.incentiveEarned || 0),
+      linkedCaseId,
+      linkedCaseName,
       paymentStatus: rec.paymentStatus || 'UNPAID',
       remarks: rec.remarks || '',
     });
@@ -359,6 +378,8 @@ export default function SalaryRegisterClient({
       incentiveEarned: incentive,
       paymentStatus: editForm.paymentStatus,
       remarks: editForm.remarks,
+      linkedCaseId: editForm.linkedCaseId || undefined,
+      linkedCaseName: editForm.linkedCaseName || undefined,
     });
     setLoading(false);
 
@@ -1095,6 +1116,46 @@ export default function SalaryRegisterClient({
                     onChange={(e) => setEditForm({ ...editForm, deductions: e.target.value })}
                     className="w-full glass-input px-3 py-2 rounded-xl text-xs font-mono text-rose-500"
                   />
+                </div>
+              </div>
+
+              {/* CASE LINKED FOR INCENTIVE OPTION */}
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+                  <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Link Case for Incentive (Optional)</span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Select Loan Case
+                    </label>
+                    <select
+                      value={editForm.linkedCaseId}
+                      onChange={(e) => {
+                        const selCase = activeCases.find((c) => c.id === e.target.value);
+                        setEditForm({
+                          ...editForm,
+                          linkedCaseId: e.target.value,
+                          linkedCaseName: selCase ? `${selCase.clientName} (${selCase.product})` : '',
+                        });
+                      }}
+                      className="w-full glass-input px-2.5 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-900"
+                    >
+                      <option value="">-- No Case Linked / General Incentive --</option>
+                      {activeCases.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.clientName} — {c.product} (Stage {c.stage})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {editForm.linkedCaseName && (
+                    <div className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium">
+                      Selected: {editForm.linkedCaseName}
+                    </div>
+                  )}
                 </div>
               </div>
 

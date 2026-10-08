@@ -280,8 +280,6 @@ export default function CaseFollowUpTimeline({
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-50/70 dark:bg-slate-800/40">
-              <th className="py-2.5 px-3">Stages</th>
-              <th className="py-2.5 px-3">Current Status</th>
               <th className="py-2.5 px-3">Date & Time</th>
               <th className="py-2.5 px-4">Remarks</th>
               <th className="py-2.5 px-3">Updated By</th>
@@ -304,16 +302,6 @@ export default function CaseFollowUpTimeline({
 
                 return (
                   <tr key={item.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition">
-                    <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white whitespace-nowrap">
-                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 text-[11px]">
-                        {item.stageName || `Stage ${item.stage}`}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium text-[11px] border border-slate-200 dark:border-slate-700">
-                        {item.status}
-                      </span>
-                    </td>
                     <td className="py-3 px-3 whitespace-nowrap text-slate-500 dark:text-slate-400 font-mono text-[11px]">
                       {dateFormatted} <span className="opacity-75">({timeFormatted})</span>
                     </td>
@@ -328,7 +316,7 @@ export default function CaseFollowUpTimeline({
               })
             ) : (
               <tr>
-                <td colSpan={5} className="py-6 text-center text-slate-400 dark:text-slate-500 italic text-xs">
+                <td colSpan={3} className="py-6 text-center text-slate-400 dark:text-slate-500 italic text-xs">
                   No follow-up remarks logged yet for this case.
                 </td>
               </tr>

@@ -1497,7 +1497,42 @@ export async function updateUserProfileAction(data: {
 // 6. Birthday Management Actions (All Database Sources: Staff, Clients, Co-Applicants & Manual Entries)
 export async function getUpcomingBirthdaysAction(includeAll = false) {
   const authUser = await getAuthUser();
-  const isSuperAdmin = authUser?.role === 'SUPER_ADMIN';
+  if (!authUser) {
+    return { success: false, error: 'Unauthorized', birthdays: [] };
+  }
+  const isSuperAdmin = authUser.role === 'SUPER_ADMIN';
+
+  // Pointer: Birthday details should only be visible if condition is fulfilled:
+  // "Jis staff ko Visit ya case assign hoga usko dikhega yaa fir us staff ne khud Visit ya case bnaya h"
+  if (!isSuperAdmin && authUser.id) {
+    const hasAssignedOrCreatedCase = await prisma.case.findFirst({
+      where: {
+        OR: [
+          { salesUserId: authUser.id },
+          { operationUserId: authUser.id },
+          { createdById: authUser.id },
+          { visits: { some: { staffUserId: authUser.id } } },
+        ],
+      },
+      select: { id: true },
+    });
+
+    const hasAssignedOrCreatedVisit = await prisma.visitRecord.findFirst({
+      where: {
+        staffUserId: authUser.id,
+      },
+      select: { id: true },
+    });
+
+    const hasCreatedManualBirthday = await prisma.manualBirthdayEntry.findFirst({
+      where: { createdById: authUser.id },
+      select: { id: true },
+    });
+
+    if (!hasAssignedOrCreatedCase && !hasAssignedOrCreatedVisit && !hasCreatedManualBirthday) {
+      return { success: true, birthdays: [] };
+    }
+  }
 
   // 1. Staff Members (Users)
   const usersWithDob = await prisma.user.findMany({
@@ -1531,6 +1566,7 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
         { salesUserId: authUser.id },
         { operationUserId: authUser.id },
         { createdById: authUser.id },
+        { visits: { some: { staffUserId: authUser.id } } },
       ],
     };
   }
@@ -1551,8 +1587,12 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
     },
   });
 
-  // 3. Custom Manual Birthday Entries
+  // 3. Custom Manual Birthday Entries (Scoped to creator if not super admin)
+  const manualWhereCondition = !isSuperAdmin && authUser?.id
+    ? { createdById: authUser.id }
+    : {};
   const manualEntries = await prisma.manualBirthdayEntry.findMany({
+    where: manualWhereCondition,
     orderBy: { createdAt: 'desc' },
   });
 
@@ -1691,15 +1731,22 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
   // Map Manual Entries
   for (const m of manualEntries) {
     const evaluation = evaluateUpcomingBirthday(m.dob);
+    const cat = (m as any).category || 'CUSTOMER';
+    let catLabel = 'Customer / Lead';
+    if (cat === 'STAFF') catLabel = 'Staff Member';
+    else if (cat === 'CHANNEL') catLabel = 'Channel Partner';
+    else if (cat !== 'CUSTOMER') catLabel = cat;
+
     allItems.push({
       id: `manual-${m.id}`,
       manualId: m.id,
       name: m.name,
       phone: m.phone,
-      email: null,
+      email: m.email || null,
       role: 'CUSTOM_ENTRY',
       category: 'MANUAL',
-      categoryLabel: 'Manual Entry',
+      rawCategory: cat,
+      categoryLabel: catLabel,
       teamName: 'Custom Entry',
       association: m.remark || 'Direct Birthday Entry',
       remark: m.remark || 'Direct Birthday Entry',
@@ -1709,7 +1756,7 @@ export async function getUpcomingBirthdaysAction(includeAll = false) {
       daysRemaining: evaluation.daysRemaining,
       formattedBirthday: evaluation.formattedBirthday,
       isManual: true,
-    });
+    } as any);
   }
 
   const processed = allItems
@@ -1770,7 +1817,9 @@ export async function updateManualBirthdayAction(data: {
   id: string;
   name: string;
   phone?: string;
+  email?: string;
   dob: string;
+  category?: string;
   remark?: string;
 }) {
   const user = await getAuthUser();
@@ -1788,14 +1837,22 @@ export async function updateManualBirthdayAction(data: {
     return { success: false, error: 'Phone number must be a valid 10-digit number.' };
   }
 
+  const updateData: any = {
+    name: data.name.trim(),
+    phone: data.phone?.trim() || null,
+    dob: new Date(data.dob),
+    remark: data.remark?.trim() || null,
+  };
+  if (data.category !== undefined) {
+    updateData.category = data.category || 'CUSTOMER';
+  }
+  if (data.email !== undefined) {
+    updateData.email = data.email?.trim() || null;
+  }
+
   const entry = await prisma.manualBirthdayEntry.update({
     where: { id: data.id },
-    data: {
-      name: data.name.trim(),
-      phone: data.phone?.trim() || null,
-      dob: new Date(data.dob),
-      remark: data.remark?.trim() || null,
-    },
+    data: updateData,
   });
 
   revalidatePath('/birthdays');
@@ -3521,6 +3578,38 @@ export async function editTaskCommentAction(commentId: string, newContent: strin
   return { success: true, comment: updated };
 }
 
+export async function deleteTaskCommentAction(commentId: string) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized' };
+
+  const existing = await prisma.taskComment.findUnique({ where: { id: commentId } });
+  if (!existing) return { success: false, error: 'Comment not found' };
+
+  // Only author or Super Admin can delete
+  if (existing.userId !== user.id && user.role !== 'SUPER_ADMIN') {
+    return { success: false, error: 'Permission denied: You can only delete your own comments.' };
+  }
+
+  await prisma.taskComment.delete({
+    where: { id: commentId },
+  });
+
+  const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true } });
+  const staffName = dbUser?.name || 'Staff';
+
+  await prisma.taskActivityLog.create({
+    data: {
+      taskId: existing.taskId,
+      userId: user.id,
+      action: 'COMMENT_DELETED',
+      details: `${staffName} deleted a comment.`,
+    },
+  });
+
+  revalidatePath('/tasks');
+  return { success: true };
+}
+
 // 16. Birthday Deduplication & Category Filter Actions
 export async function checkDuplicateBirthdayPhoneAction(phone: string) {
   if (!phone || phone.trim().length < 10) return { exists: false };
@@ -3886,6 +3975,8 @@ export async function editSalaryRecordAction(
     incentiveEarned?: number;
     paymentStatus?: string;
     remarks?: string;
+    linkedCaseId?: string | null;
+    linkedCaseName?: string | null;
   }
 ) {
   const user = await getAuthUser();
@@ -3904,6 +3995,15 @@ export async function editSalaryRecordAction(
   const incentive = data.incentiveEarned !== undefined ? Number(data.incentiveEarned) : (existing.incentiveEarned || 0);
   const netPayable = Math.max(0, basic + allowances + incentive - deductions);
 
+  let finalRemarks = data.remarks !== undefined ? (data.remarks.trim() || '') : (existing.remarks || '');
+  if (data.linkedCaseName) {
+    // Strip old Linked Case tag if present, then append new
+    finalRemarks = finalRemarks.replace(/\|\s*Linked Case: [^|]+/g, '').replace(/Linked Case: [^|]+/g, '').trim();
+    if (finalRemarks.endsWith('|')) finalRemarks = finalRemarks.slice(0, -1).trim();
+    const caseTag = `Linked Case: ${data.linkedCaseName}`;
+    finalRemarks = finalRemarks ? `${finalRemarks} | ${caseTag}` : caseTag;
+  }
+
   const updated = await prisma.salaryRecord.update({
     where: { id },
     data: {
@@ -3918,7 +4018,7 @@ export async function editSalaryRecordAction(
       netPayable,
       paymentStatus: data.paymentStatus || existing.paymentStatus,
       paidDate: data.paymentStatus === 'PAID' ? (existing.paidDate || new Date()) : null,
-      remarks: data.remarks !== undefined ? (data.remarks.trim() || null) : existing.remarks,
+      remarks: finalRemarks || null,
     },
   });
 
@@ -5210,6 +5310,177 @@ export async function updateChildChannelAccountAction(data: {
   revalidatePath('/dashboard');
   revalidatePath('/admin/users');
   return { success: true, user: updated };
+}
+
+export async function createChannelPartnerAction(data: {
+  name: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  firmName?: string;
+  password?: string;
+  dob?: string;
+}) {
+  const user = await getAuthUser();
+  if (!user) return { success: false, error: 'Unauthorized.' };
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Partner Name is required.' };
+  }
+  if (!data.phone?.trim()) {
+    return { success: false, error: 'Phone Number is required.' };
+  }
+
+  const cleanPhone = data.phone.trim();
+  const rawPassword = data.password?.trim() || 'NestGuru@123';
+  const passwordHash = await bcrypt.hash(rawPassword, 10);
+
+  const baseUsername = data.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+  const uniqueSuffix = cleanPhone.slice(-4) || Math.floor(1000 + Math.random() * 9000).toString();
+  let username = `cp_${baseUsername}_${uniqueSuffix}`;
+
+  const existing = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { username },
+        ...(data.email?.trim() ? [{ email: data.email.trim().toLowerCase() }] : []),
+      ],
+    },
+  });
+
+  if (existing) {
+    username = `cp_${baseUsername}_${Date.now().toString().slice(-4)}`;
+  }
+
+  const newChannel = await prisma.user.create({
+    data: {
+      name: data.name.trim(),
+      username,
+      email: data.email?.trim() ? data.email.trim().toLowerCase() : null,
+      phone: cleanPhone,
+      address: data.address?.trim() || null,
+      jobRole: data.firmName?.trim() || 'Channel Partner',
+      dob: data.dob ? new Date(data.dob) : null,
+      passwordHash,
+      role: 'CHANNEL',
+      accessPermission: 'VIEW', // View Access By Default
+    },
+  });
+
+  revalidatePath('/visits');
+  revalidatePath('/visits/channel-partners');
+  revalidatePath('/admin/users');
+  return { success: true, partner: newChannel };
+}
+
+export async function getChannelPartnersAction() {
+  const partners = await prisma.user.findMany({
+    where: { role: 'CHANNEL' },
+    select: {
+      id: true,
+      name: true,
+      username: true,
+      email: true,
+      phone: true,
+      address: true,
+      jobRole: true,
+      dob: true,
+      accessPermission: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return { success: true, partners };
+}
+
+export async function updateChannelPartnerAction(data: {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  firmName?: string;
+  password?: string;
+  dob?: string;
+  accessPermission?: string;
+}) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL' || user.accessPermission === 'VIEW') {
+    return { success: false, error: 'Unauthorized to update channel partner.' };
+  }
+
+  if (!data.name?.trim()) {
+    return { success: false, error: 'Partner Name is required.' };
+  }
+  if (!data.phone?.trim()) {
+    return { success: false, error: 'Contact Number is required.' };
+  }
+
+  const existing = await prisma.user.findUnique({
+    where: { id: data.id },
+  });
+  if (!existing || existing.role !== 'CHANNEL') {
+    return { success: false, error: 'Channel partner not found.' };
+  }
+
+  const updateData: any = {
+    name: data.name.trim(),
+    phone: data.phone.trim(),
+    email: data.email?.trim() ? data.email.trim().toLowerCase() : null,
+    address: data.address?.trim() || null,
+    jobRole: data.firmName?.trim() || 'Channel Partner',
+    dob: data.dob ? new Date(data.dob) : null,
+    accessPermission: data.accessPermission || existing.accessPermission || 'VIEW',
+  };
+
+  if (data.password?.trim()) {
+    updateData.passwordHash = await bcrypt.hash(data.password.trim(), 10);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: data.id },
+    data: updateData,
+    select: {
+      id: true,
+      name: true,
+      username: true,
+      email: true,
+      phone: true,
+      address: true,
+      jobRole: true,
+      dob: true,
+      accessPermission: true,
+      createdAt: true,
+    },
+  });
+
+  revalidatePath('/visits');
+  revalidatePath('/visits/channel-partners');
+  revalidatePath('/admin/users');
+  return { success: true, partner: updated };
+}
+
+export async function deleteChannelPartnerAction(id: string) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'CHANNEL' || user.accessPermission === 'VIEW') {
+    return { success: false, error: 'Permission denied: Unauthorized to delete channel partners.' };
+  }
+
+  const existing = await prisma.user.findUnique({
+    where: { id },
+  });
+  if (!existing || existing.role !== 'CHANNEL') {
+    return { success: false, error: 'Channel partner not found.' };
+  }
+
+  await prisma.user.delete({
+    where: { id },
+  });
+
+  revalidatePath('/visits');
+  revalidatePath('/visits/channel-partners');
+  revalidatePath('/admin/users');
+  return { success: true };
 }
 
 // ==========================================

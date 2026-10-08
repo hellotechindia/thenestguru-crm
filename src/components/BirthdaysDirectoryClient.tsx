@@ -32,7 +32,8 @@ import {
   Upload,
   Download,
   FileSpreadsheet,
-  FileCheck
+  FileCheck,
+  Tag
 } from 'lucide-react';
 import { BIRTHDAY_TEMPLATES, getCustomWish } from '@/lib/birthday-wishes';
 import { isValid10DigitPhone, sanitizeTo10Digits, isValidName, sanitizeToAlphabetsOnly } from '@/lib/validations';
@@ -55,6 +56,7 @@ export interface BirthdayItem {
   phone?: string | null;
   role?: string;
   category: 'STAFF' | 'CLIENT' | 'CO_APPLICANT' | 'MANUAL';
+  rawCategory?: string;
   categoryLabel: string;
   teamName: string;
   association: string;
@@ -66,6 +68,17 @@ export interface BirthdayItem {
   formattedBirthday: string;
   isManual?: boolean;
 }
+
+export interface BirthdayCategory {
+  id: string;
+  label: string;
+}
+
+export const DEFAULT_BIRTHDAY_CATEGORIES: BirthdayCategory[] = [
+  { id: 'CUSTOMER', label: 'Customer / Lead' },
+  { id: 'STAFF', label: 'Staff Member' },
+  { id: 'CHANNEL', label: 'Channel Partner' },
+];
 
 interface BirthdaysDirectoryClientProps {
   initialBirthdays: BirthdayItem[];
@@ -117,13 +130,101 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
     }
   };
 
+  // Dynamic Categories State
+  const [categories, setCategories] = useState<BirthdayCategory[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('nestguru_birthday_categories');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch {}
+      }
+    }
+    return DEFAULT_BIRTHDAY_CATEGORIES;
+  });
+
+  const saveCategories = (newCategories: BirthdayCategory[]) => {
+    setCategories(newCategories);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nestguru_birthday_categories', JSON.stringify(newCategories));
+    }
+  };
+
+  // Category Manager Modal State
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [newCategoryLabel, setNewCategoryLabel] = useState('');
+  const [categoryModalError, setCategoryModalError] = useState('');
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryLabel, setEditingCategoryLabel] = useState('');
+
+  const handleAddCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newCategoryLabel.trim();
+    if (!trimmed) {
+      setCategoryModalError('Please enter a category name.');
+      return;
+    }
+    const id = trimmed.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    if (categories.some((c) => c.id === id || c.label.toLowerCase() === trimmed.toLowerCase())) {
+      setCategoryModalError('A category with this name already exists.');
+      return;
+    }
+    const updated = [...categories, { id, label: trimmed }];
+    saveCategories(updated);
+    setNewCategoryLabel('');
+    setCategoryModalError('');
+  };
+
+  const handleStartEditCategory = (cat: BirthdayCategory) => {
+    setEditingCategoryId(cat.id);
+    setEditingCategoryLabel(cat.label);
+    setCategoryModalError('');
+  };
+
+  const handleSaveEditCategory = (id: string) => {
+    const trimmed = editingCategoryLabel.trim();
+    if (!trimmed) {
+      setCategoryModalError('Category name cannot be empty.');
+      return;
+    }
+    if (categories.some((c) => c.id !== id && c.label.toLowerCase() === trimmed.toLowerCase())) {
+      setCategoryModalError('Another category already has this name.');
+      return;
+    }
+    const updated = categories.map((c) => (c.id === id ? { ...c, label: trimmed } : c));
+    saveCategories(updated);
+    setEditingCategoryId(null);
+    setEditingCategoryLabel('');
+    setCategoryModalError('');
+  };
+
+  const handleDeleteCategory = (id: string, label: string) => {
+    if (categories.length <= 1) {
+      alert('At least one category is required.');
+      return;
+    }
+    if (confirm(`Are you sure you want to delete category "${label}"?`)) {
+      const updated = categories.filter((c) => c.id !== id);
+      saveCategories(updated);
+      if (addForm.category === id && updated.length > 0) {
+        setAddForm((prev) => ({ ...prev, category: updated[0].id }));
+      }
+      if (editForm.category === id && updated.length > 0) {
+        setEditForm((prev) => ({ ...prev, category: updated[0].id }));
+      }
+    }
+  };
+
   // Edit Manual Entry Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     id: '',
     name: '',
     phone: '',
+    email: '',
     dob: '',
+    category: 'CUSTOMER',
     remark: '',
   });
   const [isEditing, setIsEditing] = useState(false);
@@ -301,6 +402,22 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
   const coAppCount = useMemo(() => birthdays.filter((b) => b.category === 'CO_APPLICANT').length, [birthdays]);
   const manualCount = useMemo(() => birthdays.filter((b) => b.category === 'MANUAL').length, [birthdays]);
 
+  // Dynamic tab counts based on the active timeline filter (matches dashboard upcoming count by default)
+  const timelineFilteredBirthdays = useMemo(() => {
+    return birthdays.filter((b) => {
+      if (timelineFilter === 'today') return b.isToday;
+      if (timelineFilter === 'week') return b.daysRemaining >= 0 && b.daysRemaining <= 7;
+      if (timelineFilter === 'upcoming30') return b.isWithin30Days;
+      return true; // 'all'
+    });
+  }, [birthdays, timelineFilter]);
+
+  const tabAllCount = timelineFilteredBirthdays.length;
+  const tabStaffCount = useMemo(() => timelineFilteredBirthdays.filter((b) => b.category === 'STAFF').length, [timelineFilteredBirthdays]);
+  const tabClientCount = useMemo(() => timelineFilteredBirthdays.filter((b) => b.category === 'CLIENT').length, [timelineFilteredBirthdays]);
+  const tabCoAppCount = useMemo(() => timelineFilteredBirthdays.filter((b) => b.category === 'CO_APPLICANT').length, [timelineFilteredBirthdays]);
+  const tabManualCount = useMemo(() => timelineFilteredBirthdays.filter((b) => b.category === 'MANUAL').length, [timelineFilteredBirthdays]);
+
   // Filtered List - Auto sorted name-wise (Pointer 6)
   const filteredList = useMemo(() => {
     return birthdays
@@ -437,7 +554,9 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
       id: item.manualId,
       name: item.name,
       phone: item.phone || '',
+      email: item.email || '',
       dob: rawDob,
+      category: item.rawCategory || 'CUSTOMER',
       remark: item.remark === 'Direct Birthday Entry' ? '' : (item.remark || ''),
     });
     setEditError('');
@@ -517,8 +636,21 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
 
           <button
             onClick={() => {
+              setCategoryModalError('');
+              setEditingCategoryId(null);
+              setIsCategoryModalOpen(true);
+            }}
+            className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 shrink-0 cursor-pointer"
+            title="Manage dynamic Birthday Categories (Add / Edit / Delete)"
+          >
+            <Tag className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+            <span>Categories ({categories.length})</span>
+          </button>
+
+          <button
+            onClick={() => {
               setAddError('');
-              setAddForm({ name: '', phone: '', email: '', dob: '', category: 'CUSTOMER', onBehalfOf: '', remark: '' });
+              setAddForm({ name: '', phone: '', email: '', dob: '', category: categories[0]?.id || 'CUSTOMER', onBehalfOf: '', remark: '' });
               setIsAddModalOpen(true);
             }}
             className="px-4 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white text-xs font-bold transition-all shadow-md hover:shadow-lg flex items-center gap-1.5 shrink-0"
@@ -652,7 +784,7 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              All Sources ({totalCount})
+              All Sources ({tabAllCount})
             </button>
             <button
               onClick={() => setCategoryFilter('STAFF')}
@@ -662,7 +794,7 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                   : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20'
               }`}
             >
-              Staff & Teams ({staffCount})
+              Staff & Teams ({tabStaffCount})
             </button>
             <button
               onClick={() => setCategoryFilter('CLIENT')}
@@ -672,7 +804,7 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                   : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
               }`}
             >
-              Loan Clients ({clientCount})
+              Loan Clients ({tabClientCount})
             </button>
             <button
               onClick={() => setCategoryFilter('CO_APPLICANT')}
@@ -682,7 +814,7 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                   : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20'
               }`}
             >
-              Co-Applicants ({coAppCount})
+              Co-Applicants ({tabCoAppCount})
             </button>
             <button
               onClick={() => setCategoryFilter('MANUAL')}
@@ -692,7 +824,7 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                   : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20'
               }`}
             >
-              Manual Entries ({manualCount})
+              Manual Entries ({tabManualCount})
             </button>
           </div>
 
@@ -1182,17 +1314,32 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Category *
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Category *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCategoryModalError('');
+                        setEditingCategoryId(null);
+                        setIsCategoryModalOpen(true);
+                      }}
+                      className="text-[10px] font-bold text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      + Manage Categories
+                    </button>
+                  </div>
                   <select
                     value={addForm.category}
                     onChange={(e) => setAddForm({ ...addForm, category: e.target.value })}
-                    className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900"
+                    className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
                   >
-                    <option value="CUSTOMER">Customer / Lead</option>
-                    <option value="STAFF">Staff Member</option>
-                    <option value="CHANNEL">Channel Partner</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1336,6 +1483,51 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                 <span className="text-[10px] text-slate-400 mt-1 block">
                   Used for 1-click direct WhatsApp birthday wishes.
                 </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="ramesh@example.com"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                    className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Category *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCategoryModalError('');
+                        setEditingCategoryId(null);
+                        setIsCategoryModalOpen(true);
+                      }}
+                      className="text-[10px] font-bold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      + Manage Categories
+                    </button>
+                  </div>
+                  <select
+                    value={editForm.category}
+                    onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                    className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs bg-white dark:bg-slate-900 font-semibold"
+                  >
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div>
@@ -1557,6 +1749,165 @@ export default function BirthdaysDirectoryClient({ initialBirthdays }: Birthdays
                   <span>{bulkLoading ? 'Uploading...' : `Upload ${bulkRows.filter(r => r.isValid).length} Birthdays`}</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Dynamic Birthday Categories Manager Modal */}
+      {isCategoryModalOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          onClick={() => setIsCategoryModalOpen(false)}
+          className="fixed inset-0 z-[9999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-gradient-to-r from-purple-500/15 via-indigo-500/15 to-pink-500/15 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/20 text-purple-600 dark:text-purple-300 flex items-center justify-center shadow-sm">
+                  <Tag className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                    Manage Birthday Categories
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Add, edit, or delete categories for birthday entries
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCategoryModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              {categoryModalError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{categoryModalError}</span>
+                </div>
+              )}
+
+              {/* Add Category Form */}
+              <form onSubmit={handleAddCategory} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. VIP Client, Investor, Associate..."
+                  value={newCategoryLabel}
+                  onChange={(e) => {
+                    setNewCategoryLabel(e.target.value);
+                    setCategoryModalError('');
+                  }}
+                  className="flex-1 glass-input px-3.5 py-2.5 rounded-xl text-xs font-medium"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add</span>
+                </button>
+              </form>
+
+              {/* Categories List */}
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Existing Categories ({categories.length})
+                </div>
+
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                  {categories.map((cat) => {
+                    const isEditingThis = editingCategoryId === cat.id;
+
+                    return (
+                      <div
+                        key={cat.id}
+                        className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 text-xs"
+                      >
+                        {isEditingThis ? (
+                          <div className="flex items-center gap-2 flex-1">
+                            <input
+                              type="text"
+                              value={editingCategoryLabel}
+                              onChange={(e) => setEditingCategoryLabel(e.target.value)}
+                              className="flex-1 px-2.5 py-1 text-xs rounded-lg border border-purple-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveEditCategory(cat.id)}
+                              className="p-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition cursor-pointer"
+                              title="Save changes"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingCategoryId(null)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition cursor-pointer"
+                              title="Cancel"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 truncate">
+                              <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0" />
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                {cat.label}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                ({cat.id})
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditCategory(cat)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition cursor-pointer"
+                                title="Edit category name"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCategory(cat.id, cat.label)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition cursor-pointer"
+                                title="Delete category"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsCategoryModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-md hover:bg-slate-800 dark:hover:bg-slate-100 transition cursor-pointer"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>,

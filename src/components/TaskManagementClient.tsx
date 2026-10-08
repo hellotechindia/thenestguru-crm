@@ -11,6 +11,7 @@ import {
   deleteTaskAction,
   addTaskCommentAction,
   editTaskCommentAction,
+  deleteTaskCommentAction,
   createSelfTaskAction,
   updateTaskEisenhowerAction,
   logTaskTimeSpentAction,
@@ -414,7 +415,7 @@ export default function TaskManagementClient({
   const [priorityFilter, setPriorityFilter] = useState('ALL');
   const [eisenhowerFilter, setEisenhowerFilter] = useState<'ALL' | EisenhowerQuadrantKey>('ALL');
   const [assigneeFilter, setAssigneeFilter] = useState('ALL');
-  const [viewMode, setViewMode] = useState<'list' | 'matrix'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'matrix'>('matrix');
 
   // Eisenhower Matrix Drag & Drop state
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
@@ -598,11 +599,13 @@ export default function TaskManagementClient({
     let inProgress = 0;
     let completed = 0;
     let overdue = 0;
+    let cancelled = 0;
 
     for (const t of baseFilteredForStats) {
       if (t.status === 'PENDING') pending++;
       if (t.status === 'IN_PROGRESS' || t.status === 'IN_REVIEW') inProgress++;
       if (t.status === 'COMPLETED') completed++;
+      if (t.status === 'CANCELLED') cancelled++;
 
       if (t.dueDate && t.status !== 'COMPLETED' && t.status !== 'CANCELLED') {
         const d = new Date(t.dueDate);
@@ -618,6 +621,7 @@ export default function TaskManagementClient({
       inProgress: statusFilter === 'ALL' || statusFilter === 'IN_PROGRESS' || statusFilter === 'IN_REVIEW' ? inProgress : 0,
       completed: statusFilter === 'ALL' || statusFilter === 'COMPLETED' ? completed : 0,
       overdue: statusFilter === 'ALL' ? overdue : filteredTasks.filter((t) => t.dueDate && t.status !== 'COMPLETED' && t.status !== 'CANCELLED' && new Date(t.dueDate) < now).length,
+      cancelled: statusFilter === 'ALL' || statusFilter === 'CANCELLED' ? cancelled : 0,
     };
   }, [baseFilteredForStats, filteredTasks, statusFilter]);
 
@@ -937,6 +941,28 @@ export default function TaskManagementClient({
     }
   };
 
+
+  // Handle Delete Comment
+  const handleDeleteComment = async (commentId: string) => {
+    if (!confirm('Are you sure you want to delete this comment?')) return;
+    const res = await deleteTaskCommentAction(commentId);
+    if (res.success) {
+      if (selectedTask) {
+        setSelectedTask((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                comments: prev.comments.filter((c: any) => c.id !== commentId),
+              }
+            : null
+        );
+      }
+      router.refresh();
+    } else {
+      alert(res.error || 'Failed to delete comment');
+    }
+  };
+
   // Eisenhower Matrix grouping (Active tasks in Q1-Q4, completed tasks in Completed section, cancelled tasks in Cancelled section)
   const activeEisenhowerTasks = useMemo(
     () => filteredTasks.filter((t) => t.status !== 'COMPLETED' && t.status !== 'CANCELLED'),
@@ -1088,13 +1114,6 @@ export default function TaskManagementClient({
       {/* KPI Overview Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
-          <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-            Total Tasks
-          </span>
-          <div className="text-2xl font-extrabold text-slate-900 dark:text-white">{stats.total}</div>
-        </div>
-
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
           <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
             Pending / To Do
           </span>
@@ -1115,12 +1134,20 @@ export default function TaskManagementClient({
           <div className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400">{stats.completed}</div>
         </div>
 
-        <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1 col-span-2 sm:col-span-1">
+        <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
           <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider flex items-center gap-1">
             <Flame className="w-3.5 h-3.5" />
             Overdue
           </span>
           <div className="text-2xl font-extrabold text-rose-600 dark:text-rose-400">{stats.overdue}</div>
+        </div>
+
+        <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
+          <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1">
+            <XCircle className="w-3.5 h-3.5 text-slate-500" />
+            Cancelled Tasks
+          </span>
+          <div className="text-2xl font-extrabold text-slate-600 dark:text-slate-300">{stats.cancelled}</div>
         </div>
       </div>
 
@@ -1139,7 +1166,7 @@ export default function TaskManagementClient({
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                All Company Tasks ({initialTasks.length})
+                All Company Tasks
               </button>
             )}
             <button
@@ -1151,7 +1178,7 @@ export default function TaskManagementClient({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              My Assigned Tasks ({initialTasks.filter((t) => t.assignedToId === currentUser.id || t.assignees?.some((a) => a.userId === currentUser.id)).length})
+              My Assigned Tasks
             </button>
             <button
               type="button"
@@ -1162,7 +1189,7 @@ export default function TaskManagementClient({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              Assigned by Me ({initialTasks.filter((t) => t.createdById === currentUser.id).length})
+              Assigned by Me
             </button>
           </div>
 
@@ -3125,17 +3152,27 @@ export default function TaskManagementClient({
                             {cm.isEdited && <span className="text-amber-500 ml-1 font-sans">(edited)</span>}
                           </span>
                           {(cm.user.id === currentUser.id || isSuperAdmin) && editCommentId !== cm.id && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditCommentId(cm.id);
-                                setEditCommentText(cm.content);
-                              }}
-                              className="text-slate-400 hover:text-sky-500 p-0.5"
-                              title="Edit this comment"
-                            >
-                              <Edit3 className="w-3 h-3" />
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditCommentId(cm.id);
+                                  setEditCommentText(cm.content);
+                                }}
+                                className="text-slate-400 hover:text-sky-500 p-0.5 transition-colors"
+                                title="Edit this comment"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteComment(cm.id)}
+                                className="text-slate-400 hover:text-rose-500 p-0.5 transition-colors"
+                                title="Delete this comment"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>

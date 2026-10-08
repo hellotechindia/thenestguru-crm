@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   updateChecklistItemAction,
@@ -144,8 +144,40 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
     }
   };
 
-  // Applicant Filter state: "ALL" | "Applicant" | "Co-Applicant 1" | "Co-Applicant 2" ...
+  const isReadOnly = userAccessPermission === 'VIEW';
+
+  // Filter states: Applicant, Section (Category), Status
   const [applicantFilter, setApplicantFilter] = useState<string>('ALL');
+  const [sectionFilter, setSectionFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+
+  // Auto-save every 5 minutes (300,000 ms)
+  const [lastAutoSaveTime, setLastAutoSaveTime] = useState<string | null>(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  useEffect(() => {
+    if (isReadOnly) return;
+    const interval = setInterval(async () => {
+      try {
+        const currentItems = itemsRef.current;
+        if (!currentItems || currentItems.length === 0) return;
+        const res = await saveSectionChecklistItemsAction(
+          caseData.id,
+          currentItems,
+          'Auto-saved periodically (every 5 min)'
+        );
+        if (res.success) {
+          const nowStr = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+          setLastAutoSaveTime(nowStr);
+        }
+      } catch (e) {
+        console.error('Auto-save error', e);
+      }
+    }, 5 * 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, [caseData.id, isReadOnly]);
 
   // History Note / Reason Prompt State
   const [historyModalItem, setHistoryModalItem] = useState<ChecklistItem | null>(null);
@@ -185,48 +217,52 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
     return applies;
   };
 
-  // Personal Information State
-  const [personalInfo, setPersonalInfo] = useState({
-    motherName: caseData.motherName || '',
-    spouseName: caseData.spouseName || '',
-    educationQualification: caseData.educationQualification || caseData.residenceYears || '',
-    dojCompany: caseData.dojCompany || '',
-    totalExperienceYears: caseData.totalExperienceYears || '5 Years',
-    residenceYears: caseData.residenceYears || '3 Years',
-  });
-
-  // Dynamic References State
-  const [references, setReferences] = useState<Array<{ name: string; address: string; phone: string; email: string }>>(
-    caseData.referencesData && caseData.referencesData.length > 0
-      ? caseData.referencesData
-      : [{ name: '', address: '', phone: '', email: '' }]
-  );
-
-  const isReadOnly = userAccessPermission === 'VIEW';
-
   const receivedCount = items.filter((i) => i.status === 'Received' || i.status === 'Not Applicable').length;
   const totalCount = items.length;
   const progressPct = totalCount > 0 ? Math.round((receivedCount / totalCount) * 100) : 0;
 
-  // Filter items by Applicant filter
+  // Available unique categories for section filter
+  const availableCategories = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((i) => {
+      if (i.category && !i.category.toLowerCase().includes('personal information')) {
+        set.add(i.category);
+      }
+    });
+    return Array.from(set);
+  }, [items]);
+
+  // Filter items by Applicant, Section, and Status filters
   const filteredItems = items.filter((item) => {
-    if (applicantFilter === 'ALL') return true;
-    const applies = (item.appliesTo || '').toLowerCase();
-    const person = (item.personName || '').toLowerCase();
+    // 1. Applicant filter
+    if (applicantFilter !== 'ALL') {
+      const applies = (item.appliesTo || '').toLowerCase();
+      const person = (item.personName || '').toLowerCase();
 
-    if (applicantFilter === 'APPLICANT') {
-      return applies.includes('applicant') && !applies.includes('co-applicant');
+      if (applicantFilter === 'APPLICANT') {
+        if (!applies.includes('applicant') || applies.includes('co-applicant')) return false;
+      } else if (applicantFilter.startsWith('CO_APP_')) {
+        const idx = parseInt(applicantFilter.replace('CO_APP_', ''), 10);
+        const coApp = (caseData.coApplicantsData || [])[idx - 1];
+        const matchesIdx = applies.includes(`co-applicant ${idx}`);
+        const matchesName = coApp?.name && (applies.includes(coApp.name.toLowerCase()) || person.includes(coApp.name.toLowerCase()));
+        if (!matchesIdx && !matchesName) return false;
+      } else if (item.appliesTo !== applicantFilter) {
+        return false;
+      }
     }
 
-    if (applicantFilter.startsWith('CO_APP_')) {
-      const idx = parseInt(applicantFilter.replace('CO_APP_', ''), 10);
-      const coApp = (caseData.coApplicantsData || [])[idx - 1];
-      const matchesIdx = applies.includes(`co-applicant ${idx}`);
-      const matchesName = coApp?.name && (applies.includes(coApp.name.toLowerCase()) || person.includes(coApp.name.toLowerCase()));
-      return matchesIdx || matchesName;
+    // 2. Section (Category) filter
+    if (sectionFilter !== 'ALL' && item.category !== sectionFilter) {
+      return false;
     }
 
-    return item.appliesTo === applicantFilter;
+    // 3. Status filter
+    if (statusFilter !== 'ALL' && item.status !== statusFilter) {
+      return false;
+    }
+
+    return true;
   });
 
   const applicantItemsCount = items.filter((item) => {
@@ -389,41 +425,6 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
     }
   };
 
-  // Personal Info Save
-  const handleSavePersonalInfo = async () => {
-    if (isReadOnly) return;
-    setErrorMessage('');
-    setSuccessMessage('');
-
-    if (personalInfo.motherName && !isValidName(personalInfo.motherName)) {
-      setErrorMessage("Mother Name must contain only alphabetic characters and spaces.");
-      return;
-    }
-
-    if (personalInfo.spouseName && !isValidName(personalInfo.spouseName)) {
-      setErrorMessage("Spouse Name must contain only alphabetic characters and spaces.");
-      return;
-    }
-
-    for (let rIdx = 0; rIdx < references.length; rIdx++) {
-      const ref = references[rIdx];
-      if (ref.name && !isValidName(ref.name)) {
-        setErrorMessage(`Reference ${rIdx + 1} Name must contain only alphabetic characters and spaces.`);
-        return;
-      }
-    }
-
-    const res = await updateCasePersonalInfoAction(caseData.id, {
-      ...personalInfo,
-      referencesData: references,
-    });
-    if (res.success) {
-      setSuccessMessage('Personal information updated!');
-      router.refresh();
-    } else {
-      setErrorMessage(res.error || 'Failed to update personal info.');
-    }
-  };
 
   const handleDeleteItem = async (itemId: string, label: string) => {
     if (userRole !== 'SUPER_ADMIN') {
@@ -444,25 +445,32 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
     }
   };
 
-  // Export Pending Documents for Filtered Applicant
-  const handleExportPendingDocs = () => {
-    const pendingRows = filteredItems
-      .filter((i) => i.status === 'Pending' || i.status === 'Rejected')
-      .map((i) => {
-        const extra = parseExtra(i.extraDetails);
-        return {
-          'Category': i.category,
-          'Document Label': i.label,
-          'Applies To': i.appliesTo,
-          'Current Status': i.status,
-          'Bank Name': i.bankName || extra.bankName || 'N/A',
-          'No. of Items/Forms': extra.numberOfItems || 'N/A',
-          'Time Period': i.periodDetails || extra.timePeriod || 'N/A',
-          'Remarks': i.remark || '',
-        };
-      });
+  // Export Documents Based on Active Filters
+  const handleExportFilteredDocs = () => {
+    const exportRows = filteredItems.map((i) => {
+      const extra = parseExtra(i.extraDetails);
+      return {
+        'Category': i.category,
+        'Document Label': i.label,
+        'Applies To': getPersonBadgeLabel(i),
+        'Current Status': i.status,
+        'OneDrive Link': i.documentUrl || '',
+        'Bank Name': i.bankName || extra.bankName || 'N/A',
+        'No. of Items/Forms': extra.numberOfItems || 'N/A',
+        'Time Period': i.periodDetails || extra.timePeriod || 'N/A',
+        'Remarks': i.remark || '',
+      };
+    });
 
-    exportToCSV(`Pending_Docs_${caseData.clientName}_${applicantFilter}_${new Date().toISOString().slice(0, 10)}`, pendingRows);
+    const activeFilterTag = [
+      caseData.clientName,
+      applicantFilter !== 'ALL' ? applicantFilter : 'All_Applicants',
+      sectionFilter !== 'ALL' ? sectionFilter : '',
+      statusFilter !== 'ALL' ? statusFilter : '',
+      new Date().toISOString().slice(0, 10),
+    ].filter(Boolean).join('_');
+
+    exportToCSV(`Checklist_Export_${activeFilterTag}`, exportRows);
   };
 
   return (
@@ -607,11 +615,11 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
             )}
 
             <button
-              onClick={handleExportPendingDocs}
+              onClick={handleExportFilteredDocs}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-all shadow-sm"
-              title="Download Pending Documents List for this applicant"
+              title="Download Documents List matching active filters"
             >
-              <Download className="w-4 h-4" /> Export Pending Docs
+              <Download className="w-4 h-4" /> Export Filtered Docs
             </button>
 
             <a
@@ -682,6 +690,11 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
             <span className="text-slate-700 dark:text-slate-300 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-sky-500" />
               Document Collection Progress ({applicantFilter === 'ALL' ? 'All Applicants' : applicantFilter === 'APPLICANT' ? `${caseData.clientName} (Applicant)` : applicantFilter})
+              {lastAutoSaveTime && (
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                  Auto-saved at {lastAutoSaveTime} (every 5 min)
+                </span>
+              )}
             </span>
             <span className="text-sky-600 dark:text-sky-400">
               {receivedCount} of {totalCount} Completed ({progressPct}%)
@@ -699,10 +712,10 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
           </div>
         </div>
 
-        {/* Smart Applicant Filter Tabs */}
-        <div className="flex items-center gap-2 overflow-x-auto pt-2 pb-1 border-t border-slate-200 dark:border-slate-800 no-print">
+        {/* Smart Filter Bar: Person, Section, Status */}
+        <div className="flex flex-wrap items-center gap-2 pt-2 pb-1 border-t border-slate-200 dark:border-slate-800 no-print">
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 flex items-center gap-1 mr-1">
-            <Filter className="w-3.5 h-3.5 text-sky-500" /> Filter Person:
+            <Filter className="w-3.5 h-3.5 text-sky-500" /> Filter:
           </span>
 
           {/* All Documents Tab */}
@@ -762,6 +775,37 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
             );
           })}
 
+          {/* Checklist Section Filter Dropdown */}
+          <div className="flex items-center gap-1 shrink-0 ml-1">
+            <select
+              value={sectionFilter}
+              onChange={(e) => setSectionFilter(e.target.value)}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-sky-500 cursor-pointer"
+            >
+              <option value="ALL">📁 All Sections ({availableCategories.length})</option>
+              {availableCategories.map((cat) => (
+                <option key={cat} value={cat}>
+                  📁 {cat}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Document Status Filter Dropdown */}
+          <div className="flex items-center gap-1 shrink-0">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-sky-500 cursor-pointer"
+            >
+              <option value="ALL">⚡ All Statuses</option>
+              <option value="Pending">Pending</option>
+              <option value="Received">Received</option>
+              <option value="Not Applicable">Not Applicable</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+          </div>
+
           {userRole !== 'CHANNEL' && (
             <button
               type="button"
@@ -793,19 +837,6 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                   <span className="text-xs font-semibold px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400">
                     {catReceived} / {catItems.length} Done
                   </span>
-
-                  {/* Section-wise Save Button */}
-                  {!isReadOnly && (
-                    <button
-                      onClick={() => handleSaveSection(categoryName, catItems)}
-                      disabled={savingCategory === categoryName}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs transition-all shadow"
-                      title={`Bulk Save all rows in ${categoryName}`}
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      <span>{savingCategory === categoryName ? 'Saving Section...' : 'Save Section'}</span>
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -919,48 +950,64 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                         </div>
 
                         {/* Document Drive URL */}
-                        <div className="lg:col-span-3">
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                              OneDrive / Share Link
-                            </label>
-                            {item.requireOnedrive === false ? (
-                              <span className="text-[9px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                                Optional
-                              </span>
-                            ) : (
+                        {item.requireOnedrive !== false && (
+                          <div className="lg:col-span-3">
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                OneDrive / Share Link
+                              </label>
                               <span className="text-[9px] font-semibold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800 px-1.5 py-0.5 rounded">
                                 Link Required
                               </span>
-                            )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="url"
+                                placeholder="Paste OneDrive link..."
+                                value={item.documentUrl || ''}
+                                onChange={(e) => handleFieldChange(item.id, 'documentUrl', e.target.value)}
+                                className="w-full glass-input px-2.5 py-1 text-xs rounded-lg placeholder:text-slate-400 font-mono"
+                              />
+                              {item.documentUrl && (
+                                <a
+                                  href={item.documentUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title="Open Link"
+                                  className="p-1.5 rounded-lg bg-sky-600/30 hover:bg-sky-600/60 text-sky-600 dark:text-sky-300 shrink-0 no-print"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="url"
-                              placeholder={item.requireOnedrive === false ? "Optional: paste drive link if any..." : "Paste OneDrive link..."}
-                              value={item.documentUrl || ''}
-                              onChange={(e) => handleFieldChange(item.id, 'documentUrl', e.target.value)}
-                              className="w-full glass-input px-2.5 py-1 text-xs rounded-lg placeholder:text-slate-400 font-mono"
-                            />
-                            {item.documentUrl && (
-                              <a
-                                href={item.documentUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                title="Open Link"
-                                className="p-1.5 rounded-lg bg-sky-600/30 hover:bg-sky-600/60 text-sky-600 dark:text-sky-300 shrink-0 no-print"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-                            )}
-                          </div>
-                        </div>
+                        )}
 
                         {/* Multi-line Remarks Field */}
-                        <div className="lg:col-span-3">
-                          <label className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
-                            Remarks / Notes
-                          </label>
+                        <div className={item.requireOnedrive === false ? 'lg:col-span-6' : 'lg:col-span-3'}>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                              Remarks / Notes
+                            </label>
+                            {item.requireOnedrive === false && (
+                              <div className="flex items-center gap-2">
+                                {item.documentUrl && (
+                                  <a
+                                    href={item.documentUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title="Open Saved Link"
+                                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-600 dark:text-sky-400 hover:underline"
+                                  >
+                                    <ExternalLink className="w-3 h-3" /> View Saved Link
+                                  </a>
+                                )}
+                                <span className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 px-1.5 py-0.5 rounded">
+                                  Remarks Only (No Link Needed)
+                                </span>
+                              </div>
+                            )}
+                          </div>
                           <textarea
                             rows={2}
                             placeholder={item.remarkPlaceholder || 'Type detailed remarks...'}
@@ -1346,254 +1393,26 @@ export default function CaseDetailTracker({ caseData, userRole, userAccessPermis
                   );
                 })}
               </div>
+
+              {/* Section-wise Save Button at Bottom Corner */}
+              {!isReadOnly && (
+                <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800 no-print">
+                  <button
+                    onClick={() => handleSaveSection(categoryName, catItems)}
+                    disabled={savingCategory === categoryName}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs transition-all shadow-md cursor-pointer"
+                    title={`Bulk Save all rows in ${categoryName}`}
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{savingCategory === categoryName ? 'Saving Section...' : 'Save Section'}</span>
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
       </div>
 
-      {/* Personal Information & References Section (Replaces dummy checklist items) */}
-      <div className="glass-panel p-6 rounded-2xl space-y-6 shadow-xl border border-slate-200 dark:border-slate-800">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-          <div>
-            <h2 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-              <User className="w-5 h-5 text-indigo-500" /> Personal Information & References
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Client & Co-Applicant contact details, family, qualification, employment experience and references.
-            </p>
-          </div>
-
-          {!isReadOnly && (
-            <button
-              onClick={handleSavePersonalInfo}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-all shadow-md"
-            >
-              <Save className="w-3.5 h-3.5" /> Save Personal Info
-            </button>
-          )}
-        </div>
-
-        {/* 1. Intake Contact Details */}
-        <div className="bg-slate-50 dark:bg-slate-950/60 p-4 rounded-xl border border-slate-200/80 dark:border-slate-800/80 space-y-3">
-          <div className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
-            <User className="w-4 h-4 text-sky-500" />
-            <span>Applicant & Co-Applicant Contact Information (From Intake)</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
-            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase">Main Client Name</span>
-              <span className="font-bold text-slate-800 dark:text-slate-100">{caseData.clientName}</span>
-            </div>
-            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase">Mobile Number</span>
-              <span className="font-bold font-mono text-sky-600 dark:text-sky-400">{caseData.mobile}</span>
-            </div>
-            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase">Email ID</span>
-              <span className="font-semibold text-slate-700 dark:text-slate-300">{caseData.email || 'N/A'}</span>
-            </div>
-            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase">Date of Birth (DOB)</span>
-              <span className="font-bold text-pink-600 dark:text-pink-400 flex items-center gap-1">
-                🎂 {caseData.clientDob ? new Date(caseData.clientDob).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Not specified'}
-              </span>
-            </div>
-            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase">Location (City, State)</span>
-              <span className="font-semibold text-slate-700 dark:text-slate-300">
-                {caseData.clientCity
-                  ? `${caseData.clientCity}, ${caseData.clientState || 'N/A'}`
-                  : caseData.clientState || 'N/A'}
-              </span>
-            </div>
-          </div>
-
-          {/* Co-Applicants Details if present */}
-          {caseData.coApplicantsData && caseData.coApplicantsData.length > 0 && (
-            <div className="space-y-2 pt-2 border-t border-slate-200/60 dark:border-slate-800/60">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                Co-Applicants Contact Details ({caseData.coApplicantsData.length})
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {caseData.coApplicantsData.map((coApp: any, idx: number) => (
-                  <div
-                    key={idx}
-                    className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs space-y-1.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-800 dark:text-white">
-                        Co-Applicant {idx + 1}: {coApp.name || 'N/A'}
-                      </span>
-                      {coApp.incomeRequired !== false ? (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-bold border border-emerald-300 dark:border-emerald-800">
-                          Income Required
-                        </span>
-                      ) : (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-bold">
-                          No Income Req
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-slate-500 flex items-center justify-between text-[11px]">
-                      <span>📱 {coApp.mobile || 'N/A'}</span>
-                      <span>✉️ {coApp.email || 'N/A'}</span>
-                    </div>
-                    {coApp.dob && (
-                      <div className="text-[10px] font-semibold text-pink-600 dark:text-pink-400 flex items-center gap-1 pt-0.5 border-t border-slate-100 dark:border-slate-800">
-                        🎂 DOB: {new Date(coApp.dob).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* 2. Personal & Employment Details Form */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-xs">
-          <div>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Mother Name</label>
-            <input
-              type="text"
-              placeholder="Mother's Full Name"
-              value={personalInfo.motherName}
-              onChange={(e) => setPersonalInfo({ ...personalInfo, motherName: sanitizeToAlphabetsOnly(e.target.value) })}
-              className="w-full glass-input px-3 py-2 rounded-xl"
-            />
-          </div>
-
-          <div>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Spouse Name</label>
-            <input
-              type="text"
-              placeholder="Spouse's Full Name"
-              value={personalInfo.spouseName}
-              onChange={(e) => setPersonalInfo({ ...personalInfo, spouseName: sanitizeToAlphabetsOnly(e.target.value) })}
-              className="w-full glass-input px-3 py-2 rounded-xl"
-            />
-          </div>
-
-          <div>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Education Qualification</label>
-            <input
-              type="text"
-              placeholder="e.g. Graduate / B.Tech / MBA"
-              value={personalInfo.educationQualification}
-              onChange={(e) => setPersonalInfo({ ...personalInfo, educationQualification: e.target.value })}
-              className="w-full glass-input px-3 py-2 rounded-xl"
-            />
-          </div>
-
-          <div>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Date of Joining Current Company
-            </label>
-            <DatePickerInput
-              value={personalInfo.dojCompany}
-              onChange={(val) => setPersonalInfo({ ...personalInfo, dojCompany: val })}
-              className="w-full glass-input px-3 py-2 rounded-xl"
-              minYear={1950}
-              maxYear={2035}
-            />
-          </div>
-
-          <div>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Total Experience</label>
-            <select
-              value={personalInfo.totalExperienceYears}
-              onChange={(e) => setPersonalInfo({ ...personalInfo, totalExperienceYears: e.target.value })}
-              className="w-full glass-input px-3 py-2 rounded-xl bg-white dark:bg-slate-900"
-            >
-              <option value="1 Year">1 Year</option>
-              <option value="2 Years">2 Years</option>
-              <option value="3 Years">3 Years</option>
-              <option value="5 Years">5 Years</option>
-              <option value="10 Years">10 Years</option>
-              <option value="15+ Years">15+ Years</option>
-            </select>
-          </div>
-        </div>
-
-        {/* 3. References List */}
-        <div className="space-y-3 pt-2">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white">
-            <span>References List ({references.length})</span>
-            {!isReadOnly && (
-              <button
-                type="button"
-                onClick={() => setReferences([...references, { name: '', address: '', phone: '', email: '' }])}
-                className="flex items-center gap-1 text-sky-600 dark:text-sky-400 hover:underline font-semibold"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add Reference
-              </button>
-            )}
-          </div>
-
-          {references.map((ref, rIdx) => (
-            <div
-              key={rIdx}
-              className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3 rounded-xl bg-slate-100/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-xs items-center"
-            >
-              <input
-                type="text"
-                placeholder={`Reference ${rIdx + 1} Name`}
-                value={ref.name}
-                onChange={(e) => {
-                  const updated = [...references];
-                  updated[rIdx].name = sanitizeToAlphabetsOnly(e.target.value);
-                  setReferences(updated);
-                }}
-                className="sm:col-span-3 glass-input px-2.5 py-1.5 rounded-lg"
-              />
-              <input
-                type="text"
-                placeholder="Address"
-                value={ref.address}
-                onChange={(e) => {
-                  const updated = [...references];
-                  updated[rIdx].address = e.target.value;
-                  setReferences(updated);
-                }}
-                className="sm:col-span-4 glass-input px-2.5 py-1.5 rounded-lg"
-              />
-              <input
-                type="tel"
-                placeholder="Phone Number"
-                value={ref.phone}
-                onChange={(e) => {
-                  const updated = [...references];
-                  updated[rIdx].phone = e.target.value;
-                  setReferences(updated);
-                }}
-                className="sm:col-span-2 glass-input px-2.5 py-1.5 rounded-lg font-mono"
-              />
-              <input
-                type="email"
-                placeholder="Email Address"
-                value={ref.email}
-                onChange={(e) => {
-                  const updated = [...references];
-                  updated[rIdx].email = e.target.value;
-                  setReferences(updated);
-                }}
-                className="sm:col-span-2 glass-input px-2.5 py-1.5 rounded-lg"
-              />
-              {!isReadOnly && references.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => setReferences(references.filter((_, idx) => idx !== rIdx))}
-                  title="Remove Reference"
-                  className="sm:col-span-1 p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg flex items-center justify-center transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* Save & History Remark Modal */}
       {historyModalItem && (

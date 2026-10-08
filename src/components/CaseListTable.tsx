@@ -41,6 +41,7 @@ import { isValid10DigitPhone, isValidEmail, sanitizeTo10Digits, isValidName, san
 import { INDIAN_STATES, getCitiesForIndianState } from '@/lib/india-data';
 import DatePickerInput from './DatePickerInput';
 import MultiSelectDropdown from './MultiSelectDropdown';
+import SearchableSelect from './SearchableSelect';
 
 export interface WorkflowStageItem {
   id: string;
@@ -1883,20 +1884,17 @@ export default function CaseListTable({
                     <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Case Filing Status
                     </label>
-                    <select
+                    <SearchableSelect
+                      options={availableStatuses.map((st) => ({
+                        value: st.name,
+                        label: st.name,
+                        color: st.color || undefined,
+                      }))}
                       value={editFormData.status}
-                      onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value })}
-                      className="w-full glass-input px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 font-bold"
-                      style={{
-                        color: availableStatuses.find((s) => s.name === editFormData.status)?.color || '#10b981',
-                      }}
-                    >
-                      {availableStatuses.map((st) => (
-                        <option key={st.id || st.name} value={st.name}>
-                          {st.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(val) => setEditFormData({ ...editFormData, status: val })}
+                      placeholder="-- Select Case Filing Status --"
+                      searchPlaceholder="Search case filing status..."
+                    />
                   </div>
 
                   <div>

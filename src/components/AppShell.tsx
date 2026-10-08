@@ -73,7 +73,7 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
     pathname.startsWith('/admin/workflow-stages') ||
     pathname.startsWith('/admin/case-statuses');
 
-  const isUsersActive = pathname.startsWith('/admin/users');
+  const isUsersActive = pathname.startsWith('/admin/users') || pathname === '/visits/channel-partners';
   const isHrmsActive = pathname.startsWith('/hrms') || pathname.startsWith('/salary');
   const [isCaseSubmenuOpen, setIsCaseSubmenuOpen] = useState(true);
   const [isChecklistSubmenuOpen, setIsChecklistSubmenuOpen] = useState(true);
@@ -234,6 +234,7 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
     if (pathname === '/admin/settings') return 'CRM Settings & Branding';
     if (pathname === '/admin/functionality') return 'Add Functionality & Settings Hub';
     if (pathname === '/admin/users') return 'User & Team Management';
+    if (pathname === '/visits/channel-partners') return 'Channel Partner Directory';
     if (pathname === '/admin/users/roles') return 'Roles & Access Permissions Manager';
     if (pathname === '/admin/checklist-templates') return 'Dynamic Checklist Matrix';
     if (pathname === '/admin/products') return 'Loan Products Master';
@@ -540,6 +541,23 @@ export default function AppShell({ children, initialSession }: AppShellProps) {
                         </div>
                         {pathname === '/admin/users' && (
                           <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                        )}
+                      </Link>
+
+                      <Link
+                        href="/visits/channel-partners"
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                          pathname === '/visits/channel-partners'
+                            ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 font-bold'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <UserCheck className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                          <span>Channel Partner Directory</span>
+                        </div>
+                        {pathname === '/visits/channel-partners' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                         )}
                       </Link>
 

@@ -18,7 +18,7 @@ import {
   AlertCircle, User, Building, Phone, ArrowRight, ExternalLink, X,
   Briefcase, MessageSquare, IndianRupee, Timer, AlertTriangle, Send, Check, History, Edit3, Trash2, RotateCcw,
   Download, Eye, Flame, Snowflake, Zap, Layers, Landmark, FileText, UserCheck, ShieldCheck,
-  Building2, ChevronDown, ChevronUp, FolderPlus
+  Building2, ChevronDown, ChevronUp, FolderPlus, ChevronLeft, ChevronRight, Users
 } from 'lucide-react';
 import { sanitizeTo10Digits, sanitizeToAlphabetsOnly } from '@/lib/validations';
 import DatePickerInput from './DatePickerInput';
@@ -131,18 +131,91 @@ interface Props {
   }>;
 }
 
-export function formatIndianCurrency(amount: number | null | undefined): string {
-  if (amount === null || amount === undefined || isNaN(Number(amount))) return '';
-  const num = Number(amount);
+export function parseDateForComparison(val: string | Date | null | undefined): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  const str = String(val).trim();
+  if (!str) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const d = new Date(str.slice(0, 10));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
+    const parts = str.split('/');
+    const d = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+export function parsePriceToNumeric(val: any): number {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const str = String(val).trim();
+  if (!str) return 0;
+
+  // Check for Cr / Crore
+  const crMatch = str.match(/([\d.]+)\s*(?:cr|crore|crores)/i);
+  if (crMatch) {
+    const num = parseFloat(crMatch[1]);
+    return !isNaN(num) ? Math.round(num * 10000000) : 0;
+  }
+
+  // Check for Lac / Lakh / L
+  const lacMatch = str.match(/([\d.]+)\s*(?:lac|lakh|lacs|lakhs|l)\b/i);
+  if (lacMatch) {
+    const num = parseFloat(lacMatch[1]);
+    return !isNaN(num) ? Math.round(num * 100000) : 0;
+  }
+
+  // Check for k / K / Thousand
+  const kMatch = str.match(/([\d.]+)\s*(?:k|thousand)\b/i);
+  if (kMatch) {
+    const num = parseFloat(kMatch[1]);
+    return !isNaN(num) ? Math.round(num * 1000) : 0;
+  }
+
+  // Pure digits and commas
+  const clean = str.replace(/[^\d.]/g, '');
+  const num = parseFloat(clean);
+  return !isNaN(num) ? num : 0;
+}
+
+export function formatIndianNumberWithCommas(raw: string | number | null | undefined): string {
+  if (raw === null || raw === undefined || raw === '') return '';
+  const clean = String(raw).replace(/\D/g, '');
+  if (!clean) return '';
+  const num = parseInt(clean, 10);
+  if (isNaN(num)) return '';
+  return num.toLocaleString('en-IN');
+}
+
+export function formatCompactPrice(val: any): string {
+  if (val === null || val === undefined || val === '') return '';
+  const num = parsePriceToNumeric(val);
+  if (!num || num <= 0) {
+    return typeof val === 'string' && val.trim() ? val.trim() : '';
+  }
+
   if (num >= 10000000) {
-    const cr = (num / 10000000).toFixed(2).replace(/\.00$/, '');
-    return `₹${cr} Cr`;
+    const cr = (num / 10000000).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    return `${cr} Cr`;
   }
   if (num >= 100000) {
-    const lk = (num / 100000).toFixed(2).replace(/\.00$/, '');
-    return `₹${lk} Lakh`;
+    const lac = (num / 100000).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    return `${lac} Lac`;
+  }
+  if (num >= 1000) {
+    const k = (num / 1000).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    return `${k}k`;
   }
   return `₹${num.toLocaleString('en-IN')}`;
+}
+
+export function formatIndianCurrency(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined || isNaN(Number(amount))) return '';
+  return formatCompactPrice(amount);
 }
 
 export function getFollowUpTimerInfo(visit: VisitItem): {
@@ -304,16 +377,24 @@ export default function VisitTrackerClient({
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [leadTypeFilter, setLeadTypeFilter] = useState('ALL');
   const [projectTypeFilter, setProjectTypeFilter] = useState('ALL');
-  const [projectFilter, setProjectFilter] = useState('ALL');
   const [priceRangeFilter, setPriceRangeFilter] = useState('ALL');
-  const [builderFilter, setBuilderFilter] = useState('ALL');
+  const [entityFilter, setEntityFilter] = useState('ALL');
+  const [isEntityDropdownOpen, setIsEntityDropdownOpen] = useState(false);
+  const [entitySearchQuery, setEntitySearchQuery] = useState('');
+  const entityDropdownRef = useRef<HTMLDivElement>(null);
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('');
   const [staffFilter, setStaffFilter] = useState('ALL');
 
-  // View Mode: 'LIST' | 'BUILDER_GROUPED' | 'STAFF_DATE_GROUPED'
-  const [viewMode, setViewMode] = useState<'LIST' | 'BUILDER_GROUPED' | 'STAFF_DATE_GROUPED'>('LIST');
+  // View Mode: 'LIST' | 'BUILDER_GROUPED' | 'STAFF_DATE_GROUPED' | 'STAFF_CALENDAR'
+  const [viewMode, setViewMode] = useState<'LIST' | 'BUILDER_GROUPED' | 'STAFF_DATE_GROUPED' | 'STAFF_CALENDAR'>('LIST');
   const [expandedBuilders, setExpandedBuilders] = useState<Record<string, boolean>>({});
   const [expandedStaff, setExpandedStaff] = useState<Record<string, boolean>>({});
+
+  // Staff Calendar View States
+  const [calendarDate, setCalendarDate] = useState(() => new Date());
+  const [selectedCalendarDayVisits, setSelectedCalendarDayVisits] = useState<{ dateStr: string; visits: VisitItem[] } | null>(null);
 
   // Builder Management Modal (Super Admin & Team Leader)
   const canManageBuilders = isSuperAdmin || isTeamLeader;
@@ -428,16 +509,75 @@ export default function VisitTrackerClient({
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [followUpError, setFollowUpError] = useState('');
 
-  // Extract Unique Project Names for Filter Dropdown
-  const uniqueProjects = useMemo(() => {
-    const set = new Set<string>();
-    visits.forEach((v) => {
-      if (v.projectName && v.projectName.trim()) {
-        set.add(v.projectName.trim());
-      }
+  // Unified Builder / CP / Client Lists for Filter Dropdown
+  const unifiedEntities = useMemo(() => {
+    // 1. Builders
+    const builderSet = new Set<string>();
+    buildersList.forEach((b) => {
+      if (b.name?.trim()) builderSet.add(b.name.trim());
     });
-    return Array.from(set).sort();
-  }, [visits]);
+    visits.forEach((v) => {
+      if (v.builderName?.trim()) builderSet.add(v.builderName.trim());
+    });
+    const buildersArr = Array.from(builderSet).sort((a, b) => a.localeCompare(b));
+
+    // 2. Channel Partners (CPs)
+    const cpSet = new Set<string>();
+    channelPartners.forEach((cp) => {
+      if (cp.name?.trim()) cpSet.add(cp.name.trim());
+    });
+    visits.forEach((v) => {
+      if (v.cpName?.trim()) cpSet.add(v.cpName.trim());
+    });
+    const cpsArr = Array.from(cpSet).sort((a, b) => a.localeCompare(b));
+
+    // 3. Clients
+    const clientSet = new Set<string>();
+    clients.forEach((c) => {
+      if (c.name?.trim()) clientSet.add(c.name.trim());
+    });
+    visits.forEach((v) => {
+      if (v.clientName?.trim()) clientSet.add(v.clientName.trim());
+    });
+    const clientsArr = Array.from(clientSet).sort((a, b) => a.localeCompare(b));
+
+    return {
+      builders: buildersArr,
+      cps: cpsArr,
+      clients: clientsArr,
+      totalCount: buildersArr.length + cpsArr.length + clientsArr.length,
+    };
+  }, [buildersList, channelPartners, clients, visits]);
+
+  // Click outside to close entity search dropdown
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (entityDropdownRef.current && !entityDropdownRef.current.contains(event.target as Node)) {
+        setIsEntityDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredEntities = useMemo(() => {
+    const q = entitySearchQuery.trim().toLowerCase();
+    if (!q) return unifiedEntities;
+    return {
+      builders: unifiedEntities.builders.filter((b) => b.toLowerCase().includes(q)),
+      cps: unifiedEntities.cps.filter((cp) => cp.toLowerCase().includes(q)),
+      clients: unifiedEntities.clients.filter((c) => c.toLowerCase().includes(q)),
+      totalCount: unifiedEntities.totalCount,
+    };
+  }, [unifiedEntities, entitySearchQuery]);
+
+  const getSelectedEntityLabel = () => {
+    if (entityFilter === 'ALL') return `🏢/🤝/👤 Builder / CP / Client (${unifiedEntities.totalCount})`;
+    if (entityFilter.startsWith('BUILDER:')) return `🏢 Builder: ${entityFilter.slice(8)}`;
+    if (entityFilter.startsWith('CP:')) return `🤝 CP: ${entityFilter.slice(3)}`;
+    if (entityFilter.startsWith('CLIENT:')) return `👤 Client: ${entityFilter.slice(7)}`;
+    return entityFilter;
+  };
 
   // Handle Selecting a Builder from Directory Dropdown
   const handleSelectBuilder = (builderName: string, isEdit: boolean = false) => {
@@ -622,7 +762,7 @@ export default function VisitTrackerClient({
       projectLaunchDate: v.projectLaunchDate || '',
       reraStatus: v.reraStatus || '',
       approvedBanks: v.approvedBanks || '',
-      priceRange: v.priceRange || '',
+      priceRange: formatIndianNumberWithCommas(v.priceRange || (v.projectPrice ? String(v.projectPrice) : '')),
       totalUnits: v.totalUnits || '',
       unitsSold: v.unitsSold || '',
       paymentPlan: v.paymentPlan || '',
@@ -650,13 +790,15 @@ export default function VisitTrackerClient({
     setEditLoading(true);
     setEditError('');
 
+    const numProjectPrice = parsePriceToNumeric(editForm.priceRange) || (editForm.projectPrice ? parseFloat(editForm.projectPrice) : undefined);
+
     const res = await updateVisitRecordAction({
       id: editForm.id,
       caseId: editForm.caseId || undefined,
       clientName: editForm.clientName.trim(),
       clientPhone: editForm.clientPhone ? editForm.clientPhone.trim() : undefined,
       projectName: editForm.projectName ? editForm.projectName.trim() : undefined,
-      projectPrice: editForm.projectPrice ? parseFloat(editForm.projectPrice) : undefined,
+      projectPrice: numProjectPrice || undefined,
       propertyAddress: editForm.propertyAddress ? editForm.propertyAddress.trim() : undefined,
       visitDate: editForm.visitDate,
       visitTime: editForm.visitTime || undefined,
@@ -749,29 +891,38 @@ export default function VisitTrackerClient({
         }
       }
 
-      // Project Name Filter
-      if (projectFilter !== 'ALL') {
-        if ((v.projectName || '').toLowerCase() !== projectFilter.toLowerCase()) {
-          return false;
-        }
-      }
-
       // Project Price Range Filter
       if (priceRangeFilter !== 'ALL') {
-        const price = v.projectPrice !== null && v.projectPrice !== undefined ? Number(v.projectPrice) : 0;
-        if (priceRangeFilter === 'UNDER_25L' && price >= 2500000) return false;
-        if (priceRangeFilter === '25L_50L' && (price < 2500000 || price > 5000000)) return false;
-        if (priceRangeFilter === '50L_1CR' && (price < 5000000 || price > 10000000)) return false;
-        if (priceRangeFilter === '1CR_2.5CR' && (price < 10000000 || price > 25000000)) return false;
-        if (priceRangeFilter === '2.5CR_5CR' && (price < 25000000 || price > 50000000)) return false;
-        if (priceRangeFilter === 'ABOVE_5CR' && price <= 50000000) return false;
-        if (priceRangeFilter === 'PRICE_NOT_SPECIFIED' && price > 0) return false;
+        const numPrice = (v.projectPrice !== null && v.projectPrice !== undefined && !isNaN(Number(v.projectPrice)) && Number(v.projectPrice) > 0)
+          ? Number(v.projectPrice)
+          : parsePriceToNumeric(v.priceRange);
+
+        let match = false;
+        if (numPrice > 0) {
+          if (priceRangeFilter === 'UNDER_25L' && numPrice < 2500000) match = true;
+          else if (priceRangeFilter === '25L_50L' && numPrice >= 2500000 && numPrice <= 5000000) match = true;
+          else if (priceRangeFilter === '50L_1CR' && numPrice >= 5000000 && numPrice <= 10000000) match = true;
+          else if (priceRangeFilter === '1CR_2.5CR' && numPrice >= 10000000 && numPrice <= 25000000) match = true;
+          else if (priceRangeFilter === '2.5CR_5CR' && numPrice >= 25000000 && numPrice <= 50000000) match = true;
+          else if (priceRangeFilter === 'ABOVE_5CR' && numPrice > 50000000) match = true;
+        } else if (priceRangeFilter === 'PRICE_NOT_SPECIFIED' && numPrice === 0) {
+          match = true;
+        }
+
+        if (!match) return false;
       }
 
-      // Builder Filter
-      if (builderFilter !== 'ALL') {
-        if ((v.builderName || '').toLowerCase() !== builderFilter.toLowerCase()) {
-          return false;
+      // Unified Builder / CP / Client Filter
+      if (entityFilter !== 'ALL') {
+        if (entityFilter.startsWith('BUILDER:')) {
+          const bTarget = entityFilter.slice(8).toLowerCase();
+          if ((v.builderName || '').toLowerCase() !== bTarget) return false;
+        } else if (entityFilter.startsWith('CP:')) {
+          const cpTarget = entityFilter.slice(3).toLowerCase();
+          if ((v.cpName || '').toLowerCase() !== cpTarget) return false;
+        } else if (entityFilter.startsWith('CLIENT:')) {
+          const clientTarget = entityFilter.slice(7).toLowerCase();
+          if ((v.clientName || '').toLowerCase() !== clientTarget) return false;
         }
       }
 
@@ -791,19 +942,27 @@ export default function VisitTrackerClient({
         }
       }
 
-      // Date Picker Filter (DD/MM/YYYY)
-      if (dateFilter.trim()) {
-        try {
-          const vDate = new Date(v.visitDate);
-          const dd = String(vDate.getDate()).padStart(2, '0');
-          const mm = String(vDate.getMonth() + 1).padStart(2, '0');
-          const yyyy = vDate.getFullYear();
-          const vDateStr = `${dd}/${mm}/${yyyy}`;
-          if (vDateStr !== dateFilter.trim()) {
-            return false;
+      // Date Range Filter (From Date - To Date)
+      if (startDateFilter.trim() || endDateFilter.trim() || dateFilter.trim()) {
+        const vDate = parseDateForComparison(v.visitDate);
+        if (!vDate) return false;
+        const vTime = new Date(vDate.getFullYear(), vDate.getMonth(), vDate.getDate()).getTime();
+
+        const startStr = startDateFilter.trim() || dateFilter.trim();
+        if (startStr) {
+          const sDate = parseDateForComparison(startStr);
+          if (sDate) {
+            const sTime = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate()).getTime();
+            if (vTime < sTime) return false;
           }
-        } catch {
-          return false;
+        }
+
+        if (endDateFilter.trim()) {
+          const eDate = parseDateForComparison(endDateFilter.trim());
+          if (eDate) {
+            const eTime = new Date(eDate.getFullYear(), eDate.getMonth(), eDate.getDate()).getTime();
+            if (vTime > eTime) return false;
+          }
         }
       }
 
@@ -816,7 +975,7 @@ export default function VisitTrackerClient({
 
       return true;
     });
-  }, [visits, statusFilter, leadTypeFilter, projectTypeFilter, projectFilter, priceRangeFilter, builderFilter, searchTerm, dateFilter, staffFilter]);
+  }, [visits, statusFilter, leadTypeFilter, projectTypeFilter, priceRangeFilter, entityFilter, searchTerm, startDateFilter, endDateFilter, dateFilter, staffFilter]);
 
   // Group visits by Staff -> Date for Staff Date-wise View
   const groupedVisitsByStaffDate = useMemo(() => {
@@ -883,6 +1042,40 @@ export default function VisitTrackerClient({
 
     return Array.from(staffMap.values()).sort((a, b) => b.totalVisits - a.totalVisits);
   }, [filteredVisits]);
+
+  // Staff Calendar View Data for the selected calendarDate
+  const calendarMonthData = useMemo(() => {
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth(); // 0-indexed
+    const firstDayIndex = new Date(year, month, 1).getDay(); // 0 = Sun
+    const totalDaysInMonth = new Date(year, month + 1, 0).getDate();
+
+    // Map visits by day number
+    const visitsByDay = new Map<number, VisitItem[]>();
+    let totalMonthVisits = 0;
+
+    filteredVisits.forEach((v) => {
+      const d = parseDateForComparison(v.visitDate);
+      if (d && d.getFullYear() === year && d.getMonth() === month) {
+        const day = d.getDate();
+        if (!visitsByDay.has(day)) visitsByDay.set(day, []);
+        visitsByDay.get(day)!.push(v);
+        totalMonthVisits++;
+      }
+    });
+
+    const monthName = calendarDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+    return {
+      year,
+      month,
+      firstDayIndex,
+      totalDaysInMonth,
+      visitsByDay,
+      totalMonthVisits,
+      monthName,
+    };
+  }, [calendarDate, filteredVisits]);
 
   // Group visits by Builder Name for Multi-Sales Combine View
   const groupedVisitsByBuilder = useMemo(() => {
@@ -951,10 +1144,11 @@ export default function VisitTrackerClient({
       }
     });
 
-    // If builderFilter is set to something specific, filter to that builder
+    // If entityFilter is set to a specific builder, filter to that builder
     let result = Array.from(map.values());
-    if (builderFilter !== 'ALL') {
-      result = result.filter((item) => item.builderName.toLowerCase() === builderFilter.toLowerCase());
+    if (entityFilter !== 'ALL' && entityFilter.startsWith('BUILDER:')) {
+      const bTarget = entityFilter.slice(8).toLowerCase();
+      result = result.filter((item) => item.builderName.toLowerCase() === bTarget);
     }
 
     // When staff is filtered, show only builders that have visits by that staff
@@ -966,7 +1160,7 @@ export default function VisitTrackerClient({
       if (b.totalVisits !== a.totalVisits) return b.totalVisits - a.totalVisits;
       return a.builderName.localeCompare(b.builderName);
     });
-  }, [filteredVisits, buildersList, builderFilter, staffFilter]);
+  }, [filteredVisits, buildersList, entityFilter, staffFilter]);
 
   const stats = useMemo(() => {
     let scheduled = 0;
@@ -1030,12 +1224,14 @@ export default function VisitTrackerClient({
     setLoading(true);
     setError('');
 
+    const numProjectPrice = parsePriceToNumeric(form.priceRange) || (form.projectPrice ? parseFloat(form.projectPrice) : undefined);
+
     const res = await createVisitRecordAction({
       caseId: form.caseId || undefined,
       clientName: form.clientName.trim(),
       clientPhone: form.clientPhone ? form.clientPhone.trim() : undefined,
       projectName: form.projectName ? form.projectName.trim() : undefined,
-      projectPrice: form.projectPrice ? parseFloat(form.projectPrice) : undefined,
+      projectPrice: numProjectPrice || undefined,
       propertyAddress: form.propertyAddress ? form.propertyAddress.trim() : undefined,
       visitDate: form.visitDate,
       visitTime: form.visitTime || undefined,
@@ -1372,23 +1568,42 @@ export default function VisitTrackerClient({
                 {groupedVisitsByStaffDate.length} Staff
               </span>
             </button>
-          </div>
 
-          {canManageBuilders && (
             <button
               type="button"
-              onClick={() => {
-                setBuilderEditingId(null);
-                setBuilderForm({ name: '', contactPerson: '', designation: '', phone: '', email: '', officeAddress: '', reraNumber: '', approvedBanks: '', notes: '' });
-                setIsBuilderMasterOpen(true);
-              }}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-sky-500/10 hover:from-indigo-500/20 hover:to-purple-500/20 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold transition border border-indigo-500/30 cursor-pointer shadow-xs"
-              title="Manage dynamic Builders Directory (Add/Edit/Delete)"
+              onClick={() => setViewMode('STAFF_CALENDAR')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                viewMode === 'STAFF_CALENDAR'
+                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
             >
-              <Building2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-              <span>🏢 Manage Builders ({buildersList.length})</span>
+              <Calendar className="w-3.5 h-3.5 text-emerald-500" />
+              <span>📅 Staff Calendar</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-300 font-extrabold">
+                {calendarMonthData.totalMonthVisits}
+              </span>
             </button>
-          )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+
+            {canManageBuilders && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBuilderEditingId(null);
+                  setBuilderForm({ name: '', contactPerson: '', designation: '', phone: '', email: '', officeAddress: '', reraNumber: '', approvedBanks: '', notes: '' });
+                  setIsBuilderMasterOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-sky-500/10 hover:from-indigo-500/20 hover:to-purple-500/20 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold transition border border-indigo-500/30 cursor-pointer shadow-xs"
+                title="Manage dynamic Builders Directory (Add/Edit/Delete)"
+              >
+                <Building2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span>🏢 Manage Builders ({buildersList.length})</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -1406,22 +1621,35 @@ export default function VisitTrackerClient({
               />
             </div>
 
-            {/* Date Picker Filter */}
-            <div className="flex items-center gap-1 relative z-40">
+            {/* Date Range Picker Filter (From Date - To Date) */}
+            <div className="flex items-center gap-1.5 relative z-40 bg-slate-50 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+              <span className="text-[10px] font-bold text-slate-400 pl-1 uppercase">Date:</span>
               <DatePickerInput
-                placeholder="Visit Date (DD/MM/YYYY)"
-                value={dateFilter}
-                onChange={(val) => setDateFilter(val)}
-                className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 w-[170px]"
+                placeholder="From Date"
+                value={startDateFilter}
+                onChange={(val) => setStartDateFilter(val)}
+                className="px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-300 w-[120px]"
                 minYear={1990}
                 maxYear={2050}
               />
-              {dateFilter && (
+              <span className="text-slate-400 text-xs font-bold">to</span>
+              <DatePickerInput
+                placeholder="To Date"
+                value={endDateFilter}
+                onChange={(val) => setEndDateFilter(val)}
+                className="px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-300 w-[120px]"
+                minYear={1990}
+                maxYear={2050}
+              />
+              {(startDateFilter || endDateFilter) && (
                 <button
                   type="button"
-                  onClick={() => setDateFilter('')}
+                  onClick={() => {
+                    setStartDateFilter('');
+                    setEndDateFilter('');
+                  }}
                   className="p-1 rounded-lg text-slate-400 hover:text-rose-500 transition cursor-pointer"
-                  title="Clear Date Filter"
+                  title="Clear Date Range"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -1446,19 +1674,142 @@ export default function VisitTrackerClient({
               ))}
             </select>
 
-            {/* Builder Filter Dropdown */}
-            <select
-              value={builderFilter}
-              onChange={(e) => setBuilderFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 max-w-[170px]"
-            >
-              <option value="ALL">🏢 All Builders ({buildersList.length})</option>
-              {buildersList.map((b) => (
-                <option key={b.id} value={b.name}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+            {/* Searchable Builder / CP / Client Filter Dropdown */}
+            <div className="relative" ref={entityDropdownRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEntityDropdownOpen(!isEntityDropdownOpen);
+                  setEntitySearchQuery('');
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition flex items-center justify-between gap-2 min-w-[210px] max-w-[260px] cursor-pointer ${
+                  entityFilter !== 'ALL'
+                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700 font-bold ring-2 ring-indigo-500/20'
+                    : 'bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                <span className="truncate">{getSelectedEntityLabel()}</span>
+                <ChevronDown className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+              </button>
+
+              {isEntityDropdownOpen && (
+                <div className="absolute left-0 top-full mt-1.5 w-72 max-h-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+                  <div className="p-2 border-b border-slate-100 dark:border-slate-800">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Search builder, CP, client..."
+                        value={entitySearchQuery}
+                        onChange={(e) => setEntitySearchQuery(e.target.value)}
+                        className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="overflow-y-auto flex-1 p-1.5 space-y-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEntityFilter('ALL');
+                        setIsEntityDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg transition font-medium ${
+                        entityFilter === 'ALL'
+                          ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 font-bold'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      🏢/🤝/👤 All Builders / CPs / Clients ({unifiedEntities.totalCount})
+                    </button>
+
+                    {filteredEntities.builders.length > 0 && (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          🏢 Builders ({filteredEntities.builders.length})
+                        </div>
+                        {filteredEntities.builders.map((b) => (
+                          <button
+                            key={`b-${b}`}
+                            type="button"
+                            onClick={() => {
+                              setEntityFilter(`BUILDER:${b}`);
+                              setIsEntityDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-2.5 py-1 rounded-lg text-xs truncate transition ${
+                              entityFilter === `BUILDER:${b}`
+                                ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 font-bold'
+                                : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            🏢 {b}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {filteredEntities.cps.length > 0 && (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          🤝 Channel Partners ({filteredEntities.cps.length})
+                        </div>
+                        {filteredEntities.cps.map((cp) => (
+                          <button
+                            key={`cp-${cp}`}
+                            type="button"
+                            onClick={() => {
+                              setEntityFilter(`CP:${cp}`);
+                              setIsEntityDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-2.5 py-1 rounded-lg text-xs truncate transition ${
+                              entityFilter === `CP:${cp}`
+                                ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 font-bold'
+                                : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            🤝 {cp}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {filteredEntities.clients.length > 0 && (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          👤 Clients ({filteredEntities.clients.length})
+                        </div>
+                        {filteredEntities.clients.map((c) => (
+                          <button
+                            key={`client-${c}`}
+                            type="button"
+                            onClick={() => {
+                              setEntityFilter(`CLIENT:${c}`);
+                              setIsEntityDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-2.5 py-1 rounded-lg text-xs truncate transition ${
+                              entityFilter === `CLIENT:${c}`
+                                ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 font-bold'
+                                : 'hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            👤 {c}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {filteredEntities.builders.length === 0 &&
+                      filteredEntities.cps.length === 0 &&
+                      filteredEntities.clients.length === 0 && (
+                        <div className="p-3 text-center text-xs text-slate-400">
+                          No matching builders, CPs, or clients.
+                        </div>
+                      )}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Status Filter */}
             <select
@@ -1497,20 +1848,6 @@ export default function VisitTrackerClient({
               <option value="Industrial">Industrial</option>
             </select>
 
-            {/* Project Name Filter */}
-            <select
-              value={projectFilter}
-              onChange={(e) => setProjectFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 max-w-[170px]"
-            >
-              <option value="ALL">All Projects ({uniqueProjects.length})</option>
-              {uniqueProjects.map((p) => (
-                <option key={p} value={p}>
-                  🏢 {p}
-                </option>
-              ))}
-            </select>
-
             {/* Project Price Range Filter */}
             <select
               value={priceRangeFilter}
@@ -1527,16 +1864,17 @@ export default function VisitTrackerClient({
               <option value="PRICE_NOT_SPECIFIED">Price Not Specified</option>
             </select>
 
-            {(statusFilter !== 'ALL' || leadTypeFilter !== 'ALL' || projectTypeFilter !== 'ALL' || projectFilter !== 'ALL' || priceRangeFilter !== 'ALL' || builderFilter !== 'ALL' || searchTerm || dateFilter || staffFilter !== 'ALL') && (
+            {(statusFilter !== 'ALL' || leadTypeFilter !== 'ALL' || projectTypeFilter !== 'ALL' || priceRangeFilter !== 'ALL' || entityFilter !== 'ALL' || searchTerm || startDateFilter || endDateFilter || dateFilter || staffFilter !== 'ALL') && (
               <button
                 onClick={() => {
                   setStatusFilter('ALL');
                   setLeadTypeFilter('ALL');
                   setProjectTypeFilter('ALL');
-                  setProjectFilter('ALL');
                   setPriceRangeFilter('ALL');
-                  setBuilderFilter('ALL');
+                  setEntityFilter('ALL');
                   setSearchTerm('');
+                  setStartDateFilter('');
+                  setEndDateFilter('');
                   setDateFilter('');
                   setStaffFilter('ALL');
                 }}
@@ -1582,15 +1920,36 @@ export default function VisitTrackerClient({
               Type: {projectTypeFilter}
             </span>
           )}
-          {projectFilter !== 'ALL' && (
-            <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-semibold">
-              Project: {projectFilter}
+          {entityFilter !== 'ALL' && (
+            <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-semibold flex items-center gap-1">
+              <span>
+                {entityFilter.startsWith('BUILDER:')
+                  ? `Builder: ${entityFilter.slice(8)}`
+                  : entityFilter.startsWith('CP:')
+                  ? `CP: ${entityFilter.slice(3)}`
+                  : entityFilter.startsWith('CLIENT:')
+                  ? `Client: ${entityFilter.slice(7)}`
+                  : `Entity: ${entityFilter}`}
+              </span>
+              <button type="button" onClick={() => setEntityFilter('ALL')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
             </span>
           )}
-          {dateFilter && (
+          {(startDateFilter || endDateFilter || dateFilter) && (
             <span className="px-2 py-0.5 rounded-md bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 font-semibold flex items-center gap-1">
-              <span>Date: {dateFilter}</span>
-              <button type="button" onClick={() => setDateFilter('')} className="hover:text-rose-500 cursor-pointer">
+              <span>
+                Date: {startDateFilter && endDateFilter ? `${startDateFilter} to ${endDateFilter}` : startDateFilter ? `From ${startDateFilter}` : endDateFilter ? `Up to ${endDateFilter}` : dateFilter}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setStartDateFilter('');
+                  setEndDateFilter('');
+                  setDateFilter('');
+                }}
+                className="hover:text-rose-500 cursor-pointer"
+              >
                 <X className="w-3 h-3" />
               </button>
             </span>
@@ -1773,7 +2132,7 @@ export default function VisitTrackerClient({
                           {(v.priceRange || v.projectPrice) && (
                             <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 font-mono font-bold text-[10px] border border-emerald-200 dark:border-emerald-800">
                               <IndianRupee className="w-2.5 h-2.5" />
-                              <span>{v.priceRange || formatIndianCurrency(v.projectPrice)}</span>
+                              <span>{formatCompactPrice(v.priceRange || v.projectPrice)}</span>
                             </div>
                           )}
                         </div>
@@ -2378,9 +2737,9 @@ export default function VisitTrackerClient({
                                         <div className="font-semibold text-slate-800 dark:text-slate-200">
                                           {v.projectName || v.propertyAddress || '--'}
                                         </div>
-                                        {v.priceRange && (
-                                          <div className="text-[10px] text-emerald-600 font-mono">
-                                            {v.priceRange}
+                                        {(v.priceRange || v.projectPrice) && (
+                                          <div className="text-[10px] text-emerald-600 font-mono font-bold">
+                                            {formatCompactPrice(v.priceRange || v.projectPrice)}
                                           </div>
                                         )}
                                       </td>
@@ -2449,6 +2808,311 @@ export default function VisitTrackerClient({
               );
             })
           )}
+        </div>
+      )}
+
+      {/* VIEW MODE 4: STAFF CALENDAR VIEW */}
+      {viewMode === 'STAFF_CALENDAR' && (
+        <div className="space-y-4">
+          {/* Calendar Navigation & Month Control Bar */}
+          <div className="p-4 glass-panel rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1))}
+                  className="p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition cursor-pointer"
+                  title="Previous Month"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCalendarDate(new Date())}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:bg-white dark:hover:bg-slate-700 transition cursor-pointer"
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1))}
+                  className="p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition cursor-pointer"
+                  title="Next Month"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              <h2 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                <span>{calendarMonthData.monthName}</span>
+              </h2>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold">
+                🎯 Total Month Visits: {calendarMonthData.totalMonthVisits}
+              </span>
+              {selectedStaffUser && (
+                <span className="px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 font-semibold">
+                  👤 Staff: {selectedStaffUser.name}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Calendar Grid */}
+          <div className="glass-panel rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-3 sm:p-4">
+            {/* Weekday Header */}
+            <div className="grid grid-cols-7 gap-2 mb-2 text-center">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, idx) => (
+                <div
+                  key={d}
+                  className={`py-2 text-[11px] font-bold uppercase tracking-wider rounded-xl ${
+                    idx === 0 || idx === 6
+                      ? 'bg-rose-50/70 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400'
+                      : 'bg-slate-100/70 dark:bg-slate-800/60 text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  {d}
+                </div>
+              ))}
+            </div>
+
+            {/* Days Grid */}
+            <div className="grid grid-cols-7 gap-2">
+              {/* Padding for leading days of previous month */}
+              {Array.from({ length: calendarMonthData.firstDayIndex }).map((_, i) => (
+                <div
+                  key={`empty-${i}`}
+                  className="min-h-[110px] rounded-xl bg-slate-50/40 dark:bg-slate-900/40 border border-dashed border-slate-200/60 dark:border-slate-800/60 opacity-40 p-2"
+                />
+              ))}
+
+              {/* Current Month Days */}
+              {Array.from({ length: calendarMonthData.totalDaysInMonth }).map((_, i) => {
+                const dayNum = i + 1;
+                const now = new Date();
+                const isToday =
+                  now.getDate() === dayNum &&
+                  now.getMonth() === calendarMonthData.month &&
+                  now.getFullYear() === calendarMonthData.year;
+
+                const dayVisits = calendarMonthData.visitsByDay.get(dayNum) || [];
+                const hasVisits = dayVisits.length > 0;
+                const formattedDayStr = `${String(dayNum).padStart(2, '0')} ${calendarDate.toLocaleDateString('en-IN', { month: 'short' })} ${calendarMonthData.year}`;
+
+                return (
+                  <div
+                    key={`day-${dayNum}`}
+                    onClick={() => {
+                      if (hasVisits) {
+                        setSelectedCalendarDayVisits({ dateStr: formattedDayStr, visits: dayVisits });
+                      }
+                    }}
+                    className={`min-h-[110px] rounded-2xl border p-2.5 flex flex-col justify-between transition-all ${
+                      hasVisits
+                        ? 'cursor-pointer hover:shadow-md hover:scale-[1.01] hover:border-indigo-400 dark:hover:border-indigo-600 bg-white dark:bg-slate-850'
+                        : 'bg-slate-50/50 dark:bg-slate-900/50 hover:bg-slate-50 dark:hover:bg-slate-800/60'
+                    } ${
+                      isToday
+                        ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-50/20 dark:bg-indigo-950/20'
+                        : 'border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
+                    {/* Top Day Header */}
+                    <div className="flex items-center justify-between gap-1">
+                      <span
+                        className={`text-xs font-extrabold w-6 h-6 flex items-center justify-center rounded-lg ${
+                          isToday
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-800 dark:text-slate-200'
+                        }`}
+                      >
+                        {dayNum}
+                      </span>
+
+                      {hasVisits && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-gradient-to-r from-indigo-500/10 to-purple-500/10 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 shadow-2xs">
+                          {dayVisits.length} {dayVisits.length === 1 ? 'Visit' : 'Visits'}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Middle preview pills */}
+                    <div className="space-y-1 my-1.5 flex-1">
+                      {dayVisits.slice(0, 2).map((v) => (
+                        <div
+                          key={v.id}
+                          className="px-1.5 py-0.5 rounded-lg text-[10px] bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 truncate flex items-center justify-between gap-1"
+                          title={`${v.clientName} - ${v.projectName || v.builderName || 'Visit'}`}
+                        >
+                          <span className="truncate font-semibold text-slate-800 dark:text-slate-200">
+                            {v.clientName}
+                          </span>
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                              v.status === 'COMPLETED'
+                                ? 'bg-emerald-500'
+                                : v.status === 'CANCELLED'
+                                ? 'bg-rose-500'
+                                : 'bg-amber-500'
+                            }`}
+                          />
+                        </div>
+                      ))}
+                      {dayVisits.length > 2 && (
+                        <span className="text-[9px] text-indigo-600 dark:text-indigo-400 font-bold block text-right">
+                          +{dayVisits.length - 2} more
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Bottom action indicator */}
+                    {hasVisits ? (
+                      <span className="text-[9px] text-slate-400 text-center block font-medium">
+                        Click to view details
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-slate-300 dark:text-slate-600 text-center block">
+                        No visits
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Staff Calendar Day Visits Popup Modal */}
+      {selectedCalendarDayVisits && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-2xl p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Visits on {selectedCalendarDayVisits.dateStr}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {selectedCalendarDayVisits.visits.length} scheduled / conducted property visits
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedCalendarDayVisits(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-3 flex-1 pr-1">
+              {selectedCalendarDayVisits.visits.map((v) => {
+                const timer = getFollowUpTimerInfo(v);
+                return (
+                  <div
+                    key={v.id}
+                    className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2 text-xs"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-sm text-slate-900 dark:text-white">
+                            {v.clientName}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              v.status === 'COMPLETED'
+                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                                : v.status === 'CANCELLED'
+                                ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                                : 'bg-amber-50 text-amber-600 border border-amber-200'
+                            }`}
+                          >
+                            {v.status}
+                          </span>
+                        </div>
+                        {v.clientPhone && (
+                          <div className="text-slate-500 text-[11px] flex items-center gap-1 mt-0.5">
+                            <Phone className="w-3 h-3 text-slate-400" />
+                            <span>{v.clientPhone}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                          🕒 {v.visitTime || '11:00 AM'}
+                        </span>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          Assigned: {v.staff?.name || 'Staff'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Builder & Project Info */}
+                    {(v.builderName || v.projectName || v.propertyAddress) && (
+                      <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300 space-y-0.5">
+                        {v.builderName && <div><strong>Builder:</strong> {v.builderName}</div>}
+                        {v.projectName && <div><strong>Project:</strong> {v.projectName}</div>}
+                        {v.propertyAddress && <div><strong>Address:</strong> {v.propertyAddress}</div>}
+                      </div>
+                    )}
+
+                    {/* Remarks */}
+                    {v.remarks && (
+                      <p className="text-[11px] text-slate-600 dark:text-slate-400 italic">
+                        "{v.remarks}"
+                      </p>
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-200 dark:border-slate-700">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCalendarDayVisits(null);
+                          setViewSpecsVisit(v);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-semibold text-[11px] flex items-center gap-1"
+                      >
+                        <Eye className="w-3 h-3" /> Specs
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCalendarDayVisits(null);
+                          setActiveFollowUpVisit(v);
+                          setFollowUpRemark('');
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 font-semibold text-[11px] flex items-center gap-1"
+                      >
+                        <MessageSquare className="w-3 h-3" /> Follow-Up
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCalendarDayVisits(null);
+                          handleOpenEdit(v);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/60 hover:bg-sky-100 text-sky-700 dark:text-sky-300 font-semibold text-[11px] flex items-center gap-1"
+                      >
+                        <Edit3 className="w-3 h-3" /> Edit
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 
@@ -3059,15 +3723,25 @@ export default function VisitTrackerClient({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                        Price Range
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          Price Range
+                        </label>
+                        {form.priceRange && formatCompactPrice(form.priceRange) && (
+                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-md shadow-xs animate-in fade-in">
+                            {formatCompactPrice(form.priceRange)}
+                          </span>
+                        )}
+                      </div>
                       <input
                         type="text"
-                        placeholder="e.g. ₹75 L - ₹1.5 Cr"
+                        placeholder="e.g. 20,00,000"
                         value={form.priceRange}
-                        onChange={(e) => setForm({ ...form, priceRange: e.target.value })}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                        onChange={(e) => {
+                          const formatted = formatIndianNumberWithCommas(e.target.value);
+                          setForm({ ...form, priceRange: formatted });
+                        }}
+                        className="w-full glass-input px-3 py-2 rounded-xl text-xs font-mono font-semibold"
                       />
                     </div>
                   </div>
@@ -3671,15 +4345,25 @@ export default function VisitTrackerClient({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                        Price Range
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          Price Range
+                        </label>
+                        {editForm.priceRange && formatCompactPrice(editForm.priceRange) && (
+                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-md shadow-xs animate-in fade-in">
+                            {formatCompactPrice(editForm.priceRange)}
+                          </span>
+                        )}
+                      </div>
                       <input
                         type="text"
-                        placeholder="e.g. ₹75 L - ₹1.5 Cr"
+                        placeholder="e.g. 20,00,000"
                         value={editForm.priceRange}
-                        onChange={(e) => setEditForm({ ...editForm, priceRange: e.target.value })}
-                        className="w-full glass-input px-3 py-2 rounded-xl text-xs"
+                        onChange={(e) => {
+                          const formatted = formatIndianNumberWithCommas(e.target.value);
+                          setEditForm({ ...editForm, priceRange: formatted });
+                        }}
+                        className="w-full glass-input px-3 py-2 rounded-xl text-xs font-mono font-semibold"
                       />
                     </div>
                   </div>

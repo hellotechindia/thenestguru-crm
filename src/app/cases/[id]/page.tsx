@@ -181,15 +181,17 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
         states={states}
       />
 
-      {/* Case File Follow-Up & Timeline Log */}
-      <div id="case-history-timeline" className="scroll-mt-6">
-        <CaseFollowUpTimeline
-          caseId={caseData.id}
-          initialFollowUps={formattedFollowUps}
-          isReadOnly={isReadOnly}
-          statusList={caseStatuses.map((s) => s.name)}
-        />
-      </div>
+      {/* Case File Follow-Up & Timeline Log - Super Admin Only */}
+      {userRole === 'SUPER_ADMIN' && (
+        <div id="case-history-timeline" className="scroll-mt-6">
+          <CaseFollowUpTimeline
+            caseId={caseData.id}
+            initialFollowUps={formattedFollowUps}
+            isReadOnly={isReadOnly}
+            statusList={caseStatuses.map((s) => s.name)}
+          />
+        </div>
+      )}
     </div>
   );
 }
